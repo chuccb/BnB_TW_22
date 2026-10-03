@@ -22,8 +22,10 @@ void __thiscall sub_401CDF(char **this);
 _DWORD *__thiscall sub_401F6B(_DWORD *this);
 int __fastcall sub_401F78(_DWORD *);
 char **__thiscall sub_4020B1(int this, _BYTE *, _BYTE *);
+char **__thiscall sub_40221F(void *this, int);
 void __thiscall sub_40234B(char **this);
 int __fastcall sub_402369(_DWORD *);
+char **__thiscall sub_40245A(void *this, char *);
 char **__thiscall sub_4024B1(int this, char **, _DWORD *this, _DWORD *, int this, int); // idb
 int __thiscall sub_40271E(int this, int, unsigned int i); // idb
 int __thiscall sub_402738(int this, char *, int);
@@ -105,7 +107,6 @@ void __thiscall sub_436F4F(_DWORD *this);
 // _DWORD __stdcall unknown_libname_36(_DWORD); weak
 _DWORD *__thiscall sub_43712C(_DWORD *this, _BYTE *a2, _BYTE *a3);
 void __thiscall sub_4371C6(_DWORD *this);
-char *__thiscall sub_43724B(char **this, _BYTE *, _DWORD *, int, char *n0x3FFFFFFF, char); // idb
 void **__thiscall sub_4372D5(void **this, void **this); // idb
 _DWORD *__thiscall CSetPlayerPacket::sub_437468(_DWORD *this, char a2);
 _DWORD *__thiscall CSlotAccessoryPacket::sub_4376C8(_DWORD *this, char a2);
@@ -329,7 +330,7 @@ int *__thiscall sub_44C37B(int *n7, int n3, int *p_p_p_n0xE, int *a4);
 void __thiscall sub_44D9BC(int *this);
 int __fastcall sub_44E0A9(int *a1, int a2, int a3, int a4);
 int __thiscall sub_44ED88(char *n7, int n3, BOOL n0xE, int *p_p_n0xE); // idb
-int __thiscall sub_44EF3A(char *n7, int n3, unsigned int n0xC, int *p_p_n0xE);
+int __thiscall sub_44EF3A(char *n7, int n3, int n0xC, int *p_p_n0xE);
 int __thiscall sub_4502D4(char *n7, int n3, int p_n0xE);
 void __thiscall CGOBonusStageObject::possible_ctor_or_dtor_0(int this);
 void *__thiscall CGOBonusStageObject::sub_451277(void *this, char a2);
@@ -364,6 +365,7 @@ void __thiscall CGOEmotionActor::possible_ctor_or_dtor(void **this);
 _DWORD *__thiscall CEmotionMan::sub_45331A(_DWORD *this, char a2);
 void __thiscall CGOEmotionActor::possible_ctor_or_dtor_0(_DWORD *this);
 void **__thiscall CGOEmotionActor::sub_4533A3(void **this, char a2);
+int __thiscall sub_453426(_DWORD *this, char, unsigned int);
 int __thiscall sub_4534ED(_DWORD *this, char *, unsigned int);
 void __thiscall sub_4537C7(int *this, int n4, int, int n10, int thisa); // idb
 int __thiscall sub_4539F4(int *this, int n4, int, int, int thisa, int); // idb
@@ -523,7 +525,6 @@ int __thiscall sub_45FEC0(_DWORD *this, int, int i); // idb
 int __thiscall sub_45FED9(_DWORD *this, int a2);
 int __thiscall sub_45FF23(_DWORD *this, int n25, int); // idb
 void __thiscall sub_45FF9E(_DWORD *this);
-char *__thiscall sub_46028C(char **this, _BYTE *, _DWORD *, int, char *n0x3FFFFFFF, char); // idb
 char *__stdcall sub_460426(unsigned int *p_n0x3FFFFFFF, _BYTE *, _BYTE *); // idb
 char *__stdcall sub_460482(unsigned int *p_n0x3FFFFFFF, _BYTE *, _BYTE *); // idb
 void __thiscall sub_460608(_DWORD *this);
@@ -683,7 +684,7 @@ void *__thiscall CSessionPasswdDlg::sub_47F1B4(void *this, char a2);
 void *__stdcall sub_47F6EF(_BYTE *thisa, _BYTE *thisa, void *thisa); // idb
 char *__stdcall sub_47F743(unsigned int n0x3333333, unsigned int *p_n0x3333333); // idb
 void __thiscall __noreturn sub_47F79A(int *this); // idb
-int __thiscall sub_47FF4E(_DWORD *this, int **************************a2);
+int __thiscall sub_47FF4E(_DWORD *this, int *****************************a2);
 BOOL __fastcall sub_47FF7D(_DWORD *this, int this, unsigned int this); // idb
 unsigned int __thiscall sub_47FFEC(void **this, unsigned int i); // idb
 void __thiscall sub_4800B2(char *this, char *thisa, char *this, char *thisa, int i); // idb
@@ -820,6 +821,7 @@ void __thiscall CCharacterNameMan::possible_ctor_or_dtor(_DWORD *this);
 _DWORD *__thiscall CCharacterNameMan::sub_49D47C(_DWORD *this, char a2);
 void __thiscall CDynamicFileContext::possible_ctor_or_dtor_0(_DWORD *this);
 _DWORD *__thiscall CDynamicFileContext::sub_49DB58(_DWORD *this, char a2);
+_DWORD *__fastcall CDynamicImgContext::possible_ctor_or_dtor(_DWORD *);
 void __thiscall CDynamicImgContext::possible_ctor_or_dtor_0(_DWORD *this);
 _DWORD *__thiscall CDynamicImgContext::sub_49DE7C(_DWORD *this, char a2);
 void __thiscall sub_49DF1C(char **this);
@@ -849,7 +851,7 @@ int *__thiscall CGuildLib::sub_4A0068(int *this, char a2);
 void __thiscall CLogoMan::possible_ctor_or_dtor_0(_DWORD *this);
 _DWORD *__thiscall CLogoMan::sub_4A07B2(_DWORD *this, char a2);
 int *__cdecl sub_4A09DF(int *p_this, int this, int this, _BYTE *., _BYTE *.); // idb
-int __thiscall sub_4A0A8A(int **************************this, _BYTE *., int *thisa, int a4);
+int __thiscall sub_4A0A8A(int *****************************this, _BYTE *., int *thisa, int a4);
 void __thiscall sub_4A220D(void **this);
 void __thiscall sub_4A2224(void **this);
 void __thiscall sub_4A2311(_DWORD *this);
@@ -1162,6 +1164,7 @@ BOOL __thiscall sub_4DDF18(_DWORD *this, signed int n8); // idb
 int __thiscall sub_4DDF5F(_DWORD *this, signed int n8); // idb
 BOOL __thiscall sub_4DE000(_DWORD *this, signed int n8); // idb
 unsigned int __thiscall sub_4DE057(_DWORD *this, signed int n2);
+char *__thiscall sub_4DE3F2(_DWORD *this, unsigned int);
 void __thiscall sub_4DE4B9(int this);
 BOOL __thiscall sub_4DE664(_DWORD *this, signed int n8); // idb
 BOOL __thiscall sub_4DE6DB(_DWORD *this, signed int n8); // idb
@@ -1381,7 +1384,7 @@ bool __fastcall sub_4FD1AF(int this, int n3); // idb
 void **__thiscall CGOWalkable::sub_4FD232(void **this, char a2);
 unsigned int __thiscall sub_4FD29F(int *this, int n3, int *p_n0xE); // idb
 unsigned int __thiscall sub_4FD8CB(int *this, int n3, BOOL n0xE, int *p_p_n0xE); // idb
-unsigned int __thiscall sub_4FDA48(int *this, int n3, unsigned int n0xC, int *p_p_n0xE);
+unsigned int __thiscall sub_4FDA48(int *this, int n3, int n0xC, int *p_p_n0xE);
 int __thiscall sub_4FDBC0(int *this, int n3, int p_n0xE);
 void __thiscall CCaptainComponent::possible_ctor_or_dtor_0(_DWORD *this);
 _DWORD *__thiscall CCaptainComponent::sub_4FDD24(_DWORD *this, char a2);
@@ -1719,6 +1722,7 @@ _DWORD *__thiscall sub_5296FC(_DWORD *this, int n0x7D0); // idb
 DWORD __thiscall CMiniMapWnd::sub_529913(int *this, int i); // idb
 void __thiscall CShopConnectionMan::possible_ctor_or_dtor_0(_DWORD *this);
 _DWORD *__thiscall CShopConnectionMan::sub_529D72(_DWORD *this, char a2);
+_DWORD *__fastcall CShopOrderMan::possible_ctor_or_dtor(_DWORD *);
 void __thiscall CShopOrderMan::possible_ctor_or_dtor_0(_DWORD *this);
 void __thiscall FunctionObject2::possible_ctor_or_dtor_2(_DWORD *this);
 _DWORD *__thiscall CGatherSameEmotionItemFunc::sub_52A52C(_DWORD *this, char a2);
@@ -2285,7 +2289,7 @@ void __thiscall CDataI16Character::possible_ctor_or_dtor_0(int *this);
 int *__thiscall CDataI16Character::sub_599E4C(int *this, char a2);
 _DWORD *__cdecl sub_599E68(_DWORD *p_this, _BYTE *, int this, char n47); // idb
 _DWORD *__cdecl sub_599EDF(_DWORD *p_this, _BYTE *a2, int this, char n47); // idb
-int __thiscall sub_599F09(int **************************this, char n47, int *thisa);
+int __thiscall sub_599F09(int *****************************this, char n47, int *thisa);
 void __thiscall CDataI16Dyn::possible_ctor_or_dtor_0(int *this);
 int *__thiscall CDataI16Dyn::sub_59A6E4(int *this, char a2);
 void __thiscall CDataI16Item::possible_ctor_or_dtor_0(int *this);
@@ -2328,6 +2332,7 @@ void *__thiscall sub_5A1827(void *this, char a2);
 void **__thiscall sub_5A1843(void **this, char a2);
 void ***__thiscall sub_5A185F(void ***this, char a2);
 void *__thiscall sub_5A187B(void *this, char a2);
+int nullsub_9(); // weak
 void __thiscall CPacketFactory::possible_ctor_or_dtor_1(_DWORD *this);
 _DWORD *__thiscall CPacketFactory::sub_5A1BC0(_DWORD *this, char a2);
 void __thiscall CPacketFactory::possible_ctor_or_dtor_0(_DWORD *this);
@@ -2336,11 +2341,16 @@ void __thiscall CAvatarContextGame::possible_ctor_or_dtor_0(_DWORD *this);
 _DWORD *__thiscall CAvatarContextGame::sub_5A1E24(_DWORD *this, char a2);
 void __thiscall CFxApp::possible_ctor_or_dtor(int this);
 void *__thiscall CFxApp::sub_5A29D7(void *this, char a2);
+void __thiscall sub_5A29F3(void **this, char *n43); // idb
 int sub_5A3257();
+int __thiscall sub_5A3320(_DWORD *this);
+_DWORD *__fastcall CPacketDispatcher::possible_ctor_or_dtor(_DWORD *);
 void __thiscall CPacketDispatcher::possible_ctor_or_dtor_0(_DWORD *this);
 _DWORD *__thiscall CPacketDispatcher::sub_5A36A4(_DWORD *this, char a2);
+_DWORD *__fastcall CPacketDispatcher::possible_ctor_or_dtor_1(_DWORD *);
 void __thiscall CPacketDispatcher::possible_ctor_or_dtor_2(_DWORD *this);
 _DWORD *__thiscall CPacketDispatcher::sub_5A478C(_DWORD *this, char a2);
+_DWORD *__thiscall sub_5A47A8(_DWORD *this);
 void __thiscall sub_5A4D5C(char **this);
 char **__thiscall sub_5A4D7D(char **this, char a2);
 char **__thiscall sub_5A4EF6(int this, char **, _DWORD *this, _DWORD *, int this, int i); // idb
@@ -2575,6 +2585,7 @@ _DWORD *__thiscall CMapObjToTileInfo::sub_5C77BF(_DWORD *this, char a2);
 void __thiscall CStockInfo::possible_ctor_or_dtor_2(_DWORD *this);
 void __thiscall CApp::possible_ctor_or_dtor(_DWORD *this);
 _DWORD *__thiscall CApp::sub_5C8032(_DWORD *this, char a2);
+void __thiscall CApp::sub_5C804E(_DWORD *this);
 void __thiscall sub_5C823F(_DWORD *this);
 int __thiscall sub_5C8297(_DWORD *this, int DestinationSize); // idb
 int *__thiscall sub_5C82BD(int **this);
@@ -2588,6 +2599,7 @@ void __thiscall CLocalCache::possible_ctor_or_dtor(int this);
 void *__thiscall CLocalCache::sub_5C8727(void *this, char a2);
 char **__thiscall sub_5C8743(char **this, char a2);
 int *__thiscall sub_5C87D6(int **this, char *Source, rsize_t DestinationSize);
+_DWORD *__fastcall CCurseFilter::possible_ctor_or_dtor(_DWORD *);
 // void __thiscall Concurrency::details::SchedulerBase::~SchedulerBase(Concurrency::details::SchedulerBase *__hidden this); idb
 Concurrency::details::SchedulerBase *__thiscall CCurseFilter::sub_5C8C80(Concurrency::details::SchedulerBase *this, char a2);
 void __cdecl sub_5C90A0(_DWORD *, _DWORD *);
@@ -2615,6 +2627,7 @@ void __thiscall CMemoryWatcher::possible_ctor_or_dtor_0(int this);
 void *__thiscall CMemoryWatcher::sub_5CD1A9(void *this, char a2);
 // void __thiscall Concurrency::call<unsigned int,std::tr1::function<void __cdecl (unsigned int const &)>>::~call<unsigned int,std::tr1::function<void __cdecl (unsigned int const &)>>(_DWORD *this);
 _DWORD *__thiscall MTUDPClient::sub_5CD3A6(_DWORD *this, char a2);
+__int16 __thiscall sub_5CD595(_DWORD *this);
 int __thiscall sub_5CD8BB(_DWORD *this, int);
 void __thiscall stlp_std::basic_ios::possible_ctor_or_dtor_0(_DWORD *this);
 _DWORD *__thiscall stlp_std::basic_ios::sub_5CD90E(_DWORD *this, char a2);
@@ -2633,10 +2646,21 @@ char __thiscall sub_5CE35F(_BYTE *this, char);
 int __thiscall stlp_std::basic_filebuf::sub_5CE3CF(int this, int a2); // idb
 _DWORD *__thiscall stlp_std::basic_filebuf::sub_5CE799(int this, _DWORD *p_lDistanceToMove, LONG lDistanceToMove, LONG DistanceToMoveHigh, int a5, int a6, int a7); // idb
 int *__thiscall stlp_std::basic_filebuf::sub_5CE820(int *this, char a2);
+__int16 __thiscall sub_5CE83C(_DWORD *this, unsigned __int8 **a2);
+int __thiscall sub_5CE98F(char *this);
+void __thiscall sub_5CEA53(_DWORD *this);
 int __cdecl sub_5CEA88(int);
+_DWORD *__thiscall stlp_std::basic_fstream::possible_ctor_or_dtor_0(_DWORD *this, LPCSTR lpFileName, int n8, int); // idb
 void __thiscall sub_5CF2EC(int this);
+int __thiscall sub_5CF329(int this);
+void __thiscall sub_5CF364(_DWORD *this, char *p_i);
+void __thiscall sub_5CF449(_DWORD *this);
+void __thiscall sub_5CF579(_DWORD *this);
+void __thiscall sub_5CF7CB(_DWORD *this);
+SIZE_T __cdecl sub_5CFAE0(int (__cdecl *lpAddress)(LPCVOID lpAddress));
 void __thiscall CStringMan::possible_ctor_or_dtor(_DWORD *this);
 _DWORD *__thiscall CStringMan::sub_5CFE50(_DWORD *this, char a2);
+_DWORD *__fastcall CStringMan::possible_ctor_or_dtor_0(_DWORD *);
 LPTOP_LEVEL_EXCEPTION_FILTER __thiscall CUnhandledExceptionHandler::possible_ctor_or_dtor(void *this);
 void *__thiscall CUnhandledExceptionHandler::sub_5D087E(void *this, char a2);
 bool __thiscall sub_5D14C7(int this);
@@ -2645,14 +2669,17 @@ _DWORD *__thiscall CUnzipper::possible_ctor_or_dtor(_DWORD *this, LPCSTR CodePag
 void __thiscall CUnzipper::possible_ctor_or_dtor_0(_DWORD *this);
 _DWORD *__thiscall CUnzipper::sub_5D1BC8(_DWORD *this, char a2);
 char __thiscall sub_5D1DF5(int this, char);
+void *__cdecl sub_5D2CA8(void *a1, _DWORD *a2, int a3, int a4, int a5, int a6, int *a7);
 // void __usercall CZipper::possible_ctor_or_dtor_0(_DWORD *@<ecx>, int@<ebx>);
 // _DWORD *__userpurge CZipper::sub_5D3A8E@<eax>(_DWORD *a1@<ecx>, int a2@<ebx>, char a3);
+_DWORD *__fastcall CChannelCache::possible_ctor_or_dtor(_DWORD *);
 void __thiscall CChannelCache::possible_ctor_or_dtor_0(_DWORD *this);
 _DWORD *__thiscall CChannelCache::sub_5D3D23(_DWORD *this, char a2);
 int __thiscall sub_5D4025(_DWORD *this, int i, char); // idb
 int __thiscall sub_5D4139(_DWORD *this, _DWORD *a2);
 void __thiscall sub_5D45AC(int this);
 void *__thiscall CChannelInfo::sub_5D46F7(void *this, char a2);
+_DWORD *__fastcall CDockingFacade::possible_ctor_or_dtor(_DWORD *);
 void __thiscall CDockingFacade::possible_ctor_or_dtor_0(_DWORD *this);
 _DWORD *__thiscall CDockingFacade::sub_5D47B0(_DWORD *this, char a2);
 void __thiscall sub_5D4DC2(char **this);
@@ -2666,6 +2693,8 @@ void __thiscall CMultiServer::possible_ctor_or_dtor(int this);
 void *__thiscall CMultiServer::sub_5D608C(void *this, char a2);
 char *__thiscall sub_5D62B8(int *this, int, int p_i, int, unsigned int, char); // idb
 char *__thiscall sub_5D67CB(int *this, int p_i); // idb
+void __fastcall CMultiServer::possible_ctor_or_dtor_0(int);
+int __thiscall sub_5D7C4A(int *this, char *n43); // idb
 void __thiscall CNetworkFacade::possible_ctor_or_dtor_0(_DWORD *this);
 int __thiscall sub_5D8407(_DWORD **this, int this); // idb
 int __thiscall sub_5D841B(_DWORD **this);
@@ -2935,7 +2964,7 @@ char *__thiscall stlp_std::time_get::sub_605550(char *this, char a2);
 char *__thiscall stlp_std::time_put::sub_605570(char *this, char a2);
 char *__thiscall stlp_std::time_get::sub_605590(char *this, char a2);
 char *__thiscall stlp_std::time_put::sub_6055B0(char *this, char a2);
-char ************************__thiscall sub_605B30(char ***************************this, _BYTE *WideCharStr, _BYTE *WideCharStr); // idb
+char ***************************__thiscall sub_605B30(char ******************************this, _BYTE *WideCharStr, _BYTE *WideCharStr); // idb
 char *__thiscall sub_605C00(void *this, size_t Size, size_t *p_Size); // idb
 char **__thiscall sub_605C30(char **this, int, size_t n0x7FFFFFFF); // idb
 char **__thiscall sub_605C90(char **this, void ***WideCharStr); // idb
@@ -3073,12 +3102,14 @@ void sub_626CE8();
 // int __cdecl atexit(void (__cdecl *)());
 // size_t __cdecl wcslen(const wchar_t *);
 void __cdecl j_j__free(void *);
+// unsigned __int8 *__cdecl _mbsnbcpy(unsigned __int8 *, const unsigned __int8 *, size_t);
 // int sprintf(char *, const char *, ...);
 // int __cdecl rand();
 // void __stdcall `eh vector destructor iterator'(void *, unsigned int, int, void (__thiscall *)(void *)); idb
 // void __stdcall `eh vector constructor iterator'(void *, unsigned int, int, void (__thiscall *)(void *), void (__thiscall *)(void *)); idb
 // int __cdecl __RTDynamicCast(int, int, struct _s_RTTICompleteObjectLocator *, struct TypeDescriptor *, int); idb
 // int __cdecl abs(int);
+// int __cdecl atol(const char *);
 int __cdecl j__atol(const char *);
 // unsigned __int8 *__cdecl _mbsstr(const unsigned __int8 *, const unsigned __int8 *);
 // int __cdecl _mbsicmp(const unsigned __int8 *, const unsigned __int8 *);
@@ -3089,6 +3120,7 @@ int __cdecl j__atol(const char *);
 // void *__cdecl realloc(void *, size_t);
 // errno_t __cdecl _localtime64_s(struct tm *Tm, const __time64_t *Time);
 // char *__cdecl strchr(const char *, int);
+// int __cdecl strcmp(const char *, const char *);
 // char *__cdecl strstr(const char *, const char *);
 // char *__cdecl strncpy(char *, const char *, size_t);
 // size_t __cdecl fread(void *, size_t, size_t, FILE *);
@@ -3114,6 +3146,7 @@ int __cdecl j__atol(const char *);
 // void __cdecl _invalid_parameter_noinfo();
 // int *__cdecl _errno();
 // void __cdecl __noreturn abort();
+// int __usercall ProcessCodePage@<eax>(char *LCData@<ecx>, int a2@<edi>); idb
 // DName *__thiscall DName::DName(DName *__hidden this, const struct DName *); idb
 // int __thiscall DName::isEmpty(DName *__hidden this); idb
 // int __stdcall DName::operator=(struct DName *); idb
@@ -3190,7 +3223,9 @@ int __fastcall sub_667330(int *n0xC, int); // idb
 int __cdecl sub_668000(LPWSTR lpWideCharStr, int cchWideChar, LPCCH lpMultiByteStr, int cbMultiByte); // idb
 int __cdecl sub_668060(LPSTR lpMultiByteStr, int cbMultiByte, LPCWCH lpWideCharStr, int cchWideChar); // idb
 char **__thiscall sub_668430(char **this, unsigned int a2, char **thisa); // idb
+unsigned int __cdecl sub_668700(_DWORD *, unsigned int, void **);
 void __thiscall CCRC32::possible_ctor_or_dtor_0(_DWORD *this);
+int sub_668DE0();
 void __thiscall CCRC8::possible_ctor_or_dtor_0(_DWORD *this);
 _DWORD *__thiscall CCRC32::sub_668FD0(_DWORD *this, char a2);
 _DWORD *__thiscall CCRC8::sub_668FF0(_DWORD *this, char a2);
@@ -3256,29 +3291,26 @@ _DWORD *__fastcall sub_670212(int a1, int p_j, _DWORD *p_p_j, int a4); // idb
 _DWORD *__thiscall sub_670370(_DWORD *this, _DWORD *p_j); // idb
 int __thiscall sub_6703F0(int this, int p_j); // idb
 int __cdecl sub_672110(int *, unsigned __int8 *src, int, int i, int); // idb
-_DWORD *__thiscall CMemoryMappedFile::possible_ctor_or_dtor(_DWORD *this);
-int __thiscall sub_672C70(_DWORD *this);
 void __thiscall CDataFile::possible_ctor_or_dtor(_DWORD *this);
 int __thiscall sub_672CE0(int this);
 // struct Concurrency::IThreadProxy *__thiscall Concurrency::details::InternalContextBase::GetProxy(Concurrency::details::InternalContextBase *__hidden this); idb
-int __cdecl sub_673110(char *lpValueName, unsigned int *, unsigned int FileSize, unsigned int n0x5B201FC);
+int __thiscall sub_672E40(_DWORD *this);
+int __thiscall sub_672E50(_DWORD *this);
 void __thiscall CDataFile::possible_ctor_or_dtor_0(Concurrency::details::InternalContextBase *this);
 void __thiscall CData::possible_ctor_or_dtor(int *this);
 Concurrency::details::InternalContextBase *__thiscall CDataFile::sub_673730(Concurrency::details::InternalContextBase *this, char a2);
 int __thiscall sub_673750(_DWORD *this, unsigned __int8 *MultiServer_CAStage); // idb
 int *__thiscall CData::sub_6737A0(int *this, char a2);
+int __thiscall sub_6739B0(_DWORD *this, unsigned __int8 *);
 _DWORD *__thiscall CDataFile::possible_ctor_or_dtor_1(_DWORD *this, unsigned __int8 *MultiServer_CAStage); // idb
-_DWORD *__thiscall CPackSysMan::possible_ctor_or_dtor(_DWORD *this);
 _DWORD *__thiscall sub_673BE0(_DWORD *this, char a2);
-_DWORD *__thiscall sub_673D30(int this, char *, _DWORD *, int, size_t p_i, char); // idb
 size_t __thiscall sub_673E20(int this, char *src, const void *src, int p_src, size_t p_i, char); // idb
-int __thiscall sub_673F40(int this, LPCSTR lpFileName, int, int);
 void __thiscall CPackSysMan::possible_ctor_or_dtor_0(char *this);
+_DWORD *__thiscall CData::possible_ctor_or_dtor_0(_DWORD *this);
 int __thiscall CData::sub_674590(size_t *this, char *MultiServer_CAStage); // idb
 char **__thiscall sub_674870(char **this, void *src);
 void __thiscall CMemoryMappedFile::possible_ctor_or_dtor_1(_DWORD *this);
 char *__thiscall CPackSysMan::sub_6749A0(char *this, char a2);
-int __thiscall sub_6749C0(int this, LPCSTR lpString2, unsigned int n0x5B201FC); // idb
 _DWORD *__thiscall CMemoryMappedFile::sub_674E30(_DWORD *this, char a2);
 void __thiscall CFxFontReal::possible_ctor_or_dtor(_DWORD *this);
 void __thiscall sub_674E80(void **this);
@@ -3406,7 +3438,6 @@ void __thiscall cUnreliableQueueOut::possible_ctor_or_dtor(char *this);
 char *__thiscall cUnreliableQueueOut::sub_695410(char *this, char a2);
 void __thiscall cDataPacket::possible_ctor_or_dtor_0(_DWORD *this);
 _DWORD *__thiscall cDataPacket::sub_695550(_DWORD *this, char a2);
-int __thiscall CSendPacket::sub_695650(_DWORD *this, int);
 unsigned int *__thiscall CSendPacketBase::sub_695CC0(unsigned int *this, char a2);
 unsigned int *__thiscall CReceivedPacketBase::sub_696340(unsigned int *this, char a2);
 unsigned int __thiscall sub_6966F0(_DWORD *this, int);
@@ -3482,7 +3513,7 @@ void *__thiscall CMemMan::sub_69D810(void *this, char a2);
 void __thiscall sub_69D830(int *this, unsigned int k_);
 void __thiscall sub_69D8A0(_DWORD *this, char);
 int __thiscall sub_69D8D0(int *this, int, int, int);
-unsigned int __thiscall sub_69DAD0(int *this, unsigned int k_, int a3, int a4, int a5);
+int __thiscall sub_69DAD0(int *this, unsigned int k_, int a3, int a4, int a5);
 void __thiscall CThread::possible_ctor_or_dtor(_DWORD *this);
 int __stdcall sub_69DCB0(_DWORD *a1);
 unsigned int *__thiscall CThread::possible_ctor_or_dtor_0(unsigned int *ArgList, int a2);
@@ -3654,6 +3685,8 @@ int sub_70AC3A(char *Buffer, size_t BufferCount, char *Format, ...);
 void __thiscall TiXmlBase::possible_ctor_or_dtor_1(_DWORD *this);
 void __thiscall TiXmlBase::possible_ctor_or_dtor_2(_DWORD *this);
 int __thiscall sub_70B223(_DWORD *this, char *, char *Buffer); // idb
+int __thiscall TiXmlDocument::possible_ctor_or_dtor_0(int this);
+int __thiscall TiXmlDocument::possible_ctor_or_dtor_1(int this, char *FileName); // idb
 char __thiscall sub_70B6A4(int this, int this); // idb
 int __thiscall sub_70B963(_DWORD *this, _DWORD *a2);
 size_t *__thiscall sub_70BBBE(int this, size_t *this); // idb
@@ -3674,6 +3707,8 @@ _DWORD *__thiscall TiXmlComment::sub_70C504(_DWORD *this);
 size_t *__thiscall sub_70C5CC(size_t *this, int a2);
 size_t *__thiscall TiXmlDeclaration::sub_70C5E2(void *this);
 _DWORD *__thiscall TiXmlElement::sub_70C646(_DWORD *this, char a2);
+char __thiscall sub_70C662(size_t *this, int);
+unsigned __int8 *__thiscall TiXmlDocument::sub_70D294(int this, unsigned __int8 *p_n10, _DWORD *, int);
 char sub_710490(int p_CodePage, char *, ...); // idb
 char __stdcall sub_710790(unsigned __int8 *lpFilename, DWORD nSize);
 char __thiscall sub_710CB0(char *lpParameter);
@@ -3993,7 +4028,6 @@ _UNKNOWN sub_61A1D0;
 // extern HGDIOBJ (__stdcall *SelectObject)(HDC hdc, HGDIOBJ h);
 // extern COLORREF (__stdcall *SetPixel)(HDC hdc, int x, int y, COLORREF color);
 // extern HBITMAP (__stdcall *CreateCompatibleBitmap)(HDC hdc, int cx, int cy);
-// extern int (__stdcall *lstrcmpA)(LPCSTR lpString1, LPCSTR lpString2);
 // extern BOOL (__stdcall *WriteFile)(HANDLE hFile, LPCVOID lpBuffer, DWORD nNumberOfBytesToWrite, LPDWORD lpNumberOfBytesWritten, LPOVERLAPPED lpOverlapped);
 // extern BOOL (__stdcall *UnmapViewOfFile)(LPCVOID lpBaseAddress);
 // extern HANDLE (__stdcall *CreateFileMappingA)(HANDLE hFile, LPSECURITY_ATTRIBUTES lpFileMappingAttributes, DWORD flProtect, DWORD dwMaximumSizeHigh, DWORD dwMaximumSizeLow, LPCSTR lpName);
@@ -4008,11 +4042,11 @@ _UNKNOWN sub_61A1D0;
 // extern WINERROR (__stdcall *GetLastError)();
 // extern void (__stdcall *DeleteCriticalSection)(LPCRITICAL_SECTION lpCriticalSection);
 // extern DWORD (__stdcall *WaitForSingleObject)(HANDLE hHandle, DWORD dwMilliseconds);
+// extern DWORD (__stdcall *GetModuleFileNameA)(HMODULE hModule, LPSTR lpFilename, DWORD nSize);
 // extern DWORD (__stdcall *GetFileSize)(HANDLE hFile, LPDWORD lpFileSizeHigh);
 // extern int (__stdcall *CompareStringW)(LCID Locale, DWORD dwCmpFlags, PCNZWCH lpString1, int cchCount1, PCNZWCH lpString2, int cchCount2);
 // extern int (__stdcall *CompareStringA)(LCID Locale, DWORD dwCmpFlags, PCNZCH lpString1, int cchCount1, PCNZCH lpString2, int cchCount2);
 // extern int (__stdcall *lstrlenW)(LPCWSTR lpString);
-// extern LPSTR (__stdcall *lstrcpyA)(LPSTR lpString1, LPCSTR lpString2);
 // extern int (__stdcall *lstrcmpiA)(LPCSTR lpString1, LPCSTR lpString2);
 // extern void (__stdcall *InitializeCriticalSection)(LPCRITICAL_SECTION lpCriticalSection);
 // extern HMODULE (__stdcall *LoadLibraryA)(LPCSTR lpLibFileName);
@@ -4021,7 +4055,6 @@ _UNKNOWN sub_61A1D0;
 // extern int (__stdcall *WideCharToMultiByte)(UINT CodePage, DWORD dwFlags, LPCWCH lpWideCharStr, int cchWideChar, LPSTR lpMultiByteStr, int cbMultiByte, LPCCH lpDefaultChar, LPBOOL lpUsedDefaultChar);
 // extern int (__stdcall *MultiByteToWideChar)(UINT CodePage, DWORD dwFlags, LPCCH lpMultiByteStr, int cbMultiByte, LPWSTR lpWideCharStr, int cchWideChar);
 // extern HANDLE (__stdcall *CreateThread)(LPSECURITY_ATTRIBUTES lpThreadAttributes, SIZE_T dwStackSize, LPTHREAD_START_ROUTINE lpStartAddress, LPVOID lpParameter, DWORD dwCreationFlags, LPDWORD lpThreadId);
-// extern int (__stdcall *lstrlenA)(LPCSTR lpString);
 // extern HANDLE (__stdcall *CreateEventA)(LPSECURITY_ATTRIBUTES lpEventAttributes, BOOL bManualReset, BOOL bInitialState, LPCSTR lpName);
 // extern BOOL (__stdcall *PeekNamedPipe)(HANDLE hNamedPipe, LPVOID lpBuffer, DWORD nBufferSize, LPDWORD lpBytesRead, LPDWORD lpTotalBytesAvail, LPDWORD lpBytesLeftThisMessage);
 // extern BOOL (__stdcall *SetStdHandle)(DWORD nStdHandle, HANDLE hHandle);
@@ -4045,7 +4078,6 @@ _UNKNOWN sub_61A1D0;
 // extern SHORT (__stdcall *GetKeyState)(int nVirtKey);
 // extern HDC (__stdcall *GetWindowDC)(HWND hWnd);
 // extern LRESULT (__stdcall *SendMessageA)(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam);
-// extern int (*wsprintfA)(LPSTR, LPCSTR, ...);
 // extern ATOM (__stdcall *RegisterClassA)(const WNDCLASSA *lpWndClass);
 // extern LONG (__stdcall *SetWindowLongA)(HWND hWnd, int nIndex, LONG dwNewLong);
 // extern BOOL (__stdcall *SetRect)(LPRECT lprc, int xLeft, int yTop, int xRight, int yBottom);
@@ -4056,9 +4088,11 @@ _UNKNOWN sub_61A1D0;
 // extern HINTERNET (__stdcall *InternetOpenUrlA)(HINTERNET hInternet, LPCSTR lpszUrl, LPCSTR lpszHeaders, DWORD dwHeadersLength, DWORD dwFlags, DWORD_PTR dwContext);
 // extern HINTERNET (__stdcall *InternetOpenA)(LPCSTR lpszAgent, DWORD dwAccessType, LPCSTR lpszProxy, LPCSTR lpszProxyBypass, DWORD dwFlags);
 // extern BOOL (__stdcall *InternetCloseHandle)(HINTERNET hInternet);
+// extern MMRESULT (__stdcall *timeBeginPeriod)(UINT uPeriod);
 // extern DWORD (__stdcall *timeGetTime)();
 // extern void (__stdcall *OleUninitialize)();
 // extern HRESULT (__stdcall *OleRun)(LPUNKNOWN pUnknown);
+// extern HRESULT (__stdcall *CoInitialize)(LPVOID pvReserved);
 // extern HRESULT (__stdcall *CoCreateInstance)(const IID *const rclsid, LPUNKNOWN pUnkOuter, DWORD dwClsContext, const IID *const riid, LPVOID *ppv);
 void *wapp::CDynamicFunctionBase::`vftable' = &wapp::CDynamicFunctionBase::sub_41666A; // weak
 void *CGameObject::`vftable' = &CGameObject::sub_440AAA; // weak
@@ -4085,6 +4119,7 @@ void *CSurvivalPlayer::`vftable' = &CSurvivalPlayer::sub_5068F4; // weak
 void *CGOSurvivalHeadcount::`vftable' = &CGOSurvivalHeadcount::sub_509609; // weak
 void *CStageClearPlayer::`vftable' = &CStageClearPlayer::sub_50E5A2; // weak
 void *CGORabbitCatchHeadcount::`vftable' = &CGORabbitCatchHeadcount::sub_5235B0; // weak
+_UNKNOWN aSD_6; // weak
 void *CStockContainerView::`vftable' = &CStockContainerView::sub_557807; // weak
 void *CItemInventoryNew::`vftable' = &CItemInventoryNew::sub_583E25; // weak
 void *CShipAttr::`vftable' = &CShipAttr::sub_585A80; // weak
@@ -4103,7 +4138,6 @@ void *stlp_std::ios_base::failure::`vftable' = &stlp_std::ios_base::failure::sub
 void *stlp_std::basic_ios<wchar_t,stlp_std::char_traits<wchar_t>>::`vftable' = &stlp_std::basic_ios::sub_5F7BC0; // weak
 void *stlp_std::basic_streambuf<wchar_t,stlp_std::char_traits<wchar_t>>::`vftable' = &stlp_std::basic_streambuf::sub_5F8F20; // weak
 int (__thiscall *vtable__stlp_std::locale::facet)(void *, char) = &stlp_std::locale::facet::sub_5FED80; // weak
-const CHAR off_7C718C[] = { 'A', 'C', 'P', '\0' }; // idb
 int (__thiscall *off_7C782C)(void *, char) = &stlp_std::ctype::sub_61AC30; // weak
 void *stlp_std::priv::_Messages::`vftable' = &stlp_std::priv::_Messages::sub_61FAF0; // weak
 void *stlp_std::moneypunct<char,1>::`vftable' = &stlp_std::moneypunct::sub_6201B0; // weak
@@ -21910,7 +21944,88 @@ int dword_91D7BC[5] = { 0, 0, -1, 1, 0 }; // weak
 _UNKNOWN unk_91D7D0; // weak
 _UNKNOWN Define_the_symbol__ATL_MIXED::Thank_you `RTTI Type Descriptor'; // weak
 int dword_91D7DC = 0; // weak
-char *off_91FFD0 = "american"; // weak
+char *off_91FFD0[79] =
+{
+  "american",
+  "ENU",
+  "american english",
+  "ENU",
+  "american-english",
+  "ENU",
+  "australian",
+  "ENA",
+  "belgian",
+  "NLB",
+  "canadian",
+  "ENC",
+  "chh",
+  "ZHH",
+  "chi",
+  "ZHI",
+  "chinese",
+  "CHS",
+  "chinese-hongkong",
+  "ZHH",
+  "chinese-simplified",
+  "CHS",
+  "chinese-singapore",
+  "ZHI",
+  "chinese-traditional",
+  "CHT",
+  "dutch-belgian",
+  "NLB",
+  "english-american",
+  "ENU",
+  "english-aus",
+  "ENA",
+  "english-belize",
+  "ENL",
+  "english-can",
+  "ENC",
+  "english-caribbean",
+  "ENB",
+  "english-ire",
+  "ENI",
+  "english-jamaica",
+  "ENJ",
+  "english-nz",
+  "ENZ",
+  "english-south africa",
+  "ENS",
+  "english-trinidad y tobago",
+  "ENT",
+  "english-uk",
+  "ENG",
+  "english-us",
+  "ENU",
+  "english-usa",
+  "ENU",
+  "french-belgian",
+  "FRB",
+  "french-canadian",
+  "FRC",
+  "french-luxembourg",
+  "FRL",
+  "french-swiss",
+  "FRS",
+  "german-austrian",
+  "DEA",
+  "german-lichtenstein",
+  "DEC",
+  "german-luxembourg",
+  "DEL",
+  "german-swiss",
+  "DES",
+  "irish-english",
+  "ENI",
+  "italian-swiss",
+  "ITS",
+  "norwegian",
+  "NOR",
+  "norwegian-bokmal",
+  "NOR",
+  "norwegian-nynorsk"
+}; // weak
 char *off_9201D8[7] = { "america", "USA", "britain", "GBR", "china", "CHN", "czech" }; // weak
 int cchCount2 = -1; // idb
 char *off_92029C = "LC_ALL"; // idb
@@ -21986,6 +22101,7 @@ int n166; // weak
 _DWORD *dword_92A898; // idb
 int dword_92A8AC; // weak
 int **p_n4; // idb
+_DWORD *dword_92D9EC; // idb
 _DWORD *dword_92DB70; // idb
 int dword_92DBEC; // weak
 _DWORD **dword_92E2E8; // idb
@@ -22003,9 +22119,11 @@ int dword_970868[4]; // weak
 _DWORD *dword_971BE4; // idb
 HANDLE hObject; // idb
 int dword_973BB0; // weak
+void *this_1; // idb
 Time *Time_3;
 int dword_974EF4; // weak
 int dword_974EF8; // weak
+int dword_974F00; // weak
 HANDLE dword_9B59A0; // idb
 _UNKNOWN unk_9B5B8C; // weak
 int dword_9B85B8; // weak
@@ -22020,6 +22138,8 @@ void *dword_9B878C; // idb
 void *dword_9B87A4; // idb
 _UNKNOWN unk_9B87B4; // weak
 int dword_9B87B8; // weak
+char n43_; // idb
+char byte_9B8DE1[255]; // weak
 LPCSTR lpString2; // idb
 int dword_9B9A24; // weak
 CHAR LCData[64]; // idb
@@ -93916,7 +94036,7 @@ LABEL_32:
 }
 
 //----- (0044EF3A) --------------------------------------------------------
-int __thiscall sub_44EF3A(char *n7, int n3, unsigned int n0xC, int *p_p_n0xE)
+int __thiscall sub_44EF3A(char *n7, int n3, int n0xC, int *p_p_n0xE)
 {
   int v5; // eax
   bool v6; // zf
@@ -135813,13 +135933,13 @@ _DWORD *__thiscall sub_47FED1(_DWORD *this)
 }
 
 //----- (0047FF4E) --------------------------------------------------------
-int __thiscall sub_47FF4E(_DWORD *this, int **************************a2)
+int __thiscall sub_47FF4E(_DWORD *this, int *****************************a2)
 {
-  int *************************v2; // edx
+  int ****************************v2; // edx
   int v3; // esi
 
-  v2 = (int *************************)a2;
-  if ( a2[5] != (int *************************)(a2 + 4) )
+  v2 = (int ****************************)a2;
+  if ( a2[5] != (int ****************************)(a2 + 4) )
     v2 = *a2;
   v3 = *(this + 4);
   if ( (_DWORD *)*(this + 5) != this + 4 )
@@ -158900,7 +159020,7 @@ int __thiscall sub_49D498(_DWORD *this)
   if ( dword_929D68 != 0 )
   {
     v13 = 1;
-    sub_402738((int)v12, (char *)off_7B1070, (int)v14);
+    sub_402738((int)v12, aDao, (int)v14);
     n2 = 0;
     v13 |= 2u;
     sub_5CFDA3((_DWORD *)dword_929D68, v12);
@@ -158946,7 +159066,7 @@ int __thiscall sub_49D498(_DWORD *this)
   if ( dword_929D68 != 0 )
   {
     v13 |= 0x10u;
-    sub_402738((int)v12, (char *)off_7B1064, (int)v14);
+    sub_402738((int)v12, aMos, (int)v14);
     n2 = 2;
     v13 |= 0x20u;
     sub_5CFDA3((_DWORD *)dword_929D68, v12);
@@ -159038,7 +159158,7 @@ int __thiscall sub_49D498(_DWORD *this)
   if ( dword_929D68 != 0 )
   {
     v13 |= 0x1000u;
-    sub_402738((int)v12, (char *)off_7B1048, (int)v14);
+    sub_402738((int)v12, aUni, (int)v14);
     n2 = 6;
     v13 |= 0x2000u;
     sub_5CFDA3((_DWORD *)dword_929D68, v12);
@@ -162468,11 +162588,11 @@ DWORD __stdcall StartAddress(LPVOID lpThreadParameter)
 // 92D9E8: using guessed type int dword_92D9E8;
 
 //----- (004A0A8A) --------------------------------------------------------
-int __thiscall sub_4A0A8A(int **************************this, _BYTE *., int *thisa, int a4)
+int __thiscall sub_4A0A8A(int *****************************this, _BYTE *., int *thisa, int a4)
 {
-  int **************************this_1; // esi
-  int *************************v5; // ebx
-  int *************************v6; // edi
+  int *****************************this_1; // esi
+  int ****************************v5; // ebx
+  int ****************************v6; // edi
   int v7; // eax
   int v8; // eax
   unsigned int thisa_1; // eax
@@ -162481,16 +162601,16 @@ int __thiscall sub_4A0A8A(int **************************this, _BYTE *., int *thi
   int **p_thisa; // eax
   int v14; // eax
   int this_3; // ecx
-  int *************************v16; // eax
+  int ****************************v16; // eax
   int *this_4; // edx
   unsigned int thisa_2; // [esp+Ch] [ebp-4h] BYREF
 
   this_1 = this;
   v5 = *(this + 5);
-  v6 = (int *************************)(this + 4);
+  v6 = (int ****************************)(this + 4);
   v7 = (int)*(this + 4);
-  if ( v5 != (int *************************)(this + 4) )
-    this = (int **************************)*this;
+  if ( v5 != (int ****************************)(this + 4) )
+    this = (int *****************************)*this;
   v8 = v7 - (_DWORD)this;
   if ( v8 == 0 )
     return -1;
@@ -162515,7 +162635,7 @@ int __thiscall sub_4A0A8A(int **************************this, _BYTE *., int *thi
   if ( thisa == this_4 )
     return -1;
   if ( v16 != v6 )
-    this_1 = (int **************************)*this_1;
+    this_1 = (int *****************************)*this_1;
   return (char *)thisa - (char *)this_1 - 1;
 }
 
@@ -170464,7 +170584,7 @@ void __thiscall sub_4A9245(int *this, int *i)
     v4 = v57;
     if ( v59 != &v58 )
       v4 = *(char **)v57;
-    if ( _mbsnbicmp((const unsigned __int8 *)v4, &byte_7B219C, 6u) == 0 )
+    if ( _mbsnbicmp((const unsigned __int8 *)v4, "운영 :", 6u) == 0 )
       sub_66C560(0xFFu, 0xD8u, 0);
     v5 = v57;
     if ( v59 != &v58 )
@@ -189125,7 +189245,7 @@ int __thiscall CAdminPopupDlg::sub_4BE9A2(_DWORD *this)
   if ( dword_929D68 != 0 )
   {
     v10 |= 0x40u;
-    sub_402738((int)v8, (char *)off_7B3998, (int)v11);
+    sub_402738((int)v8, "Etc", (int)v11);
     n2 = 5;
     v10 |= 0x80u;
     sub_5CFDA3((_DWORD *)dword_929D68, v8);
@@ -196050,7 +196170,7 @@ void __thiscall sub_4C6922(int *this, int i)
     sub_5B4350((int *)(v4 + 128), i, dword_9186C4 + 28, dword_9186C8 + 5, v6);
     sub_402977(v20, (int)v19);
     v23 = 0;
-    if ( sub_5CDBF2(64) != 0 )
+    if ( sub_5CDBF2(64) )
     {
       if ( dword_929D68 != 0 )
       {
@@ -196120,7 +196240,6 @@ void __thiscall sub_4C6922(int *this, int i)
   sub_626CE8();
 }
 // 4C6A8F: variable 'v7' is possibly undefined
-// 5CDBF2: using guessed type _DWORD __cdecl sub_5CDBF2(_DWORD);
 // 9186C4: using guessed type int dword_9186C4;
 // 9186C8: using guessed type int dword_9186C8;
 // 9186CC: using guessed type int dword_9186CC[];
@@ -243786,7 +243905,7 @@ LABEL_32:
 }
 
 //----- (004FDA48) --------------------------------------------------------
-unsigned int __thiscall sub_4FDA48(int *this, int n3, unsigned int n0xC, int *p_p_n0xE)
+unsigned int __thiscall sub_4FDA48(int *this, int n3, int n0xC, int *p_p_n0xE)
 {
   int v5; // eax
   bool v6; // zf
@@ -243843,7 +243962,7 @@ unsigned int __thiscall sub_4FDA48(int *this, int n3, unsigned int n0xC, int *p_
       n0xC = v18 % 40;
       if ( v18 % 40 > *p_p_n0xE )
         n0xC = *p_p_n0xE;
-      result = sub_4FD29F(this, 0, (int *)&n0xC);
+      result = sub_4FD29F(this, 0, &n0xC);
       goto LABEL_32;
     }
     if ( n0xC != 0 )
@@ -243858,7 +243977,7 @@ unsigned int __thiscall sub_4FDA48(int *this, int n3, unsigned int n0xC, int *p_
   n0xC = p_n0xE_1;
   if ( !v16 )
     n0xC = p_n0xE;
-  result = sub_4FD29F(this, 2, (int *)&n0xC);
+  result = sub_4FD29F(this, 2, &n0xC);
 LABEL_32:
   *p_p_n0xE_1 -= result;
   return result;
@@ -249896,7 +250015,7 @@ LABEL_68:
             return 555;
           return 0;
         }
-        if ( sub_449B8E(a2, (char *)off_7B6874) )
+        if ( sub_449B8E(a2, "Pin") )
           goto LABEL_68;
         if ( sub_449B8E(a2, "Banana1") )
           return 480;
@@ -297383,7 +297502,7 @@ void __thiscall sub_53809C(int *this)
   sub_5AA68F((_DWORD *)dword_929D6C, (int)v8);
   CSendPacket::possible_ctor_or_dtor_3(v7, 337);
   LOBYTE(v14) = 2;
-  sub_402738((int)v9, (char *)off_7BB63C, (int)v13);
+  sub_402738((int)v9, "/sc", (int)v13);
   LOBYTE(v14) = 3;
   CSendPacket::sub_6956C0(v7, (int)v9);
   LOBYTE(v14) = 2;
@@ -297401,7 +297520,6 @@ void __thiscall sub_53809C(int *this)
   v14 = -1;
   CSendPacket::possible_ctor_or_dtor_0(v8);
 }
-// 929D6C: using guessed type int dword_929D6C;
 
 //----- (00538230) --------------------------------------------------------
 int __thiscall CShopStageNew::sub_538230(int *this, char *a2)
@@ -302739,7 +302857,7 @@ void __thiscall sub_53ED2C(int this)
         if ( n0x32 >= 0x32u )
           sub_666B30(v20, "%d", n0x32 - 49);
         else
-          sub_666B30(v20, (char *)&off_7BBD80, n0x32 + 1);
+          sub_666B30(v20, &aSD_6, n0x32 + 1);
         v7 = (char *)v20;
         if ( v22 != &v21 )
           v7 = (char *)v20[0];
@@ -312872,7 +312990,7 @@ void __thiscall sub_54B953(int this)
         if ( n0x32 >= 0x32u )
           sub_666B30(v21, "%d", n0x32 - 49);
         else
-          sub_666B30(v21, (char *)&off_7BBD80, n0x32 + 1);
+          sub_666B30(v21, &aSD_6, n0x32 + 1);
         v8 = (char *)v21;
         if ( v23 != &v22 )
           v8 = (char *)v21[0];
@@ -382305,11 +382423,11 @@ _DWORD *__cdecl sub_599EDF(_DWORD *p_this, _BYTE *a2, int this, char n47)
 }
 
 //----- (00599F09) --------------------------------------------------------
-int __thiscall sub_599F09(int **************************this, char n47, int *thisa)
+int __thiscall sub_599F09(int *****************************this, char n47, int *thisa)
 {
-  int **************************this_1; // esi
-  int *************************v4; // ebx
-  int *************************v5; // edi
+  int *****************************this_1; // esi
+  int ****************************v4; // ebx
+  int ****************************v5; // edi
   int v6; // eax
   int v7; // eax
   unsigned int thisa_1; // eax
@@ -382318,16 +382436,16 @@ int __thiscall sub_599F09(int **************************this, char n47, int *thi
   int **p_thisa; // eax
   char *v13; // eax
   int this_3; // ecx
-  int *************************v15; // eax
+  int ****************************v15; // eax
   int *this_4; // edx
   unsigned int thisa_2; // [esp+Ch] [ebp-4h] BYREF
 
   this_1 = this;
   v4 = *(this + 5);
-  v5 = (int *************************)(this + 4);
+  v5 = (int ****************************)(this + 4);
   v6 = (int)*(this + 4);
-  if ( v4 != (int *************************)(this + 4) )
-    this = (int **************************)*this;
+  if ( v4 != (int ****************************)(this + 4) )
+    this = (int *****************************)*this;
   v7 = v6 - (_DWORD)this;
   if ( v7 == 0 )
     return -1;
@@ -382352,7 +382470,7 @@ int __thiscall sub_599F09(int **************************this, char n47, int *thi
   if ( thisa == this_4 )
     return -1;
   if ( v15 != v5 )
-    this_1 = (int **************************)*this_1;
+    this_1 = (int *****************************)*this_1;
   return (char *)thisa - (char *)this_1 - 1;
 }
 
@@ -391847,11 +391965,11 @@ _DWORD *__thiscall sub_5A47A8(_DWORD *this)
   void *v11; // ecx
   char n43_; // cl
   int v13; // eax
-  char **v14; // eax
+  _DWORD *v14; // eax
   _BYTE v15[5]; // [esp+13h] [ebp-15h] BYREF
   void *v16; // [esp+18h] [ebp-10h]
   int n2; // [esp+24h] [ebp-4h]
-  char *v18[4]; // [esp+28h] [ebp+0h] BYREF
+  _DWORD v18[4]; // [esp+28h] [ebp+0h] BYREF
   _DWORD v19[2]; // [esp+38h] [ebp+10h] BYREF
   char v20[256]; // [esp+40h] [ebp+18h] BYREF
 
@@ -391942,7 +392060,7 @@ _DWORD *__thiscall sub_5A47A8(_DWORD *this)
         {
           v14 = v18;
           if ( (_DWORD *)v19[1] != v19 )
-            v14 = (char **)v18[0];
+            v14 = (_DWORD *)v18[0];
           if ( v19[0] == (_DWORD)v14 )
             *(_DWORD *)(*(_DWORD *)&v15[1] + 1432) = 1;
           sub_5D7C4A(dword_92D9EC, &::n43_);
@@ -396215,7 +396333,7 @@ bool __thiscall GifResource::sub_5A9179(_DWORD *this, LPCSTR lpName)
   bool result; // al
 
   (*(void (__thiscall **)(_DWORD *))(*this + 4))(this);
-  Resource = FindResourceExA(nullptr, Type, lpName, 0);
+  Resource = FindResourceExA(nullptr, "GIF", lpName, 0);
   Resource_1 = Resource;
   result = false;
   if ( Resource != nullptr )
@@ -431626,8 +431744,8 @@ void __thiscall sub_5CF364(_DWORD *this, char *p_i)
 //----- (005CF449) --------------------------------------------------------
 void __thiscall sub_5CF449(_DWORD *this)
 {
-  unsigned __int8 *v1; // eax
-  char *v2; // eax
+  unsigned __int8 *MultiServer_CAStage_2; // eax
+  char *MultiServer_CAStage; // eax
   signed int *v3; // eax
   signed int v4; // esi
   void *p_n10; // ebx
@@ -431635,28 +431753,27 @@ void __thiscall sub_5CF449(_DWORD *this)
   int v7; // [esp+60h] [ebp-4h]
   void *v8; // [esp+64h] [ebp+0h]
   _DWORD *this_1; // [esp+68h] [ebp+4h]
-  int v10; // [esp+6Fh] [ebp+Bh] BYREF
-  size_t v11[10]; // [esp+70h] [ebp+Ch] BYREF
-  char v12[4]; // [esp+98h] [ebp+34h] BYREF
-  char v13; // [esp+A8h] [ebp+44h] BYREF
-  char *v14; // [esp+ACh] [ebp+48h]
+  size_t v10[10]; // [esp+6Fh] [ebp+Bh] BYREF
+  char MultiServer_CAStage_1[4]; // [esp+98h] [ebp+34h] BYREF
+  char v12; // [esp+A8h] [ebp+44h] BYREF
+  char *v13; // [esp+ACh] [ebp+48h]
 
   this_1 = this;
-  CData::possible_ctor_or_dtor_0(v11);
+  CData::possible_ctor_or_dtor_0((size_t *)((char *)v10 + 1));
   v7 = 1;
-  sub_402738((int)v12, "xml/init", (int)&v10);
-  v1 = (unsigned __int8 *)v12;
-  if ( v14 != &v13 )
-    v1 = *(unsigned __int8 **)v12;
-  if ( sub_6739B0(dword_9C79A8, v1) != 0 )
+  sub_402738((int)MultiServer_CAStage_1, "xml/init", (int)v10);
+  MultiServer_CAStage_2 = (unsigned __int8 *)MultiServer_CAStage_1;
+  if ( v13 != &v12 )
+    MultiServer_CAStage_2 = *(unsigned __int8 **)MultiServer_CAStage_1;
+  if ( sub_6739B0(dword_9C79A8, MultiServer_CAStage_2) != 0 )
   {
-    v2 = v12;
-    if ( v14 != &v13 )
-      v2 = *(char **)v12;
-    CData::sub_674590(v11, v2);
-    if ( sub_672E40(v11) != 0 )
+    MultiServer_CAStage = MultiServer_CAStage_1;
+    if ( v13 != &v12 )
+      MultiServer_CAStage = *(char **)MultiServer_CAStage_1;
+    CData::sub_674590((size_t *)((char *)v10 + 1), MultiServer_CAStage);
+    if ( sub_672E40((size_t *)((char *)v10 + 1)) != 0 )
     {
-      v3 = (signed int *)sub_672E50(v11);
+      v3 = (signed int *)sub_672E50((size_t *)((char *)v10 + 1));
       v4 = *v3;
       v8 = v3 + 1;
       if ( v4 > 0 )
@@ -431676,9 +431793,9 @@ void __thiscall sub_5CF449(_DWORD *this)
     }
   }
   LOBYTE(v7) = 0;
-  sub_40234B((char **)v12);
+  sub_40234B(MultiServer_CAStage_1);
   v7 = -1;
-  CData::possible_ctor_or_dtor((int *)v11);
+  CData::possible_ctor_or_dtor((int *)((char *)v10 + 1));
 }
 
 //----- (005CF579) --------------------------------------------------------
@@ -431693,7 +431810,7 @@ void __thiscall sub_5CF579(_DWORD *this)
   _DWORD *this_1; // [esp+94h] [ebp-14h]
   int v8[2]; // [esp+9Bh] [ebp-Dh] BYREF
   int v9; // [esp+A4h] [ebp-4h]
-  _DWORD v10[72]; // [esp+A8h] [ebp+0h] BYREF
+  _DWORD v10[3]; // [esp+A8h] [ebp+0h] BYREF
   int v11[6]; // [esp+1C8h] [ebp+120h] BYREF
   void *v12[4]; // [esp+1E0h] [ebp+138h] BYREF
   char v13; // [esp+1F0h] [ebp+148h] BYREF
@@ -431755,9 +431872,9 @@ void __thiscall sub_5CF579(_DWORD *this)
   LOBYTE(v9) = 1;
   sub_5CEA53(v10);
   LOBYTE(v9) = 0;
-  sub_40234B((char **)v12);
+  sub_40234B(v12);
   v9 = -1;
-  sub_40234B((char **)v11);
+  sub_40234B(v11);
 }
 
 //----- (005CF7CB) --------------------------------------------------------
@@ -434570,17 +434687,17 @@ void *__cdecl sub_5D2BB6(
 //----- (005D2CA8) --------------------------------------------------------
 void *__cdecl sub_5D2CA8(void *a1, _DWORD *a2, int a3, int a4, int a5, int a6, int *a7)
 {
-  _DWORD *v7; // ecx
+  _DWORD **v7; // ecx
   signed int v8; // esi
   signed int v9; // ebx
-  void **v10; // edi
+  _QWORD *v10; // edi
   int v11; // eax
-  void *v13; // [esp+14h] [ebp-18h] BYREF
+  void *v13; // [esp+14h] [ebp-18h]
   int v14; // [esp+18h] [ebp-14h]
   char v15; // [esp+1Eh] [ebp-Eh]
   char v16; // [esp+1Fh] [ebp-Dh] BYREF
   int v17; // [esp+28h] [ebp-4h]
-  _BYTE v18[24]; // [esp+2Ch] [ebp+0h] BYREF
+  _QWORD v18[3]; // [esp+2Ch] [ebp+0h] BYREF
   _BYTE v19[24]; // [esp+44h] [ebp+18h] BYREF
   _BYTE v20[24]; // [esp+5Ch] [ebp+30h] BYREF
   _BYTE v21[24]; // [esp+74h] [ebp+48h] BYREF
@@ -434612,67 +434729,67 @@ void *__cdecl sub_5D2CA8(void *a1, _DWORD *a2, int a3, int a4, int a5, int a6, i
   v17 = 1;
   v7 = &a2;
   if ( a7 != &a6 )
-    v7 = a2;
+    v7 = (_DWORD **)a2;
   v14 = a6 - (_DWORD)v7;
   if ( (unsigned int)(a6 - (_DWORD)v7 - 1) > 0xF )
   {
     sub_40277A((int)a1, (void **)&a2);
-    sub_40234B((char **)&a2);
+    sub_40234B(&a2);
     return a1;
   }
   else
   {
     sub_402738((int)v34, (char *)n43, (int)&v16);
     LOBYTE(v17) = 2;
-    sub_402738((int)v35, (char *)&byte_7C3D9C, (int)&v16);
+    sub_402738((int)v35, "일", (int)&v16);
     LOBYTE(v17) = 3;
-    sub_402738((int)v36, (char *)&byte_7C3D98, (int)&v16);
+    sub_402738((int)v36, "이", (int)&v16);
     LOBYTE(v17) = 4;
-    sub_402738((int)v37, (char *)&byte_7C3D94, (int)&v16);
+    sub_402738((int)v37, "삼", (int)&v16);
     LOBYTE(v17) = 5;
-    sub_402738((int)v38, (char *)&byte_7C3D90, (int)&v16);
+    sub_402738((int)v38, "사", (int)&v16);
     LOBYTE(v17) = 6;
-    sub_402738((int)v39, (char *)&byte_7C3D8C, (int)&v16);
+    sub_402738((int)v39, "오", (int)&v16);
     LOBYTE(v17) = 7;
-    sub_402738((int)v40, (char *)&byte_7C3D88, (int)&v16);
+    sub_402738((int)v40, "육", (int)&v16);
     LOBYTE(v17) = 8;
-    sub_402738((int)v41, (char *)&byte_7C3D84, (int)&v16);
+    sub_402738((int)v41, "칠", (int)&v16);
     LOBYTE(v17) = 9;
-    sub_402738((int)v42, (char *)&byte_7C3D80, (int)&v16);
+    sub_402738((int)v42, "팔", (int)&v16);
     LOBYTE(v17) = 10;
-    sub_402738((int)v43, (char *)&byte_7C3D7C, (int)&v16);
+    sub_402738((int)v43, "구", (int)&v16);
     LOBYTE(v17) = 12;
     sub_402738((int)v18, (char *)n43, (int)&v16);
     LOBYTE(v17) = 13;
-    sub_402738((int)v19, (char *)&byte_7C3D78, (int)&v16);
+    sub_402738((int)v19, "십", (int)&v16);
     LOBYTE(v17) = 14;
-    sub_402738((int)v20, (char *)&byte_7C3D74, (int)&v16);
+    sub_402738((int)v20, "백", (int)&v16);
     LOBYTE(v17) = 15;
-    sub_402738((int)v21, (char *)&byte_7C3D70, (int)&v16);
+    sub_402738((int)v21, "천", (int)&v16);
     LOBYTE(v17) = 16;
-    sub_402738((int)v22, (char *)&byte_7C3D6C, (int)&v16);
+    sub_402738((int)v22, "만", (int)&v16);
     LOBYTE(v17) = 17;
-    sub_402738((int)v23, (char *)&byte_7C3D78, (int)&v16);
+    sub_402738((int)v23, "십", (int)&v16);
     LOBYTE(v17) = 18;
-    sub_402738((int)v24, (char *)&byte_7C3D74, (int)&v16);
+    sub_402738((int)v24, "백", (int)&v16);
     LOBYTE(v17) = 19;
-    sub_402738((int)v25, (char *)&byte_7C3D70, (int)&v16);
+    sub_402738((int)v25, "천", (int)&v16);
     LOBYTE(v17) = 20;
-    sub_402738((int)v26, (char *)&byte_7C3D68, (int)&v16);
+    sub_402738((int)v26, "억", (int)&v16);
     LOBYTE(v17) = 21;
-    sub_402738((int)v27, (char *)&byte_7C3D78, (int)&v16);
+    sub_402738((int)v27, "십", (int)&v16);
     LOBYTE(v17) = 22;
-    sub_402738((int)v28, (char *)&byte_7C3D74, (int)&v16);
+    sub_402738((int)v28, "백", (int)&v16);
     LOBYTE(v17) = 23;
-    sub_402738((int)v29, (char *)&byte_7C3D70, (int)&v16);
+    sub_402738((int)v29, "천", (int)&v16);
     LOBYTE(v17) = 24;
-    sub_402738((int)v30, (char *)&byte_7C3D64, (int)&v16);
+    sub_402738((int)v30, "조", (int)&v16);
     LOBYTE(v17) = 25;
-    sub_402738((int)v31, (char *)&byte_7C3D78, (int)&v16);
+    sub_402738((int)v31, "십", (int)&v16);
     LOBYTE(v17) = 26;
-    sub_402738((int)v32, (char *)&byte_7C3D74, (int)&v16);
+    sub_402738((int)v32, "백", (int)&v16);
     LOBYTE(v17) = 27;
-    sub_402738((int)v33, (char *)&byte_7C3D70, (int)&v16);
+    sub_402738((int)v33, "천", (int)&v16);
     LOBYTE(v17) = 29;
     sub_402977((_BYTE **)v44, (int)&v16);
     LOBYTE(v17) = 30;
@@ -434682,7 +434799,7 @@ void *__cdecl sub_5D2CA8(void *a1, _DWORD *a2, int a3, int a4, int a5, int a6, i
     if ( v14 > 0 )
     {
       --v14;
-      v10 = &v13 + 6 * v8;
+      v10 = &v18[3 * v8 - 3];
       do
       {
         v16 = *sub_4DE3F2(&a2, v9);
@@ -434701,20 +434818,20 @@ void *__cdecl sub_5D2CA8(void *a1, _DWORD *a2, int a3, int a4, int a5, int a6, i
         sub_40221F(v44, (int)v10);
 LABEL_12:
         ++v9;
-        v10 -= 6;
+        v10 -= 3;
         --v14;
       }
       while ( v9 < v8 );
     }
     sub_40277A((int)v13, v44);
     LOBYTE(v17) = 29;
-    sub_40234B((char **)v44);
+    sub_40234B(v44);
     LOBYTE(v17) = 12;
-    `eh vector destructor iterator'(v18, 0x18u, 16, (void (__thiscall *)(void *))sub_40234B);
+    `eh vector destructor iterator'(v18, 0x18u, 16, sub_40234B);
     LOBYTE(v17) = 1;
-    `eh vector destructor iterator'(v34, 0x18u, 10, (void (__thiscall *)(void *))sub_40234B);
+    `eh vector destructor iterator'(v34, 0x18u, 10, sub_40234B);
     LOBYTE(v17) = 0;
-    sub_40234B((char **)&a2);
+    sub_40234B(&a2);
     return v13;
   }
 }
@@ -478990,8 +479107,8 @@ int *__thiscall stlp_std::time_get::sub_605A70(
 }
 
 //----- (00605B30) --------------------------------------------------------
-char ************************__thiscall sub_605B30(
-        char ***************************this,
+char ***************************__thiscall sub_605B30(
+        char ******************************this,
         _BYTE *WideCharStr,
         _BYTE *WideCharStr_2)
 {
@@ -478999,11 +479116,11 @@ char ************************__thiscall sub_605B30(
   int v5; // ebx
   char *v6; // eax
   unsigned int v7; // edx
-  char *************************v8; // ebp
+  char ****************************v8; // ebp
   size_t v9; // ebx
-  char ************************result; // eax
-  char ************************v11; // ebx
-  char **************************v12; // esi
+  char ***************************result; // eax
+  char ***************************v11; // ebx
+  char *****************************v12; // esi
   unsigned int v13; // [esp+Ch] [ebp-4h] BYREF
 
   WideCharStr_1 = WideCharStr;
@@ -479016,18 +479133,18 @@ char ************************__thiscall sub_605B30(
     v6 = std::bad_alloc::possible_ctor_or_dtor_6(v5 + 1, &v13);
     v7 = v13;
     WideCharStr_1 = WideCharStr;
-    *this = (char **************************)v6;
-    *(this + 8) = (char **************************)v6;
-    *(this + 9) = (char **************************)&v6[2 * v7];
+    *this = (char *****************************)v6;
+    *(this + 8) = (char *****************************)v6;
+    *(this + 9) = (char *****************************)&v6[2 * v7];
   }
-  v8 = (char *************************)(this + 8);
-  if ( *(this + 9) == (char **************************)(this + 8) )
+  v8 = (char ****************************)(this + 8);
+  if ( *(this + 9) == (char *****************************)(this + 8) )
   {
     v9 = 2 * v5;
-    result = (char ************************)memcpy(this, WideCharStr_1, v9);
-    if ( *(this + 9) != (char **************************)v8 )
-      this = (char ***************************)*this;
-    v11 = (char ************************)((char *)this + v9);
+    result = (char ***************************)memcpy(this, WideCharStr_1, v9);
+    if ( *(this + 9) != (char *****************************)v8 )
+      this = (char ******************************)*this;
+    v11 = (char ***************************)((char *)this + v9);
     *v8 = v11;
     *(_WORD *)v11 = 0;
   }
@@ -479036,15 +479153,15 @@ char ************************__thiscall sub_605B30(
     v12 = *this;
     if ( WideCharStr_2 == WideCharStr_1 )
     {
-      *v8 = (char ************************)v12;
+      *v8 = (char ***************************)v12;
       *(_WORD *)v12 = 0;
-      return (char ************************)v12;
+      return (char ***************************)v12;
     }
     else
     {
-      result = (char ************************)((char *)memcpy(v12, WideCharStr_1, WideCharStr_2 - WideCharStr)
-                                             + WideCharStr_2
-                                             - WideCharStr);
+      result = (char ***************************)((char *)memcpy(v12, WideCharStr_1, WideCharStr_2 - WideCharStr)
+                                                + WideCharStr_2
+                                                - WideCharStr);
       *v8 = result;
       *(_WORD *)result = 0;
     }
@@ -479104,7 +479221,7 @@ char **__thiscall sub_605C90(char **this, void ***WideCharStr)
   WideCharStr_1 = WideCharStr;
   if ( WideCharStr[9] != (void **)(WideCharStr + 8) )
     WideCharStr_1 = (void ***)*WideCharStr;
-  sub_605B30((char ***************************)this, WideCharStr_1, WideCharStr[8]);
+  sub_605B30((char ******************************)this, WideCharStr_1, WideCharStr[8]);
   return this;
 }
 
@@ -479961,7 +480078,7 @@ char **__thiscall sub_606F70(char **this, unsigned __int16 *WideCharStr, int a3)
 {
   *(this + 8) = (char *)this;
   *(this + 9) = (char *)(this + 8);
-  sub_605B30((char ***************************)this, WideCharStr, &WideCharStr[wcslen(WideCharStr)]);
+  sub_605B30((char ******************************)this, WideCharStr, &WideCharStr[wcslen(WideCharStr)]);
   return this;
 }
 
@@ -492242,14 +492359,14 @@ int __usercall sub_617860@<eax>(const char *Source@<ecx>, LCID *p_Locale@<edi>, 
     {
       if ( Destination_1[0] == 0 )
       {
-        _american_ = sub_6169C0(65, String2, (int)&off_91FFD0);// "american"
+        _american_ = sub_6169C0(65, String2, (int)off_91FFD0);// "american"
         v7 = sub_616D10(_american_, nullptr, p_Locale);
 LABEL_14:
         v5 = v7;
         if ( v7 != 0 )
           return v5;
 LABEL_15:
-        if ( lstrcmpiA(String1, off_7C718C) != 0 && String1[0] != 0 )
+        if ( lstrcmpiA(String1, "ACP") != 0 && String1[0] != 0 )
         {
           if ( lstrcmpiA(String1, "OCP") != 0 )
           {
@@ -492275,7 +492392,7 @@ LABEL_22:
       goto LABEL_15;
     }
     _america_ = sub_6169C0(23, Destination_1, (int)off_9201D8);// "america"
-    _american__1 = sub_6169C0(65, String2, (int)&off_91FFD0);// "american"
+    _american__1 = sub_6169C0(65, String2, (int)off_91FFD0);// "american"
     v5 = sub_616D10(_american__1, _america_, p_Locale);
     if ( v5 == 0 )
       goto LABEL_15;
@@ -492285,7 +492402,7 @@ LABEL_22:
   *p_Locale = 1024;
   return 0;
 }
-// 91FFD0: using guessed type char *off_91FFD0;
+// 91FFD0: using guessed type char *off_91FFD0[79];
 // 9201D8: using guessed type char *off_9201D8[7];
 
 //----- (00617A50) --------------------------------------------------------
@@ -494223,7 +494340,7 @@ _DWORD *__cdecl sub_619FA0(int i_3, _DWORD *a2, int a3, __int16 a4, int a5)
 
 //----- (0061A070) --------------------------------------------------------
 int __usercall sub_61A070@<eax>(
-        int n36@<eax>,
+        unsigned int n36@<eax>,
         int n36_1@<ecx>,
         char *Buffer@<edi>,
         _DWORD *i,
@@ -494232,7 +494349,7 @@ int __usercall sub_61A070@<eax>(
         int n36a,
         char a8)
 {
-  unsigned int n36a_1; // ebp
+  int n36a_1; // ebp
   int n36a_2; // eax
   unsigned int n36a_3; // ecx
   char v14; // al
@@ -494274,7 +494391,7 @@ int __usercall sub_61A070@<eax>(
           break;
       }
     }
-    if ( n36_1 >= -3 && n36_1 <= (int)n36a_1 )
+    if ( n36_1 >= -3 && n36_1 <= n36a_1 )
       return sub_619C60(a8, i, Buffer, n36_1, PtSign, n36, n36a_2 - n36_1);
     v14 = Value == 0.0;
   }
@@ -494283,7 +494400,7 @@ int __usercall sub_61A070@<eax>(
 
 //----- (0061A1D0) --------------------------------------------------------
 int __usercall sub_61A1D0@<eax>(
-        int n36@<eax>,
+        unsigned int n36@<eax>,
         int n36_1@<ecx>,
         char *Buffer@<edi>,
         _DWORD *i,
@@ -494292,7 +494409,7 @@ int __usercall sub_61A1D0@<eax>(
         int n36a,
         char a8)
 {
-  unsigned int n36a_1; // ebp
+  int n36a_1; // ebp
   int n36a_2; // eax
   unsigned int n36a_3; // ecx
   char v14; // al
@@ -494334,7 +494451,7 @@ int __usercall sub_61A1D0@<eax>(
           break;
       }
     }
-    if ( n36_1 >= -3 && n36_1 <= (int)n36a_1 )
+    if ( n36_1 >= -3 && n36_1 <= n36a_1 )
       return sub_619C60(a8, i, Buffer, n36_1, PtSign, n36, n36a_2 - n36_1);
     v14 = Value == 0.0;
   }
@@ -495318,7 +495435,7 @@ char **__thiscall sub_61B4D0(char **this, _BYTE *WideCharStr, _BYTE *WideCharStr
 {
   *(this + 8) = (char *)this;
   *(this + 9) = (char *)(this + 8);
-  sub_605B30((char ***************************)this, WideCharStr, WideCharStr_1);
+  sub_605B30((char ******************************)this, WideCharStr, WideCharStr_1);
   return this;
 }
 
@@ -567596,7 +567713,7 @@ LABEL_6:
 }
 
 //----- (0069DAD0) --------------------------------------------------------
-unsigned int __thiscall sub_69DAD0(int *this, unsigned int k_, int a3, int a4, int a5)
+int __thiscall sub_69DAD0(int *this, unsigned int k_, int a3, int a4, int a5)
 {
   int Mem_Block_End; // edi
   HANDLE ProcessHeap; // eax
@@ -660756,11 +660873,11 @@ int sub_79A9A3()
   int v1[2]; // [esp+13h] [ebp-Dh] BYREF
   int v2; // [esp+1Ch] [ebp-4h]
 
-  sub_402738((int)&unk_972340, (char *)off_7B1070, (int)v1);
+  sub_402738((int)&unk_972340, aDao, (int)v1);
   v2 = 0;
   sub_402738((int)&unk_972358, "Dizini", (int)v1);
   LOBYTE(v2) = 1;
-  sub_402738((int)&unk_972370, (char *)off_7B1064, (int)v1);
+  sub_402738((int)&unk_972370, aMos, (int)v1);
   LOBYTE(v2) = 2;
   sub_402738((int)&unk_972388, "Ethi", (int)v1);
   LOBYTE(v2) = 3;
@@ -660768,7 +660885,7 @@ int sub_79A9A3()
   LOBYTE(v2) = 4;
   sub_402738((int)&unk_9723B8, "Bazzi", (int)v1);
   LOBYTE(v2) = 5;
-  sub_402738((int)&unk_9723D0, (char *)off_7B1048, (int)v1);
+  sub_402738((int)&unk_9723D0, aUni, (int)v1);
   LOBYTE(v2) = 6;
   sub_402738((int)&unk_9723E8, "Kephi", (int)v1);
   LOBYTE(v2) = 7;
