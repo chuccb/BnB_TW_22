@@ -105,6 +105,7 @@ void __thiscall sub_436F4F(_DWORD *this);
 // _DWORD __stdcall unknown_libname_36(_DWORD); weak
 _DWORD *__thiscall sub_43712C(_DWORD *this, _BYTE *a2, _BYTE *a3);
 void __thiscall sub_4371C6(_DWORD *this);
+char *__thiscall sub_43724B(char **this, _BYTE *, _DWORD *, int, char *n0x3FFFFFFF, char); // idb
 void **__thiscall sub_4372D5(void **this, void **this); // idb
 _DWORD *__thiscall CSetPlayerPacket::sub_437468(_DWORD *this, char a2);
 _DWORD *__thiscall CSlotAccessoryPacket::sub_4376C8(_DWORD *this, char a2);
@@ -522,6 +523,7 @@ int __thiscall sub_45FEC0(_DWORD *this, int, int i); // idb
 int __thiscall sub_45FED9(_DWORD *this, int a2);
 int __thiscall sub_45FF23(_DWORD *this, int n25, int); // idb
 void __thiscall sub_45FF9E(_DWORD *this);
+char *__thiscall sub_46028C(char **this, _BYTE *, _DWORD *, int, char *n0x3FFFFFFF, char); // idb
 char *__stdcall sub_460426(unsigned int *p_n0x3FFFFFFF, _BYTE *, _BYTE *); // idb
 char *__stdcall sub_460482(unsigned int *p_n0x3FFFFFFF, _BYTE *, _BYTE *); // idb
 void __thiscall sub_460608(_DWORD *this);
@@ -588,7 +590,6 @@ void __thiscall CNewUserSuccessDlg::possible_ctor_or_dtor(int this);
 void *__thiscall CNewUserSuccessDlg::sub_46B70C(void *this, char a2);
 void __thiscall CNexonClubDlg::possible_ctor_or_dtor(int this);
 void *__thiscall CNexonClubDlg::sub_46B9FB(void *this, char a2);
-// __int16 __userpurge sub_46C2AD@<ax>(int@<ecx>, int@<ebp>, _DWORD *);
 void __thiscall CNoSpeakerDlg::possible_ctor_or_dtor(int this);
 void *__thiscall CNoSpeakerDlg::sub_46C8E3(void *this, char a2);
 int __cdecl sub_46C94F(void *this, int Buffer, void *); // idb
@@ -682,7 +683,7 @@ void *__thiscall CSessionPasswdDlg::sub_47F1B4(void *this, char a2);
 void *__stdcall sub_47F6EF(_BYTE *thisa, _BYTE *thisa, void *thisa); // idb
 char *__stdcall sub_47F743(unsigned int n0x3333333, unsigned int *p_n0x3333333); // idb
 void __thiscall __noreturn sub_47F79A(int *this); // idb
-int __thiscall sub_47FF4E(_DWORD *this, int ******************a2);
+int __thiscall sub_47FF4E(_DWORD *this, int **************************a2);
 BOOL __fastcall sub_47FF7D(_DWORD *this, int this, unsigned int this); // idb
 unsigned int __thiscall sub_47FFEC(void **this, unsigned int i); // idb
 void __thiscall sub_4800B2(char *this, char *thisa, char *this, char *thisa, int i); // idb
@@ -822,7 +823,6 @@ _DWORD *__thiscall CDynamicFileContext::sub_49DB58(_DWORD *this, char a2);
 void __thiscall CDynamicImgContext::possible_ctor_or_dtor_0(_DWORD *this);
 _DWORD *__thiscall CDynamicImgContext::sub_49DE7C(_DWORD *this, char a2);
 void __thiscall sub_49DF1C(char **this);
-int __thiscall sub_49E093(_DWORD *this, int *);
 int __thiscall sub_49E1D4(_DWORD *this);
 unsigned int __thiscall sub_49E35C(_DWORD *this, unsigned int n11);
 _DWORD *__thiscall sub_49E4A3(_DWORD *this, int);
@@ -849,24 +849,20 @@ int *__thiscall CGuildLib::sub_4A0068(int *this, char a2);
 void __thiscall CLogoMan::possible_ctor_or_dtor_0(_DWORD *this);
 _DWORD *__thiscall CLogoMan::sub_4A07B2(_DWORD *this, char a2);
 int *__cdecl sub_4A09DF(int *p_this, int this, int this, _BYTE *., _BYTE *.); // idb
-int __thiscall sub_4A0A8A(int ******************this, _BYTE *., int *thisa, int a4);
+int __thiscall sub_4A0A8A(int **************************this, _BYTE *., int *thisa, int a4);
 void __thiscall sub_4A220D(void **this);
 void __thiscall sub_4A2224(void **this);
 void __thiscall sub_4A2311(_DWORD *this);
 int __thiscall sub_4A237F(int this);
 void **__thiscall sub_4A2427(void **this, char a2);
 int __thiscall sub_4A2629(_DWORD *this, int, int this); // idb
-int __thiscall sub_4A27CB(char **this, _DWORD *);
 void __thiscall CPermissionMan::possible_ctor_or_dtor_0(_DWORD *this);
 _DWORD *__thiscall CPermissionMan::sub_4A29EC(_DWORD *this, char a2);
 void __thiscall sub_4A2A43(_DWORD *this);
 int __thiscall sub_4A2A61(_DWORD *this, int);
 _DWORD *__thiscall CPreviewAssist::sub_4A2BC6(_DWORD *this, char a2);
-_DWORD *__thiscall CSelfPatcher::possible_ctor_or_dtor(_DWORD *this);
 void __thiscall CSelfPatcher::possible_ctor_or_dtor_0(_DWORD *this);
-int sub_4A3BE1();
 _DWORD *__thiscall CSelfPatcher::sub_4A3CA1(_DWORD *this, char a2);
-void __thiscall sub_4A3CBD(int this, __int16, __int16, char *cp); // idb
 int __cdecl sub_4A40D3(int, int);
 int __thiscall sub_4A428A(void *this, int a2);
 void __thiscall CUser::possible_ctor_or_dtor(int this);
@@ -879,13 +875,9 @@ int __thiscall sub_4A4BB2(_DWORD *this);
 void __thiscall UserSimpleInfo::possible_ctor_or_dtor_0(_DWORD *this);
 void __thiscall CUserMap::possible_ctor_or_dtor_0(_DWORD *this);
 _DWORD *__thiscall CUserMap::sub_4A4FA1(_DWORD *this, char a2);
-int __thiscall sub_4A5114(_DWORD *this, int *);
-int __thiscall sub_4A51B5(_DWORD *this, int *);
-void __thiscall sub_4A522B(void *this, int *);
 void __thiscall sub_4A5375(char **this);
 void __thiscall CChatCommand::possible_ctor_or_dtor(_DWORD *this);
 _DWORD *__thiscall CChatCommand::sub_4A56B7(_DWORD *this, char a2);
-int __thiscall sub_4A5978(_DWORD *this);
 int __thiscall sub_4A5991(int *this);
 void __cdecl __noreturn _CxxThrowException(int pExceptionObject); // idb
 void __noreturn sub_4A5AAF(void); // weak
@@ -914,8 +906,6 @@ char *__thiscall sub_4A8B1B(char **this, _DWORD *a2);
 void __thiscall sub_4A963F(int *this, int);
 void __thiscall sub_4A9C59(unsigned int *this, int);
 void __thiscall sub_4AA0D5(int this, int *);
-void __thiscall sub_4AB796(int *this, char *);
-void __thiscall CChatStage::sub_4AB7D7(int this);
 char **__thiscall sub_4AC6EA(int this, char **, _DWORD *this, void **, int this, int i); // idb
 void __thiscall sub_4AD598(int *this, _DWORD *n6); // idb
 void __thiscall sub_4ADEE8(int *this, int n3); // idb
@@ -985,38 +975,12 @@ _DWORD __stdcall nullsub_541(_DWORD); // weak
 int __thiscall CStage::sub_4B8C28(void *this, int n256, int n13, int, int); // idb
 int __thiscall CStage::sub_4B8C3C(int *this, int);
 int __thiscall CStage::sub_4B8C50(_DWORD *this, int n513, int n0x32, int, int); // idb
-HANDLE __stdcall sub_4B8D42(_DWORD *);
 BOOL __stdcall sub_4B8EE9(int n12); // idb
 int __stdcall CStage::sub_4B8F0E(int);
-void sub_4B8F3F();
 void __thiscall CPacketCreator::possible_ctor_or_dtor_0(_DWORD *this);
 _DWORD *__thiscall CPacketCreator::sub_4B92D7(_DWORD *this, char a2);
-int __stdcall sub_4B93FD(_DWORD *);
-int __stdcall sub_4B945F(int *);
-void __stdcall sub_4B94A6(int *);
-unsigned __int8 __stdcall sub_4B956B(_DWORD *);
-void __stdcall sub_4B95B0(int *);
-void __stdcall sub_4B95F7(int *);
-void __stdcall sub_4B963E(int *);
-void __stdcall sub_4B9649(int *);
-int __stdcall sub_4B9654(int *);
-void __stdcall sub_4B965F(int *);
-void __stdcall sub_4B966A(int *);
-int sub_4B96E5();
-int __stdcall sub_4B96F3(int *);
-int __stdcall sub_4B976C(int *);
-void __stdcall sub_4B987B(int *);
-void __stdcall sub_4B990D(int *);
-int __stdcall sub_4B9918(int);
-int __stdcall sub_4B992F(_DWORD *);
 void __stdcall sub_4B9956(unsigned int n2);
-int __stdcall sub_4B9D05(_DWORD *);
-char __stdcall sub_4B9D2B(_DWORD *);
-__int16 __stdcall sub_4B9D81(_DWORD *);
-void __stdcall sub_4B9DAB(int *);
-void __thiscall sub_4B9DB6(_DWORD *this, int *);
 BOOL __stdcall sub_4B9E08(int *i); // idb
-void *__stdcall sub_4B9E20(_DWORD *);
 _DWORD *__thiscall sub_4B9E2B(_DWORD *this, char);
 _DWORD *__thiscall sub_4BA0BA(_DWORD *this, _DWORD *p_n70); // idb
 _DWORD *__thiscall sub_4BA0DF(_DWORD *this, _DWORD *p_n70); // idb
@@ -1026,31 +990,20 @@ void __thiscall CPacketCreatorImpl::possible_ctor_or_dtor_2(_DWORD *this);
 void __thiscall CPacketHandler::possible_ctor_or_dtor_1(_DWORD *this);
 _DWORD *__thiscall CPacketCreatorImpl::sub_4BA1EF(_DWORD *this, char a2);
 _DWORD *__thiscall CPacketHandler::sub_4BA20B(_DWORD *this, char a2);
-DWORD __thiscall CStage::sub_4BA2D8(int this);
-char *__stdcall sub_4BA3ED(_DWORD *);
-void __stdcall sub_4BAD83(_DWORD *);
-void __stdcall sub_4BAE58(int);
 _DWORD *__thiscall sub_4BAFBA(_DWORD *this, _DWORD *p_i, _DWORD *p_n70); // idb
 int __thiscall CStage::sub_4BB225(_BYTE *this, int n256, int n123, int); // idb
-void __thiscall sub_4BB3AE(void *this, int *);
-void __stdcall sub_4BB408(int *);
 char **__stdcall sub_4BB48F(char **, int this, _DWORD *); // idb
 char **__thiscall sub_4BB54A(int this, char **p_n70, _DWORD *this, _DWORD *, int this, int); // idb
-void __stdcall sub_4BB82A(int *);
 void __fastcall CGameServerPacketHandler::sub_4BBCA8(_DWORD *this, int, int); // idb
-void __stdcall sub_4BC642(int *);
 char **__thiscall sub_4BC71B(void *this, char *a2);
 char **__thiscall sub_4BC7D3(_DWORD *this, char **p_n70, _DWORD *a3); // idb
 void __thiscall CServerPacketHandler::possible_ctor_or_dtor_1(_DWORD *this);
 _DWORD *__thiscall CServerPacketHandler::sub_4BCA0B(_DWORD *this, char a2);
 void __thiscall sub_4BCA27(_DWORD *this);
 void __thiscall CGameServerPacketHandler::possible_ctor_or_dtor_8(int this);
-void __stdcall sub_4BCABF(_DWORD *);
 int __fastcall sub_4BCB70(int, int, int n0xB, int this); // idb
 void *__thiscall CStage::sub_4BD49E(void *this, char a2);
 _DWORD *__thiscall CGameServerPacketHandler::sub_4BD7B2(_DWORD *this, char a2);
-void __stdcall sub_4BDA18(_DWORD *);
-// void __userpurge CStage::sub_4BDBF5(_DWORD *a1@<ecx>, int a2@<ebp>, int *a3);
 void __thiscall CGameServerPacketHandler::possible_ctor_or_dtor_12(_DWORD *this);
 _DWORD *__thiscall CTitleStage::sub_4BE2FD(_DWORD *this, char a2);
 void __thiscall CAdminControlRoom::possible_ctor_or_dtor_0(_DWORD *this);
@@ -1222,7 +1175,6 @@ BOOL __thiscall sub_4DEAF7(_DWORD *this, signed int n8); // idb
 int __thiscall sub_4DEB45(_DWORD *this);
 void __thiscall CDynamicMapMan::possible_ctor_or_dtor_0(int this);
 void *__thiscall CDynamicMapMan::sub_4DFC05(void *this, char a2);
-int __thiscall sub_4E0131(int *this, int *);
 char **__stdcall sub_4E053A(char **, int this, _DWORD *); // idb
 void __thiscall CEffectMan::possible_ctor_or_dtor_0(int this);
 char **__thiscall sub_4E0616(void *this, char *a2);
@@ -1627,7 +1579,6 @@ char **__thiscall sub_517DA7(int this, char **a2, char *i, char *a4);
 void __thiscall sub_517F2A(void ***this);
 char **__thiscall sub_517FD7(void *this, char **, char *i, char *i); // idb
 char *__thiscall sub_517FF4(char *this, char *a2);
-void __thiscall sub_5180A6(char **this, int *);
 void __thiscall CGOGameResultStageClear::possible_ctor_or_dtor(void **this);
 void **__thiscall CGOGameResultStageClear::sub_518670(void **this, char a2);
 int __thiscall CScriptObject::sub_518AF0(int *this, int n21, int *a3);
@@ -1910,7 +1861,6 @@ void __thiscall sub_543EE4(int *this, unsigned int n7); // idb
 int __thiscall CUserPageDialog::sub_543F95(_DWORD *this, void *n514, int a3, int a4, int a5); // idb
 int __thiscall sub_544500(int *this);
 void __stdcall sub_54466F(int *);
-int __thiscall sub_5447F0(int *this, int *);
 void __thiscall sub_544BB0(int this);
 void __thiscall sub_545042(int *this, unsigned int n0xC); // idb
 void __thiscall sub_545C1D(int *this);
@@ -2056,7 +2006,6 @@ void __thiscall sub_55E8C2(char *this);
 int __thiscall CExchangeProposeDlg::sub_55F46F(char *this, int n2);
 void __thiscall CCheckLadderRestrict::possible_ctor_or_dtor_0(_DWORD *this);
 _DWORD *__thiscall CCheckLadderRestrict::sub_55F7CE(_DWORD *this, char a2);
-DWORD __thiscall sub_55F830(_DWORD *this, int n2); // idb
 void __thiscall CEKeyClientHandler::possible_ctor_or_dtor(_DWORD *this);
 _DWORD *__thiscall CEKeyClientHandler::sub_55FAEF(_DWORD *this, char a2);
 void __thiscall CGameServerPacketHandler::possible_ctor_or_dtor_20(char *this);
@@ -2336,7 +2285,7 @@ void __thiscall CDataI16Character::possible_ctor_or_dtor_0(int *this);
 int *__thiscall CDataI16Character::sub_599E4C(int *this, char a2);
 _DWORD *__cdecl sub_599E68(_DWORD *p_this, _BYTE *, int this, char n47); // idb
 _DWORD *__cdecl sub_599EDF(_DWORD *p_this, _BYTE *a2, int this, char n47); // idb
-int __thiscall sub_599F09(int ******************this, char n47, int *thisa);
+int __thiscall sub_599F09(int **************************this, char n47, int *thisa);
 void __thiscall CDataI16Dyn::possible_ctor_or_dtor_0(int *this);
 int *__thiscall CDataI16Dyn::sub_59A6E4(int *this, char a2);
 void __thiscall CDataI16Item::possible_ctor_or_dtor_0(int *this);
@@ -2387,7 +2336,7 @@ void __thiscall CAvatarContextGame::possible_ctor_or_dtor_0(_DWORD *this);
 _DWORD *__thiscall CAvatarContextGame::sub_5A1E24(_DWORD *this, char a2);
 void __thiscall CFxApp::possible_ctor_or_dtor(int this);
 void *__thiscall CFxApp::sub_5A29D7(void *this, char a2);
-void __thiscall sub_5A29F3(void **this, char *n43); // idb
+int sub_5A3257();
 void __thiscall CPacketDispatcher::possible_ctor_or_dtor_0(_DWORD *this);
 _DWORD *__thiscall CPacketDispatcher::sub_5A36A4(_DWORD *this, char a2);
 void __thiscall CPacketDispatcher::possible_ctor_or_dtor_2(_DWORD *this);
@@ -2423,16 +2372,11 @@ _DWORD *__thiscall CFxWin32Exception::sub_5A883E(_DWORD *this, char a2);
 _DWORD *__thiscall CFxWin32Exception::possible_ctor_or_dtor_0(_DWORD *this, struct _EXCEPTION_POINTERS *ExceptionInfo);
 void __cdecl __noreturn sub_5A8CAD(int a1, struct _EXCEPTION_POINTERS *ExceptionInfo); // idb
 _DWORD *__thiscall CWin32Exception::sub_5A8D23(_DWORD *this, char a2);
-void *__thiscall sub_5A8EC0(_DWORD *this, void *);
 void __thiscall CFxMessage::possible_ctor_or_dtor(_DWORD *this);
 _DWORD *__thiscall CFxMessage::sub_5A8FB5(_DWORD *this, char a2);
-int sub_5A9E45();
 void __thiscall CMainLoop::possible_ctor_or_dtor_0(_DWORD *this);
-unsigned int __thiscall sub_5AA025(_DWORD *this, int);
 _DWORD *__thiscall CMainLoop::sub_5AA07C(_DWORD *this, char a2);
 int __thiscall sub_5AA664(_DWORD *this);
-DWORD __thiscall sub_5AA9A8(_DWORD *this);
-int __thiscall sub_5ACB07(_DWORD *this, int a2);
 void __thiscall CMainSystem::possible_ctor_or_dtor_0(int this);
 void *__thiscall CMainSystem::sub_5ADD41(void *this, char a2);
 void __thiscall CGraphOwner::possible_ctor_or_dtor_1(int this);
@@ -2545,13 +2489,9 @@ _DWORD *__thiscall CCoupleManager::sub_5BA177(_DWORD *this, char a2);
 void __thiscall sub_5BA193(_BYTE **this);
 char __thiscall sub_5BA1CC(_DWORD *this, int n2); // idb
 _DWORD *__thiscall sub_5BA21D(_DWORD *this, int n2); // idb
-void __thiscall sub_5BAA90(char *this, int *);
 _DWORD *__thiscall sub_5BB909(_DWORD *this, int n2); // idb
-void __thiscall sub_5BBAA7(_DWORD *this, int *);
 void __thiscall sub_5BBB54(void **this, int n0xB); // idb
-void __thiscall sub_5BBD3E(void **this, int *);
 _DWORD *__thiscall sub_5BBE90(_DWORD *this);
-void __thiscall sub_5BBF91(_DWORD *this, int *);
 void __thiscall sub_5BC155(void **this, _DWORD *a2);
 int __thiscall CCoupleAnniversaryCongratulateDlg::sub_5BC240(void *this, int n2);
 void __thiscall CCoupleAnniversaryCongratulateDlg::possible_ctor_or_dtor(int this);
@@ -2595,7 +2535,6 @@ int __thiscall sub_5C1B6F(unsigned int *this);
 void __thiscall sub_5C1CBD(int this, int);
 int __thiscall CBasketDlg::sub_5C21EE(unsigned int *this, int n2);
 int __thiscall CBasketDlg::sub_5C2267(int *this, int a2);
-void __thiscall sub_5C279C(int *this, int *);
 int __thiscall CGachaponDlg::sub_5C28DE(_DWORD *this, int n2);
 void __thiscall CGachaponDlg::possible_ctor_or_dtor(int this);
 void *__thiscall CGachaponDlg::sub_5C2D44(void *this, char a2);
@@ -2681,7 +2620,6 @@ void __thiscall stlp_std::basic_ios::possible_ctor_or_dtor_0(_DWORD *this);
 _DWORD *__thiscall stlp_std::basic_ios::sub_5CD90E(_DWORD *this, char a2);
 void __thiscall stlp_std::basic_streambuf::possible_ctor_or_dtor_0(int *this);
 int *__thiscall stlp_std::basic_streambuf::sub_5CDBAA(int *this, char a2);
-BOOL __cdecl sub_5CDBD9(int);
 BOOL __cdecl sub_5CDBF2(int);
 _DWORD __stdcall sub_5CDC12(_DWORD); // weak
 void __thiscall stlp_std::basic_filebuf::possible_ctor_or_dtor(int *this);
@@ -2697,7 +2635,6 @@ _DWORD *__thiscall stlp_std::basic_filebuf::sub_5CE799(int this, _DWORD *p_lDist
 int *__thiscall stlp_std::basic_filebuf::sub_5CE820(int *this, char a2);
 int __cdecl sub_5CEA88(int);
 void __thiscall sub_5CF2EC(int this);
-void __thiscall sub_5CFDA3(_DWORD *this, void **);
 void __thiscall CStringMan::possible_ctor_or_dtor(_DWORD *this);
 _DWORD *__thiscall CStringMan::sub_5CFE50(_DWORD *this, char a2);
 LPTOP_LEVEL_EXCEPTION_FILTER __thiscall CUnhandledExceptionHandler::possible_ctor_or_dtor(void *this);
@@ -2714,7 +2651,6 @@ void __thiscall CChannelCache::possible_ctor_or_dtor_0(_DWORD *this);
 _DWORD *__thiscall CChannelCache::sub_5D3D23(_DWORD *this, char a2);
 int __thiscall sub_5D4025(_DWORD *this, int i, char); // idb
 int __thiscall sub_5D4139(_DWORD *this, _DWORD *a2);
-int __thiscall sub_5D42CF(int this, int *);
 void __thiscall sub_5D45AC(int this);
 void *__thiscall CChannelInfo::sub_5D46F7(void *this, char a2);
 void __thiscall CDockingFacade::possible_ctor_or_dtor_0(_DWORD *this);
@@ -2725,23 +2661,15 @@ void __thiscall sub_5D4E12(char **this);
 char **__thiscall sub_5D4E78(char **this, char a2);
 char **__thiscall sub_5D4E94(char **this, char a2);
 char **__thiscall sub_5D4EB0(char **this, char a2);
-int __thiscall sub_5D528E(int this, int, void **cp, _DWORD *); // idb
 _DWORD *__cdecl sub_5D53B4(_DWORD *, int p_i); // idb
 void __thiscall CMultiServer::possible_ctor_or_dtor(int this);
 void *__thiscall CMultiServer::sub_5D608C(void *this, char a2);
 char *__thiscall sub_5D62B8(int *this, int, int p_i, int, unsigned int, char); // idb
 char *__thiscall sub_5D67CB(int *this, int p_i); // idb
-void __thiscall sub_5D782C(int *this, _DWORD *);
-void __thiscall sub_5D79AE(int *this, _DWORD *);
-void __thiscall sub_5D7E8E(int *this, int *a2);
 void __thiscall CNetworkFacade::possible_ctor_or_dtor_0(_DWORD *this);
-__int16 __thiscall sub_5D828F(int this, char, int, int, __int16);
-int __thiscall sub_5D82C4(int this);
 int __thiscall sub_5D8407(_DWORD **this, int this); // idb
 int __thiscall sub_5D841B(_DWORD **this);
 _DWORD *__thiscall CNetworkFacade::sub_5D8460(_DWORD *this, char a2);
-int __thiscall sub_5D847C(int this);
-int __thiscall sub_5D8B10(int this, HWND hWnd, u_int wMsg, __int16 *, __int16 *, void *cp, _DWORD *); // idb
 void __thiscall CNexonClubRegDlg::possible_ctor_or_dtor(int this);
 void *__thiscall CNexonClubRegDlg::sub_5D8FCC(void *this, char a2);
 void __thiscall sub_5D925B(_DWORD *this);
@@ -2749,11 +2677,7 @@ int __thiscall sub_5D92A8(_DWORD *this, int);
 int __thiscall sub_5D949D(void *this);
 void __thiscall sub_5D9C35(int this);
 void *__thiscall CSelfInfo::sub_5D9E6E(void *this, char a2);
-int __thiscall sub_5D9E8E(_DWORD *this, int);
-__int16 __thiscall sub_5D9EA2(_WORD *this, __int16);
-void __thiscall sub_5D9F0B(_DWORD *this, int *);
 void __thiscall CShareContext::possible_ctor_or_dtor(int this);
-_DWORD *__thiscall sub_5DA458(_DWORD *this, char *cp); // idb
 void *__thiscall CShareContext::sub_5DA680(void *this, char a2);
 void __thiscall CHttpDownModule::possible_ctor_or_dtor_0(int this);
 void *__thiscall CHttpDownModule::sub_5DA726(void *this, char a2);
@@ -2813,7 +2737,6 @@ void *__fastcall CNMClient::sub_5E2612(void *a1, int a2, char a3);
 char *__thiscall sub_5E2639(int *this, _DWORD *src, _DWORD *src, int, unsigned int, char); // idb
 char *__thiscall sub_5E295E(int *this, _DWORD *src);
 int __thiscall sub_5E319C(_DWORD *this, int);
-void __thiscall sub_5E3AC9(_DWORD *this, int *);
 void __thiscall sub_5E3CFB(char **this);
 void __thiscall CNMClientMsgDlg::possible_ctor_or_dtor(int this);
 char **__thiscall sub_5E3DC7(char **this, char a2);
@@ -3012,7 +2935,7 @@ char *__thiscall stlp_std::time_get::sub_605550(char *this, char a2);
 char *__thiscall stlp_std::time_put::sub_605570(char *this, char a2);
 char *__thiscall stlp_std::time_get::sub_605590(char *this, char a2);
 char *__thiscall stlp_std::time_put::sub_6055B0(char *this, char a2);
-char ****************__thiscall sub_605B30(char *******************this, _BYTE *WideCharStr, _BYTE *WideCharStr); // idb
+char ************************__thiscall sub_605B30(char ***************************this, _BYTE *WideCharStr, _BYTE *WideCharStr); // idb
 char *__thiscall sub_605C00(void *this, size_t Size, size_t *p_Size); // idb
 char **__thiscall sub_605C30(char **this, int, size_t n0x7FFFFFFF); // idb
 char **__thiscall sub_605C90(char **this, void ***WideCharStr); // idb
@@ -3163,7 +3086,6 @@ int __cdecl j__atol(const char *);
 // void __cdecl free(void *);
 // void *__cdecl malloc(size_t);
 // int sscanf(const char *, const char *, ...);
-// int _snprintf(char *, size_t, const char *, ...);
 // void *__cdecl realloc(void *, size_t);
 // errno_t __cdecl _localtime64_s(struct tm *Tm, const __time64_t *Time);
 // char *__cdecl strchr(const char *, int);
@@ -3267,7 +3189,6 @@ int *__thiscall sub_667290(int *this, int *p_lpValueName); // idb
 int __fastcall sub_667330(int *n0xC, int); // idb
 int __cdecl sub_668000(LPWSTR lpWideCharStr, int cchWideChar, LPCCH lpMultiByteStr, int cbMultiByte); // idb
 int __cdecl sub_668060(LPSTR lpMultiByteStr, int cbMultiByte, LPCWCH lpWideCharStr, int cchWideChar); // idb
-int __cdecl sub_668100(LPCSTR lpCurrentChar); // idb
 char **__thiscall sub_668430(char **this, unsigned int a2, char **thisa); // idb
 void __thiscall CCRC32::possible_ctor_or_dtor_0(_DWORD *this);
 void __thiscall CCRC8::possible_ctor_or_dtor_0(_DWORD *this);
@@ -3335,22 +3256,29 @@ _DWORD *__fastcall sub_670212(int a1, int p_j, _DWORD *p_p_j, int a4); // idb
 _DWORD *__thiscall sub_670370(_DWORD *this, _DWORD *p_j); // idb
 int __thiscall sub_6703F0(int this, int p_j); // idb
 int __cdecl sub_672110(int *, unsigned __int8 *src, int, int i, int); // idb
+_DWORD *__thiscall CMemoryMappedFile::possible_ctor_or_dtor(_DWORD *this);
+int __thiscall sub_672C70(_DWORD *this);
 void __thiscall CDataFile::possible_ctor_or_dtor(_DWORD *this);
 int __thiscall sub_672CE0(int this);
 // struct Concurrency::IThreadProxy *__thiscall Concurrency::details::InternalContextBase::GetProxy(Concurrency::details::InternalContextBase *__hidden this); idb
+int __cdecl sub_673110(char *lpValueName, unsigned int *, unsigned int FileSize, unsigned int n0x5B201FC);
 void __thiscall CDataFile::possible_ctor_or_dtor_0(Concurrency::details::InternalContextBase *this);
 void __thiscall CData::possible_ctor_or_dtor(int *this);
 Concurrency::details::InternalContextBase *__thiscall CDataFile::sub_673730(Concurrency::details::InternalContextBase *this, char a2);
 int __thiscall sub_673750(_DWORD *this, unsigned __int8 *MultiServer_CAStage); // idb
 int *__thiscall CData::sub_6737A0(int *this, char a2);
 _DWORD *__thiscall CDataFile::possible_ctor_or_dtor_1(_DWORD *this, unsigned __int8 *MultiServer_CAStage); // idb
+_DWORD *__thiscall CPackSysMan::possible_ctor_or_dtor(_DWORD *this);
 _DWORD *__thiscall sub_673BE0(_DWORD *this, char a2);
+_DWORD *__thiscall sub_673D30(int this, char *, _DWORD *, int, size_t p_i, char); // idb
 size_t __thiscall sub_673E20(int this, char *src, const void *src, int p_src, size_t p_i, char); // idb
+int __thiscall sub_673F40(int this, LPCSTR lpFileName, int, int);
 void __thiscall CPackSysMan::possible_ctor_or_dtor_0(char *this);
 int __thiscall CData::sub_674590(size_t *this, char *MultiServer_CAStage); // idb
 char **__thiscall sub_674870(char **this, void *src);
 void __thiscall CMemoryMappedFile::possible_ctor_or_dtor_1(_DWORD *this);
 char *__thiscall CPackSysMan::sub_6749A0(char *this, char a2);
+int __thiscall sub_6749C0(int this, LPCSTR lpString2, unsigned int n0x5B201FC); // idb
 _DWORD *__thiscall CMemoryMappedFile::sub_674E30(_DWORD *this, char a2);
 void __thiscall CFxFontReal::possible_ctor_or_dtor(_DWORD *this);
 void __thiscall sub_674E80(void **this);
@@ -3478,6 +3406,7 @@ void __thiscall cUnreliableQueueOut::possible_ctor_or_dtor(char *this);
 char *__thiscall cUnreliableQueueOut::sub_695410(char *this, char a2);
 void __thiscall cDataPacket::possible_ctor_or_dtor_0(_DWORD *this);
 _DWORD *__thiscall cDataPacket::sub_695550(_DWORD *this, char a2);
+int __thiscall CSendPacket::sub_695650(_DWORD *this, int);
 unsigned int *__thiscall CSendPacketBase::sub_695CC0(unsigned int *this, char a2);
 unsigned int *__thiscall CReceivedPacketBase::sub_696340(unsigned int *this, char a2);
 unsigned int __thiscall sub_6966F0(_DWORD *this, int);
@@ -3496,13 +3425,8 @@ int __thiscall sub_697660(int *this, int a2);
 size_t __thiscall sub_698000(_DWORD *this, int, _DWORD *cp); // idb
 size_t __thiscall sub_698330(int *this, _DWORD *cp); // idb
 _DWORD *__thiscall sub_698350(int *this, _DWORD *cp); // idb
-_DWORD *__thiscall CISmartStream::possible_ctor_or_dtor(_DWORD *this);
-void __thiscall CISmartStream::possible_ctor_or_dtor_0(_DWORD *this);
 void *__thiscall sub_6984C0(int this, unsigned __int8 *lpValueName, unsigned int i); // idb
 _DWORD *__thiscall CISmartStream::sub_6986F0(_DWORD *this, char a2);
-int __thiscall COSmartStream::possible_ctor_or_dtor_0(int this, int);
-void __thiscall COSmartStream::possible_ctor_or_dtor_1(_DWORD *this);
-int __cdecl sub_6989C0(LPCSTR lpFileName, int); // idb
 _DWORD *__thiscall COSmartStream::sub_698B20(_DWORD *this, char a2);
 _DWORD *__thiscall sub_6991E0(int this, int, _DWORD *);
 _DWORD *__thiscall sub_6992A0(int this, HANDLE hFile, _DWORD *a3);
@@ -3590,7 +3514,6 @@ _DWORD *__thiscall CCtrlWnd::possible_ctor_or_dtor(_DWORD *this);
 void __thiscall CCtrlWnd::possible_ctor_or_dtor_0(_DWORD *this);
 int __thiscall CCtrlWnd::sub_6A1380(_DWORD *this, int n513, int n514, int n514, int); // idb
 int __thiscall sub_6A1480(int this, int, int);
-int __thiscall sub_6A1CB0(_DWORD *this, int);
 void __thiscall CCtrlButton::possible_ctor_or_dtor(_DWORD *this);
 _DWORD *__thiscall sub_6A3990(_DWORD *this);
 void __thiscall CCtrlButton::possible_ctor_or_dtor_0(char **this);
@@ -3604,7 +3527,6 @@ void __thiscall CCtrlButtonWithText::possible_ctor_or_dtor_0(char **this);
 void __thiscall CCtrlButtonWithImage::possible_ctor_or_dtor(_DWORD *this);
 void __thiscall CCtrlButtonWithImage::possible_ctor_or_dtor_0(char **this);
 int __thiscall sub_6ABC40(_DWORD *this, int);
-_DWORD *__thiscall sub_6B1260(_DWORD *this, int, int, int, int);
 BOOL __thiscall sub_6B1CC0(_DWORD *this);
 BOOL __thiscall sub_6B22A0(_DWORD *this, int);
 int __thiscall sub_6B2380(_DWORD *this, int);
@@ -4071,14 +3993,13 @@ _UNKNOWN sub_61A1D0;
 // extern HGDIOBJ (__stdcall *SelectObject)(HDC hdc, HGDIOBJ h);
 // extern COLORREF (__stdcall *SetPixel)(HDC hdc, int x, int y, COLORREF color);
 // extern HBITMAP (__stdcall *CreateCompatibleBitmap)(HDC hdc, int cx, int cy);
+// extern int (__stdcall *lstrcmpA)(LPCSTR lpString1, LPCSTR lpString2);
 // extern BOOL (__stdcall *WriteFile)(HANDLE hFile, LPCVOID lpBuffer, DWORD nNumberOfBytesToWrite, LPDWORD lpNumberOfBytesWritten, LPOVERLAPPED lpOverlapped);
-// extern BOOL (__stdcall *CreateProcessA)(LPCSTR lpApplicationName, LPSTR lpCommandLine, LPSECURITY_ATTRIBUTES lpProcessAttributes, LPSECURITY_ATTRIBUTES lpThreadAttributes, BOOL bInheritHandles, DWORD dwCreationFlags, LPVOID lpEnvironment, LPCSTR lpCurrentDirectory, LPSTARTUPINFOA lpStartupInfo, LPPROCESS_INFORMATION lpProcessInformation);
 // extern BOOL (__stdcall *UnmapViewOfFile)(LPCVOID lpBaseAddress);
 // extern HANDLE (__stdcall *CreateFileMappingA)(HANDLE hFile, LPSECURITY_ATTRIBUTES lpFileMappingAttributes, DWORD flProtect, DWORD dwMaximumSizeHigh, DWORD dwMaximumSizeLow, LPCSTR lpName);
 // extern LPVOID (__stdcall *MapViewOfFile)(HANDLE hFileMappingObject, DWORD dwDesiredAccess, DWORD dwFileOffsetHigh, DWORD dwFileOffsetLow, SIZE_T dwNumberOfBytesToMap);
 // extern void (__stdcall __noreturn *ExitProcess)(UINT uExitCode);
 // extern BOOL (__stdcall *ReadFile)(HANDLE hFile, LPVOID lpBuffer, DWORD nNumberOfBytesToRead, LPDWORD lpNumberOfBytesRead, LPOVERLAPPED lpOverlapped);
-// extern DWORD (__stdcall *GetCurrentDirectoryA)(DWORD nBufferLength, LPSTR lpBuffer);
 // extern HANDLE (__stdcall *CreateFileA)(LPCSTR lpFileName, DWORD dwDesiredAccess, DWORD dwShareMode, LPSECURITY_ATTRIBUTES lpSecurityAttributes, DWORD dwCreationDisposition, DWORD dwFlagsAndAttributes, HANDLE hTemplateFile);
 // extern BOOL (__stdcall *CloseHandle)(HANDLE hObject);
 // extern BOOL (__stdcall *DeleteFileA)(LPCSTR lpFileName);
@@ -4091,6 +4012,7 @@ _UNKNOWN sub_61A1D0;
 // extern int (__stdcall *CompareStringW)(LCID Locale, DWORD dwCmpFlags, PCNZWCH lpString1, int cchCount1, PCNZWCH lpString2, int cchCount2);
 // extern int (__stdcall *CompareStringA)(LCID Locale, DWORD dwCmpFlags, PCNZCH lpString1, int cchCount1, PCNZCH lpString2, int cchCount2);
 // extern int (__stdcall *lstrlenW)(LPCWSTR lpString);
+// extern LPSTR (__stdcall *lstrcpyA)(LPSTR lpString1, LPCSTR lpString2);
 // extern int (__stdcall *lstrcmpiA)(LPCSTR lpString1, LPCSTR lpString2);
 // extern void (__stdcall *InitializeCriticalSection)(LPCRITICAL_SECTION lpCriticalSection);
 // extern HMODULE (__stdcall *LoadLibraryA)(LPCSTR lpLibFileName);
@@ -4099,6 +4021,7 @@ _UNKNOWN sub_61A1D0;
 // extern int (__stdcall *WideCharToMultiByte)(UINT CodePage, DWORD dwFlags, LPCWCH lpWideCharStr, int cchWideChar, LPSTR lpMultiByteStr, int cbMultiByte, LPCCH lpDefaultChar, LPBOOL lpUsedDefaultChar);
 // extern int (__stdcall *MultiByteToWideChar)(UINT CodePage, DWORD dwFlags, LPCCH lpMultiByteStr, int cbMultiByte, LPWSTR lpWideCharStr, int cchWideChar);
 // extern HANDLE (__stdcall *CreateThread)(LPSECURITY_ATTRIBUTES lpThreadAttributes, SIZE_T dwStackSize, LPTHREAD_START_ROUTINE lpStartAddress, LPVOID lpParameter, DWORD dwCreationFlags, LPDWORD lpThreadId);
+// extern int (__stdcall *lstrlenA)(LPCSTR lpString);
 // extern HANDLE (__stdcall *CreateEventA)(LPSECURITY_ATTRIBUTES lpEventAttributes, BOOL bManualReset, BOOL bInitialState, LPCSTR lpName);
 // extern BOOL (__stdcall *PeekNamedPipe)(HANDLE hNamedPipe, LPVOID lpBuffer, DWORD nBufferSize, LPDWORD lpBytesRead, LPDWORD lpTotalBytesAvail, LPDWORD lpBytesLeftThisMessage);
 // extern BOOL (__stdcall *SetStdHandle)(DWORD nStdHandle, HANDLE hHandle);
@@ -4118,11 +4041,11 @@ _UNKNOWN sub_61A1D0;
 // extern void (__stdcall *PostQuitMessage)(int nExitCode);
 // extern HWND (__stdcall *CreateWindowExA)(DWORD dwExStyle, LPCSTR lpClassName, LPCSTR lpWindowName, DWORD dwStyle, int X, int Y, int nWidth, int nHeight, HWND hWndParent, HMENU hMenu, HINSTANCE hInstance, LPVOID lpParam);
 // extern BOOL (__stdcall *DestroyWindow)(HWND hWnd);
-// extern int (__stdcall *MessageBoxA)(HWND hWnd, LPCSTR lpText, LPCSTR lpCaption, UINT uType);
 // extern HCURSOR (__stdcall *LoadCursorA)(HINSTANCE hInstance, LPCSTR lpCursorName);
 // extern SHORT (__stdcall *GetKeyState)(int nVirtKey);
 // extern HDC (__stdcall *GetWindowDC)(HWND hWnd);
 // extern LRESULT (__stdcall *SendMessageA)(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam);
+// extern int (*wsprintfA)(LPSTR, LPCSTR, ...);
 // extern ATOM (__stdcall *RegisterClassA)(const WNDCLASSA *lpWndClass);
 // extern LONG (__stdcall *SetWindowLongA)(HWND hWnd, int nIndex, LONG dwNewLong);
 // extern BOOL (__stdcall *SetRect)(LPRECT lprc, int xLeft, int yTop, int xRight, int yBottom);
@@ -4134,8 +4057,6 @@ _UNKNOWN sub_61A1D0;
 // extern HINTERNET (__stdcall *InternetOpenA)(LPCSTR lpszAgent, DWORD dwAccessType, LPCSTR lpszProxy, LPCSTR lpszProxyBypass, DWORD dwFlags);
 // extern BOOL (__stdcall *InternetCloseHandle)(HINTERNET hInternet);
 // extern DWORD (__stdcall *timeGetTime)();
-// extern unsigned int (__stdcall *inet_addr)(const char *cp);
-// extern u_long (__stdcall *ntohl)(u_long netlong);
 // extern void (__stdcall *OleUninitialize)();
 // extern HRESULT (__stdcall *OleRun)(LPUNKNOWN pUnknown);
 // extern HRESULT (__stdcall *CoCreateInstance)(const IID *const rclsid, LPUNKNOWN pUnkOuter, DWORD dwClsContext, const IID *const riid, LPVOID *ppv);
@@ -4156,7 +4077,6 @@ void *CGOSlotDecorator::`vftable' = &CGOSlotDecorator::sub_45D03D; // weak
 void *CGameSlotFanfare::`vftable' = &CGameSlotFanfare::sub_4B7F97; // weak
 void *CDynamicImgUnit::`vftable' = &CDynamicImgUnit::sub_49ED8C; // weak
 void *UserSimpleInfo::`vftable' = &UserSimpleInfo::sub_4A4B96; // weak
-int dword_7B2488[] = { 3600000 }; // weak
 void *CGameSessionSlot::`vftable' = &CGameSessionSlot::sub_4C1AFF; // weak
 void *CItemAttr::`vftable' = &CItemAttr::sub_4EA8DE; // weak
 void *CCacheableGO<CGOBula>::`vftable' = &CCacheableGO::sub_4FA422; // weak
@@ -22045,7 +21965,6 @@ _UNKNOWN unk_927480; // weak
 _UNKNOWN unk_9274D4; // weak
 BYTE pbData = 6u; // idb
 DWORD dwDataLen = 84u; // idb
-_DWORD *dword_9299F0 = NULL; // idb
 type_info **n0xB_0 = NULL; // idb
 char **j = NULL; // idb
 void *dword_929A78 = NULL; // idb
@@ -22054,13 +21973,11 @@ int dword_929BEC = 0; // weak
 _DWORD *i_4 = NULL; // idb
 _DWORD *dword_929BF4 = NULL; // idb
 _DWORD *dword_929C70 = NULL; // idb
-int dword_929D68 = 0; // weak
 int dword_929D6C = 0; // idb
 char *dword_929D74 = NULL; // idb
 void **dword_929D78 = NULL; // idb
 HKEY *n0xB_1 = NULL; // idb
 char *n0xB = NULL; // idb
-void **dword_929D88 = NULL; // idb
 int n3 = 0; // weak
 int dword_929D90 = 0; // weak
 HIMC *dword_92A32C; // idb
@@ -22068,26 +21985,11 @@ int dword_92A4C8; // weak
 int n166; // weak
 _DWORD *dword_92A898; // idb
 int dword_92A8AC; // weak
-char *n43_0; // idb
-int dword_92AAC8; // weak
-int dword_92AAEC; // weak
 int **p_n4; // idb
-void **dword_92AAF8; // idb
-_DWORD *dword_92D9EC; // idb
 _DWORD *dword_92DB70; // idb
 int dword_92DBEC; // weak
 _DWORD **dword_92E2E8; // idb
-int dword_92E2EC; // weak
-int dword_92E2F0; // weak
-void *dword_92E2F4; // idb
-int n3600000; // weak
-int dword_92E304; // weak
-_UNKNOWN unk_92E308; // weak
-void **dword_92E6EC; // idb
 Time *Time_1;
-int dword_92E6F8; // idb
-void *this_0; // idb
-_DWORD *dword_92E704; // idb
 _DWORD *dword_96EB1C; // idb
 char **dword_96EB20; // idb
 _DWORD *dword_96ED48; // idb
@@ -22104,7 +22006,6 @@ int dword_973BB0; // weak
 Time *Time_3;
 int dword_974EF4; // weak
 int dword_974EF8; // weak
-int dword_974F00; // weak
 HANDLE dword_9B59A0; // idb
 _UNKNOWN unk_9B5B8C; // weak
 int dword_9B85B8; // weak
@@ -22119,7 +22020,6 @@ void *dword_9B878C; // idb
 void *dword_9B87A4; // idb
 _UNKNOWN unk_9B87B4; // weak
 int dword_9B87B8; // weak
-char n43_; // idb
 LPCSTR lpString2; // idb
 int dword_9B9A24; // weak
 CHAR LCData[64]; // idb
@@ -22145,6 +22045,7 @@ int n0x10000000; // idb
 int n94; // idb
 int n94_2; // weak
 int value; // weak
+_DWORD *dword_9C79A8; // idb
 int n7; // idb
 int dword_9C7E9C; // weak
 int dword_9C84D8[1024]; // weak
@@ -93349,42 +93250,45 @@ int __fastcall sub_44E0A9(int *a1, int a2, int a3, int a4)
     v14 = sub_43827E((int)(a1 + 23));
     v15 = sub_5A6966(j, v14);
     v12 = a1;
-    if ( v15 == 0 )
-      return CGameObject::sub_44084B((_DWORD **)a1, a3, a4);
-    return CGameObject::sub_4407D7((_DWORD **)v12, a3, a4, 128);
-  }
-  if ( sub_43827E((int)(a1 + 11553)) != 0 )
-  {
-    v10 = sub_43827E((int)(a1 + 11553)) & 0x80000007;
-    v9 = v10 == 0;
-    if ( v10 < 0 )
-      v9 = (((_BYTE)v10 - 1) | 0xFFFFFFF8) == -1;
-    if ( v9 )
-      return CGameObject::sub_44079D((_DWORD **)a1, n94_0);
-  }
-  if ( sub_449C7B(a1) )
-    return CGameObject::sub_440885((_DWORD **)a1, a3, a4, n94_0);
-  if ( sub_447CDA(a1) )
-  {
-    v11 = sub_43827E((int)(a1 + 23));
-    if ( sub_5A6966(j, v11) != 0 )
-    {
-      v12 = a1;
+    if ( v15 != 0 )
       return CGameObject::sub_4407D7((_DWORD **)v12, a3, a4, 128);
-    }
-  }
-  if ( (*(int (__thiscall **)(int *))(*a1 + 228))(a1) != 0
-    && (v13 = sub_43827E((int)(a1 + 23)), sub_5A6966(j, v13) != 0) )
-  {
-    (*(void (__fastcall **)(int *, int, int))(a1[12215] + 28))(a1 + 12215, v17, 128);
-    CGameObject::sub_4407D7((_DWORD **)a1, a3, a4, 128);
-    return (*(int (__fastcall **)(int *, int, int))(a1[12215] + 32))(a1 + 12215, v17, 128);
+    return CGameObject::sub_44084B((_DWORD **)a1, a3, a4);
   }
   else
   {
-    (*(void (__fastcall **)(int *, int))(a1[12215] + 12))(a1 + 12215, a2);
-    CGameObject::sub_440833((_DWORD **)a1, a3, a4);
-    return (*(int (__fastcall **)(int *, int))(a1[12215] + 16))(a1 + 12215, a2);
+    if ( sub_43827E((int)(a1 + 11553)) != 0 )
+    {
+      v10 = sub_43827E((int)(a1 + 11553)) & 0x80000007;
+      v9 = v10 == 0;
+      if ( v10 < 0 )
+        v9 = (((_BYTE)v10 - 1) | 0xFFFFFFF8) == -1;
+      if ( v9 )
+        return CGameObject::sub_44079D((_DWORD **)a1, n94_0);
+    }
+    if ( sub_449C7B(a1) )
+      return CGameObject::sub_440885((_DWORD **)a1, a3, a4, n94_0);
+    if ( sub_447CDA(a1) )
+    {
+      v11 = sub_43827E((int)(a1 + 23));
+      if ( sub_5A6966(j, v11) != 0 )
+      {
+        v12 = a1;
+        return CGameObject::sub_4407D7((_DWORD **)v12, a3, a4, 128);
+      }
+    }
+    if ( (*(int (__thiscall **)(int *))(*a1 + 228))(a1) != 0
+      && (v13 = sub_43827E((int)(a1 + 23)), sub_5A6966(j, v13) != 0) )
+    {
+      (*(void (__fastcall **)(int *, int, int))(a1[12215] + 28))(a1 + 12215, v17, 128);
+      CGameObject::sub_4407D7((_DWORD **)a1, a3, a4, 128);
+      return (*(int (__fastcall **)(int *, int, int))(a1[12215] + 32))(a1 + 12215, v17, 128);
+    }
+    else
+    {
+      (*(void (__fastcall **)(int *, int))(a1[12215] + 12))(a1 + 12215, a2);
+      CGameObject::sub_440833((_DWORD **)a1, a3, a4);
+      return (*(int (__fastcall **)(int *, int))(a1[12215] + 16))(a1 + 12215, a2);
+    }
   }
 }
 // 9BB98C: using guessed type int n94_2;
@@ -122168,7 +122072,7 @@ void __thiscall CEventNoticeDlg::sub_46E2AD(int this, int a2)
         v23 = *v24;
         if ( v7 == 1 )
         {
-          sub_666B30(MultiByteStr, (char *)off_7AC45C, v23);
+          sub_666B30(MultiByteStr, a3d_0, v23);
           MultiByteStr_1 = MultiByteStr;
           if ( v32 != &v31 )
             MultiByteStr_1 = *(CHAR **)MultiByteStr;
@@ -122182,7 +122086,7 @@ void __thiscall CEventNoticeDlg::sub_46E2AD(int this, int a2)
         }
         else
         {
-          sub_666B30(MultiByteStr, (char *)off_7AC45C, v23);
+          sub_666B30(MultiByteStr, a3d_0, v23);
           MultiByteStr_4 = MultiByteStr;
           if ( v32 != &v31 )
             MultiByteStr_4 = *(CHAR **)MultiByteStr;
@@ -122194,7 +122098,7 @@ void __thiscall CEventNoticeDlg::sub_46E2AD(int this, int a2)
           v13 = (_DWORD *)sub_674EA0();
           sub_6761F0(v13, MultiByteStr_6, cbMultiByte_1, n5, 1);
           sub_669980();
-          sub_666B30(MultiByteStr, (char *)off_7AC45C, v24[4]);
+          sub_666B30(MultiByteStr, a3d_0, v24[4]);
           MultiByteStr_7 = MultiByteStr;
           if ( v32 != &v31 )
             MultiByteStr_7 = *(CHAR **)MultiByteStr;
@@ -135909,13 +135813,13 @@ _DWORD *__thiscall sub_47FED1(_DWORD *this)
 }
 
 //----- (0047FF4E) --------------------------------------------------------
-int __thiscall sub_47FF4E(_DWORD *this, int ******************a2)
+int __thiscall sub_47FF4E(_DWORD *this, int **************************a2)
 {
-  int *****************v2; // edx
+  int *************************v2; // edx
   int v3; // esi
 
-  v2 = (int *****************)a2;
-  if ( a2[5] != (int *****************)(a2 + 4) )
+  v2 = (int *************************)a2;
+  if ( a2[5] != (int *************************)(a2 + 4) )
     v2 = *a2;
   v3 = *(this + 4);
   if ( (_DWORD *)*(this + 5) != this + 4 )
@@ -162564,11 +162468,11 @@ DWORD __stdcall StartAddress(LPVOID lpThreadParameter)
 // 92D9E8: using guessed type int dword_92D9E8;
 
 //----- (004A0A8A) --------------------------------------------------------
-int __thiscall sub_4A0A8A(int ******************this, _BYTE *., int *thisa, int a4)
+int __thiscall sub_4A0A8A(int **************************this, _BYTE *., int *thisa, int a4)
 {
-  int ******************this_1; // esi
-  int *****************v5; // ebx
-  int *****************v6; // edi
+  int **************************this_1; // esi
+  int *************************v5; // ebx
+  int *************************v6; // edi
   int v7; // eax
   int v8; // eax
   unsigned int thisa_1; // eax
@@ -162577,16 +162481,16 @@ int __thiscall sub_4A0A8A(int ******************this, _BYTE *., int *thisa, int 
   int **p_thisa; // eax
   int v14; // eax
   int this_3; // ecx
-  int *****************v16; // eax
+  int *************************v16; // eax
   int *this_4; // edx
   unsigned int thisa_2; // [esp+Ch] [ebp-4h] BYREF
 
   this_1 = this;
   v5 = *(this + 5);
-  v6 = (int *****************)(this + 4);
+  v6 = (int *************************)(this + 4);
   v7 = (int)*(this + 4);
-  if ( v5 != (int *****************)(this + 4) )
-    this = (int ******************)*this;
+  if ( v5 != (int *************************)(this + 4) )
+    this = (int **************************)*this;
   v8 = v7 - (_DWORD)this;
   if ( v8 == 0 )
     return -1;
@@ -162611,7 +162515,7 @@ int __thiscall sub_4A0A8A(int ******************this, _BYTE *., int *thisa, int 
   if ( thisa == this_4 )
     return -1;
   if ( v16 != v6 )
-    this_1 = (int ******************)*this_1;
+    this_1 = (int **************************)*this_1;
   return (char *)thisa - (char *)this_1 - 1;
 }
 
@@ -168962,9 +168866,9 @@ _DWORD *__thiscall sub_4A7507(_DWORD *this, _DWORD *n2)
   int n12; // eax
   _DWORD *v5; // ecx
 
-  if ( sub_4A6C22(n2, (char *)off_7B1FFC) != 0 )
+  if ( sub_4A6C22(n2, "off") != 0 )
   {
-    if ( sub_4A6C22(n2, "a") != 0 && sub_4A6C22(n2, "A") != 0 && sub_4A6C22(n2, (char *)&byte_7B1FF0) != 0 )
+    if ( sub_4A6C22(n2, "a") != 0 && sub_4A6C22(n2, "A") != 0 && sub_4A6C22(n2, "ㅁ") != 0 )
     {
       return (*(_DWORD *(__thiscall **)(_DWORD *, _DWORD *))(*this + 284))(this, n2);
     }
@@ -170115,13 +170019,13 @@ void *__cdecl sub_4A8B52(void *a1, int a2)
   switch ( a2 )
   {
     case 1:
-      sub_402738((int)a1, (char *)&byte_7B20D0, (int)&a2 + 3);
+      sub_402738((int)a1, "채널 접속 권한", (int)&a2 + 3);
       break;
     case 2:
-      sub_402738((int)a1, byte_7B20E0, (int)&a2 + 3);
+      sub_402738((int)a1, "학교짱마크1", (int)&a2 + 3);
       break;
     case 4:
-      sub_402738((int)a1, byte_7B20EC, (int)&a2 + 3);
+      sub_402738((int)a1, "학교짱마크2", (int)&a2 + 3);
       break;
     default:
       sub_402738((int)a1, (char *)n43, (int)&a2 + 3);
@@ -266192,7 +266096,7 @@ void __fastcall sub_5164F5(_DWORD *a1, _DWORD *a2)
       v8 = v7 & 1;
       v9 = sub_510CC7(i_2, "image");
       v10 = sub_515F73((int)v9, (void **)v61) & v8;
-      v11 = sub_514C3C(i_2, (char *)off_7B9368);
+      v11 = sub_514C3C(i_2, aPos);
       v12 = sub_513C88(v11, v108) & v10;
       v13 = sub_514D32(i_2, "fromstart");
       v93 = sub_513D5A(v13, v99) & v12;
@@ -266205,7 +266109,7 @@ void __fastcall sub_5164F5(_DWORD *a1, _DWORD *a2)
       v20 = sub_513C88(v19, v91) & v18;
       v21 = sub_514F1E(i_2, "gagebarpos");
       v22 = sub_513C88(v21, v102) & v20;
-      sub_402738((int)v82, (char *)off_7B9334, (int)&v114);
+      sub_402738((int)v82, aMax, (int)&v114);
       LOBYTE(v95) = 1;
       sub_514B46(i_2, "life");
       sub_516418(v89, (int *)v82);
@@ -266287,7 +266191,7 @@ void __fastcall sub_5164F5(_DWORD *a1, _DWORD *a2)
       v49 = v48 & v47;
       LOBYTE(v95) = 0;
       sub_40234B(v78);
-      sub_402738((int)v76, (char *)off_7B92A0, (int)&v114);
+      sub_402738((int)v76, aBox, (int)&v114);
       LOBYTE(v95) = 11;
       v67 = v106;
       sub_51510A(i_2, "passtype");
@@ -273315,7 +273219,7 @@ void __thiscall CMapActionAttack::sub_51DC9E(int this, _DWORD *a2)
     {
       if ( *(_DWORD *)(this + 12) == 3 )
       {
-        v16 = (char **)sub_514C3C(i_1, (char *)off_7B9368);
+        v16 = (char **)sub_514C3C(i_1, aPos);
         v25 = sub_527000(v16, this + 16);
         v17 = sub_514D32(i_1, "direction");
         v18 = sub_52702F(v17, (_DWORD *)(this + 48));
@@ -273370,7 +273274,7 @@ void __thiscall CMapActionAttack::sub_51DC9E(int this, _DWORD *a2)
           v4 = (void **)sub_514B46(i_1, "dest");
           sub_40277A((int)v26, v4);
           LOBYTE(v28) = 3;
-          if ( sub_449B8E(v26, (char *)off_7B9368) )
+          if ( sub_449B8E(v26, aPos) )
           {
             *(_DWORD *)(this + 76) = 1;
             for ( i = i_1[2]; i != i_1; i = sub_5F3CD0(i) )
@@ -273378,7 +273282,7 @@ void __thiscall CMapActionAttack::sub_51DC9E(int this, _DWORD *a2)
               v6 = (const unsigned __int8 *)(i + 4);
               if ( (_DWORD *)i[9] != i + 8 )
                 v6 = (const unsigned __int8 *)i[4];
-              if ( _mbsnbicmp(v6, (const unsigned __int8 *)off_7B9368, 3u) == 0 )
+              if ( _mbsnbicmp(v6, aPos, 3u) == 0 )
               {
                 *(_DWORD *)&p_n0xE[1] = 0;
                 v25 = 0;
@@ -273583,7 +273487,7 @@ void __thiscall CMapActionCreateScriptObj::sub_51E30C(_DWORD *this, _DWORD *a2)
     v3 = (char **)sub_510CC7(v5, "class");
     if ( sub_526F7F(v3, (int)(this + 3)) )
     {
-      v4 = (void **)sub_514C3C(v5, (char *)off_7B9368);
+      v4 = (void **)sub_514C3C(v5, aPos);
       sub_40277A((int)v6, v4);
       LOBYTE(v7) = 1;
       if ( sub_449B8E(v6, "script") )
@@ -274277,7 +274181,7 @@ void __thiscall CMapActionMove::sub_51ECB5(_DWORD *this, _DWORD *a2)
     }
     if ( *(this + 5) == 1 )
     {
-      v9 = (const char *)sub_514C3C(v11, (char *)off_7B9368);
+      v9 = (const char *)sub_514C3C(v11, aPos);
       if ( *((const char **)v9 + 5) != v9 + 16 )
         v9 = *(const char **)v9;
       if ( sscanf(v9, "%d,%d", this + 6, this + 7) == 2 )
@@ -280214,7 +280118,7 @@ _DWORD *__usercall sub_524D76@<eax>(_DWORD *a1@<ecx>, _DWORD *a2@<esi>)
     sub_4411A7(a2, v4);
     v5 = (char *)sub_70B169(v3, "image");
     sub_4411A7(a2 + 6, v5);
-    v6 = (const char *)sub_70B169(v3, (char *)off_7B9368);
+    v6 = (const char *)sub_70B169(v3, aPos);
     sscanf(v6, "%d,%d", a2 + 12, a2 + 13);
     v7 = (const char *)sub_70B169(v3, "size");
     sscanf(v7, "%d,%d", a2 + 14, a2 + 15);
@@ -281443,7 +281347,7 @@ void __thiscall CMapActionRabbitCreate::sub_5262B0(_DWORD *this, int a2)
     v4 = (const unsigned __int8 *)(i + 4);
     if ( (int *)i[9] != i + 8 )
       v4 = *(const unsigned __int8 **)v4;
-    _mbsnbicmp(v4, (const unsigned __int8 *)off_7B9368, 3u);
+    _mbsnbicmp(v4, aPos, 3u);
   }
   v5 = (void **)sub_51510A(i_1, "objclass");
   sub_40277A((int)v9, v5);
@@ -281746,7 +281650,7 @@ void __thiscall CMapActionRabbitTransfer::sub_52676E(int this, int a2)
     v4 = (const unsigned __int8 *)(i + 4);
     if ( (int *)i[9] != i + 8 )
       v4 = (const unsigned __int8 *)i[4];
-    if ( _mbsnbicmp(v4, (const unsigned __int8 *)off_7B9368, 3u) == 0 )
+    if ( _mbsnbicmp(v4, aPos, 3u) == 0 )
     {
       sub_40277A((int)v15, (void **)i + 10);
       LOBYTE(v21) = 2;
@@ -334334,7 +334238,7 @@ void __userpurge CLoginStageChina::sub_5654E8(int a1@<ecx>, int a2@<ebp>, int *a
   int v10; // eax
 
   n12 = sub_697510(a3);
-  if ( n12 > 12u )
+  if ( n12 > 0xCu )
   {
     v8 = n12 - 40;
     if ( v8 != 0 )
@@ -346622,7 +346526,7 @@ void __userpurge CUserMarketStage::sub_574380(int a1@<ecx>, int a2@<ebp>, int *a
   int v14; // eax
 
   n274 = sub_697510(a3);
-  if ( n274 <= 274u )
+  if ( n274 <= 0x112u )
   {
     if ( n274 == 274 )
     {
@@ -380599,9 +380503,16 @@ BOOL __thiscall sub_598012(_DWORD *this, int a2, int n3, int n4, int a5)
   if ( v6 == 0 )
     return true;
   n4_1 = sub_536A91(dword_929D78, a5, n4);
-  if ( n4_1 != n4 )
-    return sub_597FBD(a2, n3, a5, n4_1) || sub_597FBD(a2, n3, a5, 4) && n3 == 3;
-  return sub_597FBD(a2, n3, a5, n4) || sub_597FF2(this, a2, n4) != 0;
+  if ( n4_1 == n4 )
+  {
+    if ( !sub_597FBD(a2, n3, a5, n4) && sub_597FF2(this, a2, n4) == 0 )
+      return false;
+  }
+  else if ( !sub_597FBD(a2, n3, a5, n4_1) && (!sub_597FBD(a2, n3, a5, 4) || n3 != 3) )
+  {
+    return false;
+  }
+  return true;
 }
 // 598022: variable 'v6' is possibly undefined
 
@@ -382394,11 +382305,11 @@ _DWORD *__cdecl sub_599EDF(_DWORD *p_this, _BYTE *a2, int this, char n47)
 }
 
 //----- (00599F09) --------------------------------------------------------
-int __thiscall sub_599F09(int ******************this, char n47, int *thisa)
+int __thiscall sub_599F09(int **************************this, char n47, int *thisa)
 {
-  int ******************this_1; // esi
-  int *****************v4; // ebx
-  int *****************v5; // edi
+  int **************************this_1; // esi
+  int *************************v4; // ebx
+  int *************************v5; // edi
   int v6; // eax
   int v7; // eax
   unsigned int thisa_1; // eax
@@ -382407,16 +382318,16 @@ int __thiscall sub_599F09(int ******************this, char n47, int *thisa)
   int **p_thisa; // eax
   char *v13; // eax
   int this_3; // ecx
-  int *****************v15; // eax
+  int *************************v15; // eax
   int *this_4; // edx
   unsigned int thisa_2; // [esp+Ch] [ebp-4h] BYREF
 
   this_1 = this;
   v4 = *(this + 5);
-  v5 = (int *****************)(this + 4);
+  v5 = (int *************************)(this + 4);
   v6 = (int)*(this + 4);
-  if ( v4 != (int *****************)(this + 4) )
-    this = (int ******************)*this;
+  if ( v4 != (int *************************)(this + 4) )
+    this = (int **************************)*this;
   v7 = v6 - (_DWORD)this;
   if ( v7 == 0 )
     return -1;
@@ -382441,7 +382352,7 @@ int __thiscall sub_599F09(int ******************this, char n47, int *thisa)
   if ( thisa == this_4 )
     return -1;
   if ( v15 != v5 )
-    this_1 = (int ******************)*this_1;
+    this_1 = (int **************************)*this_1;
   return (char *)thisa - (char *)this_1 - 1;
 }
 
@@ -391934,7 +391845,7 @@ _DWORD *__thiscall sub_5A47A8(_DWORD *this)
   _DWORD *v9; // ecx
   _DWORD *v10; // ecx
   void *v11; // ecx
-  char n32; // cl
+  char n43_; // cl
   int v13; // eax
   char **v14; // eax
   _BYTE v15[5]; // [esp+13h] [ebp-15h] BYREF
@@ -392006,17 +391917,17 @@ _DWORD *__thiscall sub_5A47A8(_DWORD *this)
   if ( v11 != nullptr )
     CMultiServer::possible_ctor_or_dtor_0((int)v11);
   n2 = -1;
-  sub_5A29F3(*(void ***)&v15[1], &n43_);
-  if ( _mbsnbicmp((const unsigned __int8 *)&n43_, "/GID:", 5u) != 0 )
+  sub_5A29F3(*(void ***)&v15[1], &::n43_);
+  if ( _mbsnbicmp((const unsigned __int8 *)&::n43_, "/GID:", 5u) != 0 )
   {
-    if ( sub_5CDBF2(64) != 0 )
+    if ( sub_5CDBF2(64) )
     {
-      n32 = n43_;
+      n43_ = ::n43_;
       v13 = 0;
-      while ( n32 != 0 && n32 != 32 && n32 != 42 )
+      while ( n43_ != 0 && n43_ != 32 && n43_ != 42 )
       {
-        v20[v13] = n32;
-        n32 = byte_9B8DE1[v13++];
+        v20[v13] = n43_;
+        n43_ = byte_9B8DE1[v13++];
       }
       v20[v13] = 0;
       sub_402738((int)v18, v20, (int)v15);
@@ -392034,22 +391945,22 @@ _DWORD *__thiscall sub_5A47A8(_DWORD *this)
             v14 = (char **)v18[0];
           if ( v19[0] == (_DWORD)v14 )
             *(_DWORD *)(*(_DWORD *)&v15[1] + 1432) = 1;
-          sub_5D7C4A((int *)dword_92D9EC, &n43_);
+          sub_5D7C4A(dword_92D9EC, &::n43_);
           goto LABEL_40;
         }
         *(_DWORD *)(*(_DWORD *)&v15[1] + 1432) = 2;
       }
-      sub_5D7C4A((int *)dword_92D9EC, (char *)n43);
+      sub_5D7C4A(dword_92D9EC, (char *)n43);
 LABEL_40:
       n2 = -1;
       sub_40234B(v18);
       goto LABEL_43;
     }
-    sub_5D7C4A((int *)dword_92D9EC, &n43_);
+    sub_5D7C4A(dword_92D9EC, &::n43_);
   }
   else
   {
-    sub_5D7C4A((int *)dword_92D9EC, (char *)n43);
+    sub_5D7C4A(dword_92D9EC, (char *)n43);
   }
 LABEL_43:
   result = j__malloc(0xFD18u);
@@ -392060,7 +391971,6 @@ LABEL_43:
   return result;
 }
 // 5A18BB: using guessed type int nullsub_9();
-// 5CDBF2: using guessed type _DWORD __cdecl sub_5CDBF2(_DWORD);
 // 974F00: using guessed type int dword_974F00;
 
 //----- (005A4AAB) --------------------------------------------------------
@@ -442425,24 +442335,24 @@ _DWORD *__thiscall sub_5DBF32(_DWORD *this, int *p_FileName)
 }
 
 //----- (005DBFA4) --------------------------------------------------------
-void __thiscall sub_5DBFA4(_DWORD *this, char **FileName, int a3, int a4, int a5, int a6, int *a7)
+void __thiscall sub_5DBFA4(_DWORD *this, char *****FileName, int a3, int a4, int a5, int a6, int *a7)
 {
-  char **p_FileName; // eax
+  char *****p_FileName; // eax
   _DWORD *v9; // eax
   bool v10; // bl
-  char **p_FileName_1; // eax
+  char *****p_FileName_1; // eax
   CHAR *String2_1; // eax
   CHAR *String2_2; // eax
   CHAR *String2_3; // eax
   int v15; // eax
   CHAR *String2_4; // eax
   void **v17; // eax
-  unsigned __int8 *v18; // eax
-  unsigned __int8 *v19; // eax
+  unsigned __int8 *ObjectTable_EmoTEObjectTable_2; // eax
+  unsigned __int8 *ObjectTable_EmoTEObjectTable; // eax
   int v20; // [esp+17h] [ebp-11h] BYREF
   int n2; // [esp+24h] [ebp-4h]
   char *v22[6]; // [esp+50h] [ebp+28h] BYREF
-  unsigned __int8 v23[4]; // [esp+68h] [ebp+40h] BYREF
+  unsigned __int8 ObjectTable_EmoTEObjectTable_1[4]; // [esp+68h] [ebp+40h] BYREF
   char v24; // [esp+78h] [ebp+50h] BYREF
   char *v25; // [esp+7Ch] [ebp+54h]
   CHAR String2[4]; // [esp+80h] [ebp+58h] BYREF
@@ -442452,7 +442362,7 @@ void __thiscall sub_5DBFA4(_DWORD *this, char **FileName, int a3, int a4, int a5
   CHAR CodePage[512]; // [esp+298h] [ebp+270h] BYREF
 
   n2 = 0;
-  p_FileName = (char **)&FileName;
+  p_FileName = (char *****)&FileName;
   if ( a7 != &a6 )
     p_FileName = FileName;
   v9 = sub_429B68((unsigned int *)&FileName, v22, a6 - (_DWORD)p_FileName - 4, 0xFFFFFFFF);
@@ -442465,7 +442375,7 @@ void __thiscall sub_5DBFA4(_DWORD *this, char **FileName, int a3, int a4, int a5
       sub_5DB523();
     goto LABEL_32;
   }
-  p_FileName_1 = (char **)&FileName;
+  p_FileName_1 = (char *****)&FileName;
   if ( a7 != &a6 )
     p_FileName_1 = FileName;
   sub_429B68((unsigned int *)&FileName, String2, 0, a6 - (_DWORD)p_FileName_1 - 4);
@@ -442503,21 +442413,21 @@ LABEL_17:
       v17 = (void **)dword_9B9180;
     sub_429B68((unsigned int *)String2, v22, dword_9B9190 - (_DWORD)v17, 0xFFFFFFFF);
     LOBYTE(n2) = 6;
-    sub_402738((int)v23, "ObjectTable/", (int)&v20);
+    sub_402738((int)ObjectTable_EmoTEObjectTable_1, "ObjectTable/", (int)&v20);
     LOBYTE(n2) = 7;
-    sub_40221F(v23, (int)v22);
-    v18 = v23;
+    sub_40221F(ObjectTable_EmoTEObjectTable_1, (int)v22);
+    ObjectTable_EmoTEObjectTable_2 = ObjectTable_EmoTEObjectTable_1;
     if ( v25 != &v24 )
-      v18 = *(unsigned __int8 **)v23;
-    if ( sub_6739B0(dword_9C79A8, v18) != 0 )
+      ObjectTable_EmoTEObjectTable_2 = *(unsigned __int8 **)ObjectTable_EmoTEObjectTable_1;
+    if ( sub_6739B0(dword_9C79A8, ObjectTable_EmoTEObjectTable_2) != 0 )
     {
-      v19 = v23;
+      ObjectTable_EmoTEObjectTable = ObjectTable_EmoTEObjectTable_1;
       if ( v25 != &v24 )
-        v19 = *(unsigned __int8 **)v23;
-      sub_462364(dword_929BF4, (int)v19);
+        ObjectTable_EmoTEObjectTable = *(unsigned __int8 **)ObjectTable_EmoTEObjectTable_1;
+      sub_462364((int)dword_929BF4, (int)ObjectTable_EmoTEObjectTable);
     }
     LOBYTE(n2) = 6;
-    sub_40234B((char **)v23);
+    sub_40234B((char **)ObjectTable_EmoTEObjectTable_1);
     LOBYTE(n2) = 2;
     sub_40234B(v22);
     LOBYTE(n2) = 0;
@@ -442535,24 +442445,23 @@ LABEL_33:
   sub_40234B((char **)&FileName);
 }
 // 5DC116: variable 'v15' is possibly undefined
-// 929BF4: using guessed type int dword_929BF4;
 // 9B9190: using guessed type int dword_9B9190;
 // 9B9194: using guessed type int dword_9B9194;
 
 //----- (005DC2C5) --------------------------------------------------------
 void __thiscall sub_5DC2C5(int this, char *a2, int a3)
 {
-  CHAR *FileName_1; // eax
-  CHAR *FileName_3; // eax
-  CHAR *FileName_5; // eax
-  _DWORD *FileName_6; // ecx
+  char *FileName_1; // eax
+  CHAR *FileName_2; // eax
+  char *FileName_3; // eax
+  char *p_FileName_2; // ecx
   int *v8; // eax
-  char *FileName_7; // esi
+  char *FileName_4; // esi
   char *v10; // edx
-  _DWORD FileName_4[10]; // [esp-18h] [ebp-74h] BYREF
+  _DWORD p_FileName_1[10]; // [esp-18h] [ebp-74h] BYREF
   LPCRITICAL_SECTION lpCriticalSection; // [esp+10h] [ebp-4Ch]
   char v13; // [esp+17h] [ebp-45h] BYREF
-  void *FileName_2; // [esp+18h] [ebp-44h] BYREF
+  char *p_FileName; // [esp+18h] [ebp-44h] BYREF
   void *v15[4]; // [esp+1Ch] [ebp-40h] BYREF
   char v16; // [esp+2Ch] [ebp-30h] BYREF
   char *v17; // [esp+30h] [ebp-2Ch]
@@ -442573,26 +442482,26 @@ void __thiscall sub_5DC2C5(int this, char *a2, int a3)
     {
       FileName_1 = FileName;
       if ( v20 != &v19 )
-        FileName_1 = *(CHAR **)FileName;
-      FileName_2 = FileName_1;
-      if ( sub_5DB3BF((_DWORD *)(this + 12), (int)&FileName_2) != (_DWORD *)(this + 12) )
+        FileName_1 = *(char **)FileName;
+      p_FileName = FileName_1;
+      if ( sub_5DB3BF((_DWORD *)(this + 12), &p_FileName) != (_DWORD *)(this + 12) )
         goto LABEL_6;
-      FileName_3 = FileName;
+      FileName_2 = FileName;
       if ( v20 != &v19 )
-        FileName_3 = *(CHAR **)FileName;
-      if ( sub_5DB092(FileName_3) != 0 )
+        FileName_2 = *(CHAR **)FileName;
+      if ( sub_5DB092(FileName_2) != 0 )
       {
-        FileName_2 = FileName_4;
-        sub_40277A((int)FileName_4, (void **)FileName);
+        p_FileName = (char *)p_FileName_1;
+        sub_40277A((int)p_FileName_1, (void **)FileName);
         LOBYTE(v21) = 0;
         sub_5DBFA4(
           (_DWORD *)this,
-          (char **)FileName_4[0],
-          FileName_4[1],
-          FileName_4[2],
-          FileName_4[3],
-          FileName_4[4],
-          (int *)FileName_4[5]);
+          (char **)p_FileName_1[0],
+          p_FileName_1[1],
+          p_FileName_1[2],
+          p_FileName_1[3],
+          p_FileName_1[4],
+          (int *)p_FileName_1[5]);
 LABEL_6:
         LeaveCriticalSection(lpCriticalSection);
 LABEL_21:
@@ -442601,30 +442510,30 @@ LABEL_21:
         goto LABEL_22;
       }
     }
-    FileName_5 = FileName;
+    FileName_3 = FileName;
     if ( v20 != &v19 )
-      FileName_5 = *(CHAR **)FileName;
-    FileName_2 = FileName_5;
-    *sub_5DBE52((_DWORD *)(this + 12), (char **)&FileName_2) = 0;
+      FileName_3 = *(char **)FileName;
+    p_FileName = FileName_3;
+    *sub_5DBE52((_DWORD *)(this + 12), &p_FileName) = 0;
     sub_402977((_BYTE **)v15, (int)&v13);
     LOBYTE(v21) = 2;
     sub_4372D5(v15, (void **)(this + 60));
     sub_40245A(v15, a2);
-    FileName_6 = j__malloc(0x14u);
-    FileName_2 = FileName_6;
+    p_FileName_2 = (char *)j__malloc(0x14u);
+    p_FileName = p_FileName_2;
     LOBYTE(v21) = 3;
-    if ( FileName_6 != nullptr )
-      v8 = CHttpDownModule::possible_ctor_or_dtor(FileName_6, 0, this != 0 ? this + 8 : 0);
+    if ( p_FileName_2 != nullptr )
+      v8 = CHttpDownModule::possible_ctor_or_dtor(p_FileName_2, 0, this != 0 ? this + 8 : 0);
     else
       v8 = nullptr;
     LOBYTE(v21) = 2;
-    FileName_7 = FileName;
+    FileName_4 = FileName;
     if ( v20 != &v19 )
-      FileName_7 = *(char **)FileName;
+      FileName_4 = *(char **)FileName;
     v10 = (char *)v15;
     if ( v17 != &v16 )
       v10 = (char *)v15[0];
-    sub_5DA941(v8, v10, FileName_7);
+    sub_5DA941(v8, v10, FileName_4);
     LeaveCriticalSection(lpCriticalSection);
     LOBYTE(v21) = 0;
     sub_40234B((char **)v15);
@@ -479081,17 +478990,20 @@ int *__thiscall stlp_std::time_get::sub_605A70(
 }
 
 //----- (00605B30) --------------------------------------------------------
-char ****************__thiscall sub_605B30(char *******************this, _BYTE *WideCharStr, _BYTE *WideCharStr_2)
+char ************************__thiscall sub_605B30(
+        char ***************************this,
+        _BYTE *WideCharStr,
+        _BYTE *WideCharStr_2)
 {
   _BYTE *WideCharStr_1; // ecx
   int v5; // ebx
   char *v6; // eax
   unsigned int v7; // edx
-  char *****************v8; // ebp
+  char *************************v8; // ebp
   size_t v9; // ebx
-  char ****************result; // eax
-  char ****************v11; // ebx
-  char ******************v12; // esi
+  char ************************result; // eax
+  char ************************v11; // ebx
+  char **************************v12; // esi
   unsigned int v13; // [esp+Ch] [ebp-4h] BYREF
 
   WideCharStr_1 = WideCharStr;
@@ -479104,18 +479016,18 @@ char ****************__thiscall sub_605B30(char *******************this, _BYTE *
     v6 = std::bad_alloc::possible_ctor_or_dtor_6(v5 + 1, &v13);
     v7 = v13;
     WideCharStr_1 = WideCharStr;
-    *this = (char ******************)v6;
-    *(this + 8) = (char ******************)v6;
-    *(this + 9) = (char ******************)&v6[2 * v7];
+    *this = (char **************************)v6;
+    *(this + 8) = (char **************************)v6;
+    *(this + 9) = (char **************************)&v6[2 * v7];
   }
-  v8 = (char *****************)(this + 8);
-  if ( *(this + 9) == (char ******************)(this + 8) )
+  v8 = (char *************************)(this + 8);
+  if ( *(this + 9) == (char **************************)(this + 8) )
   {
     v9 = 2 * v5;
-    result = (char ****************)memcpy(this, WideCharStr_1, v9);
-    if ( *(this + 9) != (char ******************)v8 )
-      this = (char *******************)*this;
-    v11 = (char ****************)((char *)this + v9);
+    result = (char ************************)memcpy(this, WideCharStr_1, v9);
+    if ( *(this + 9) != (char **************************)v8 )
+      this = (char ***************************)*this;
+    v11 = (char ************************)((char *)this + v9);
     *v8 = v11;
     *(_WORD *)v11 = 0;
   }
@@ -479124,15 +479036,15 @@ char ****************__thiscall sub_605B30(char *******************this, _BYTE *
     v12 = *this;
     if ( WideCharStr_2 == WideCharStr_1 )
     {
-      *v8 = (char ****************)v12;
+      *v8 = (char ************************)v12;
       *(_WORD *)v12 = 0;
-      return (char ****************)v12;
+      return (char ************************)v12;
     }
     else
     {
-      result = (char ****************)((char *)memcpy(v12, WideCharStr_1, WideCharStr_2 - WideCharStr)
-                                     + WideCharStr_2
-                                     - WideCharStr);
+      result = (char ************************)((char *)memcpy(v12, WideCharStr_1, WideCharStr_2 - WideCharStr)
+                                             + WideCharStr_2
+                                             - WideCharStr);
       *v8 = result;
       *(_WORD *)result = 0;
     }
@@ -479192,7 +479104,7 @@ char **__thiscall sub_605C90(char **this, void ***WideCharStr)
   WideCharStr_1 = WideCharStr;
   if ( WideCharStr[9] != (void **)(WideCharStr + 8) )
     WideCharStr_1 = (void ***)*WideCharStr;
-  sub_605B30((char *******************)this, WideCharStr_1, WideCharStr[8]);
+  sub_605B30((char ***************************)this, WideCharStr_1, WideCharStr[8]);
   return this;
 }
 
@@ -480049,7 +479961,7 @@ char **__thiscall sub_606F70(char **this, unsigned __int16 *WideCharStr, int a3)
 {
   *(this + 8) = (char *)this;
   *(this + 9) = (char *)(this + 8);
-  sub_605B30((char *******************)this, WideCharStr, &WideCharStr[wcslen(WideCharStr)]);
+  sub_605B30((char ***************************)this, WideCharStr, &WideCharStr[wcslen(WideCharStr)]);
   return this;
 }
 
@@ -495406,7 +495318,7 @@ char **__thiscall sub_61B4D0(char **this, _BYTE *WideCharStr, _BYTE *WideCharStr
 {
   *(this + 8) = (char *)this;
   *(this + 9) = (char *)(this + 8);
-  sub_605B30((char *******************)this, WideCharStr, WideCharStr_1);
+  sub_605B30((char ***************************)this, WideCharStr, WideCharStr_1);
   return this;
 }
 
@@ -533890,7 +533802,7 @@ int __thiscall sub_6749C0(int this, LPCSTR lpString2, unsigned int n0x5B201FC)
   DWORD NumberOfBytesRead; // [esp+30h] [ebp-224h] BYREF
   int v44; // [esp+34h] [ebp-220h]
   int this_1; // [esp+38h] [ebp-21Ch]
-  _DWORD v46[2]; // [esp+3Ch] [ebp-218h] BYREF
+  int v46[2]; // [esp+3Ch] [ebp-218h] BYREF
   CHAR CodePage[128]; // [esp+44h] [ebp-210h] BYREF
   int v48; // [esp+C4h] [ebp-190h]
   int v49; // [esp+C8h] [ebp-18Ch]
@@ -533938,7 +533850,7 @@ LABEL_7:
     return 0;
   v11 = (unsigned int *)operator new(FileSize);
   lpValueName = (char *)operator new(FileSize);
-  v46[0] = lpValueName;
+  v46[0] = (int)lpValueName;
   NumberOfBytesRead = -1;
   if ( ReadFile(FileA_1, lpValueName, FileSize, &NumberOfBytesRead, nullptr) && NumberOfBytesRead == FileSize )
   {
@@ -549391,7 +549303,7 @@ LABEL_15:
   {
     v12 = *((_DWORD *)i + 4) < *(_DWORD *)a4;
     if ( *((_DWORD *)i + 4) >= *(_DWORD *)a4 )
-      goto LABEL_35;
+      goto LABEL_34;
     if ( this_2 == (_DWORD *)this || *(_DWORD *)a4 < this_2[4] )
     {
       if ( *((_DWORD *)i + 3) != 0 )
@@ -549406,7 +549318,7 @@ LABEL_15:
     *p_i = *(char **)sub_6867F0((_DWORD *)this, (int)v13, a4);
     return p_i;
   }
-LABEL_35:
+LABEL_34:
   *p_i = i;
   return p_i;
 }
@@ -549589,7 +549501,7 @@ LABEL_15:
   {
     v12 = *((_DWORD *)i + 4) < *(_DWORD *)a4;
     if ( *((_DWORD *)i + 4) >= *(_DWORD *)a4 )
-      goto LABEL_35;
+      goto LABEL_34;
     if ( this_2 == (_DWORD *)this || *(_DWORD *)a4 < this_2[4] )
     {
       if ( *((_DWORD *)i + 3) != 0 )
@@ -549604,7 +549516,7 @@ LABEL_15:
     *a2 = *(char **)sub_687030((_DWORD *)this, (int)v13, a4);
     return a2;
   }
-LABEL_35:
+LABEL_34:
   *a2 = i;
   return a2;
 }
@@ -597597,7 +597509,7 @@ LABEL_15:
   {
     v12 = *((_DWORD *)i + 4) < *a4;
     if ( *((_DWORD *)i + 4) >= *a4 )
-      goto LABEL_35;
+      goto LABEL_34;
     if ( this_2 == (_DWORD *)this || *a4 < this_2[4] )
     {
       if ( *((_DWORD *)i + 3) != 0 )
@@ -597612,7 +597524,7 @@ LABEL_15:
     *a2 = *(char **)sub_6E2050(this, (int)v13, a4);
     return a2;
   }
-LABEL_35:
+LABEL_34:
   *a2 = i;
   return a2;
 }
@@ -609591,51 +609503,51 @@ LABEL_29:
               {
                 case 5:
                   if ( p_n0xFEa_1 - p_n0xFE_1 >= 2 )
-                    goto LABEL_66;
+                    goto LABEL_65;
                   return -2;
                 case 6:
                   if ( p_n0xFEa_1 - p_n0xFE_1 >= 3 )
-                    goto LABEL_66;
+                    goto LABEL_65;
                   return -2;
                 case 7:
                   if ( p_n0xFEa_1 - p_n0xFE_1 >= 4 )
-                    goto LABEL_66;
+                    goto LABEL_65;
                   return -2;
                 case 9:
                 case 10:
                 case 21:
                   continue;
                 case 11:
-                  goto LABEL_75;
+                  goto LABEL_74;
                 case 17:
-                  goto LABEL_71;
+                  goto LABEL_70;
                 case 22:
                 case 24:
                   goto LABEL_55;
                 case 29:
                   if ( ((1 << (*p_n0xFE_1 & 0x1F))
                       & dword_7D16E8[8 * (unsigned __int8)byte_7D1BE8[p_n0xFE_1[1]] + (*p_n0xFE_1 >> 5)]) == 0 )
-                    goto LABEL_66;
+                    goto LABEL_65;
 LABEL_55:
                   v6 = a4;
                   break;
                 default:
-                  goto LABEL_66;
+                  goto LABEL_65;
               }
               goto LABEL_56;
             }
           case 11:
-LABEL_75:
+LABEL_74:
             *v16 = p_n0xFE_1 + 2;
             return 1;
           case 17:
-LABEL_71:
+LABEL_70:
             p_n0xFE_1 += 2;
             if ( p_n0xFE_1 == p_n0xFEa_1 )
               return -1;
             if ( p_n0xFE_1[1] != 0 || *p_n0xFE_1 != 62 )
             {
-LABEL_66:
+LABEL_65:
               *v16 = p_n0xFE_1;
               return 0;
             }
@@ -609645,7 +609557,7 @@ LABEL_66:
               return 3;
             }
           default:
-            goto LABEL_66;
+            goto LABEL_65;
         }
       }
       return -1;
@@ -609656,7 +609568,7 @@ LABEL_66:
       case 1:
       case 2:
       case 8:
-        goto LABEL_66;
+        goto LABEL_65;
       case 3:
         result = sub_6EF3E0(p_n0xFEa_1, p_n0xFE_1 + 2, a1, &p_n0xFE);
         if ( result > 0 )
@@ -626963,7 +626875,7 @@ LABEL_136:
       {
         if ( *(_DWORD *)(this + 68) == 1 )
         {
-          sprintf((char *)(this + 84), off_8967A8);
+          sprintf((char *)(this + 84), aU5d);
           result = 1;
         }
         else
