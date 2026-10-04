@@ -143,6 +143,9 @@ The server now defaults to `BNB_LOG_LEVEL=info`, emits a concise per-session TCP
 
 | Opcode | Dir | Handler | Exact Payload Schema | Effects & Notes |
 |---:|---|---|---|---|
+| `13` (`0x000D`) | C->S | `CLobbyStage::sub_4C1944` / `CLobbyStageGuild::sub_4BF661` | *(empty)* | The client requests a local return to `StageId.SelectServer` (`10`). The reconstruction updates its GameServer session stage and sends no reply; no production-server response is established. This is **ClientOpcode 13**, distinct from **ServerOpcode 13** (Lobby transition) and **StageId 13** (Game). |
+| `14` (`0x000E`) | C->S | `CMainSystem::sub_5AB8CB` -> `sub_5AA9CC` (`0x005AA9CC`) | `u32` `timeGetTime()`, `u32` value from `dword_974D8C + 24` (meaning unknown) | The client emits this periodic status packet after more than 5,000 ms. The server consumes/logs it without a chat response; production-server response semantics remain unverified. It is not a chat or announcement opcode. |
+| `15` (`0x000F`) | S->C | `CLobbyStage::sub_4C86A2` -> `sub_4C5DE7` (`0x004C5DE7`) | No fields read by this Lobby branch | Opens the localized `GuildUserOnly` modal and posts `WM_QUIT`. Do not use S->C 15 as a Lobby chat broadcast; normal chat is S->C 21. |
 | `20` (`0x0014`) | S->C / C->S | `CPacketDispatcher::sub_5D7CA5` (`0x005D7CA5`) | `u32` clientTick, `u32` seq | TCP ping/pong keepalive. |
 | `16` (`0x0010`) | C->S | `CChatStage::sub_4AD598` (`0x004AD598`) | `str` message | Normal stage chat (`S->C 21`). |
 | `21` (`0x0015`) | S->C | `CChatStage::sub_4B070C` / `CGameStage::sub_4F4D49` | `str` formattedChat (`"sender : message"`), `u8` colorFlag (`0`) | Displays normal chat in chat box & speech bubble. |

@@ -43,7 +43,7 @@ export const ClientOpcode = {
   LoginPassport: 11, // sub_5D85A0: keyed passport (0xAABBCCDD)
   ClientReportOrLobbyEnter: 12, // CStage report or lobby enter alias
   ReturnToChannelSelect: 13, // CLobbyStage::sub_4C1944
-  AdminNoticeChat: 14, // Notice broadcast
+  ClientPeriodicStatus: 14, // sub_5AA9CC, emitted by sub_5AB8CB after >5000 ms: [u32 timeGetTime, u32 opaque context]
   CheckIdOrNormalChat: 16, // COnePageIDStage check ID (stage < 10) or CChatStage::sub_4AD598 normal chat
   AcceptAgreement: 17, // CAgreementStage accept
   RegisterAccount: 18, // COnePageIDStage register
@@ -253,7 +253,7 @@ export const ServerOpcode = {
   MessengerHandoff: 11, // CLoginStage::sub_567B0F
   ChannelLoads: 12, // sub_5D4139: [u16 count, u16[count] load]
   LobbyStageTransition: 13, // CSelectServerStage root dispatch: slot 48 -> sub_56A9DA -> CStage::sub_4B96B1; requests StageId.Lobby (11)
-  ChatBroadcast15: 15,
+  LobbyGuildUserOnlyNotice: 15, // CLobbyStage::sub_4C86A2 -> sub_4C5DE7; modal + PostQuitMessage
   ShopInitAndStage14: 16, // sub_4BB82A: shop checksums (fxstock, stringtable, packagemap) + qmarksfn.ssd + banners
   PingRequest: 18, // CStage::sub_4BDBF5: [u32 tick, u32 seq]
   NormalChat: 21, // CChatStage::sub_4B070C / CGameStage::sub_4F4D49

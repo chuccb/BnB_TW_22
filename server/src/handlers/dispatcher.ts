@@ -139,7 +139,7 @@ const COMMON_OPCODES = new Set<number>([
   ClientOpcode.UploadCrashDump,
   ClientOpcode.ClientReportOrLobbyEnter,
   ClientOpcode.ReturnToChannelSelect,
-  ClientOpcode.AdminNoticeChat,
+  ClientOpcode.ClientPeriodicStatus,
   ClientOpcode.CheckIdOrNormalChat,
   ClientOpcode.ChatMessageWithType,
   ClientOpcode.PingReplyOrWhisper,

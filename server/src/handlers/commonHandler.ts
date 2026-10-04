@@ -1,9 +1,9 @@
 import type { UserRecord } from "../db/database.ts";
-import { ClientOpcode, ServerOpcode } from "../protocol/opcodes.ts";
+import { ClientOpcode, ServerOpcode, StageId } from "../protocol/opcodes.ts";
 import { PacketReader, PacketWriter } from "../protocol/primitives.ts";
 import { SmartStreamWriter } from "../protocol/stream.ts";
 import type { ClientSession, WorldState } from "../state/worldState.ts";
-import { logger } from "../utils/logger.ts";
+import { formatStageId, logger } from "../utils/logger.ts";
 
 /**
  * Writes a single `CRankMan` rank entry matching `sub_4A4FBD` (`0x004A4FBD`):
@@ -351,15 +351,15 @@ export function buildSmsListPacket243(
 }
 
 /**
- * Broadcasts normal chat message (`S->C 21` `CChatStage::sub_4B070C` / `CGameStage::sub_4F4D49`
- * and `S->C 15`) to the session's current room or lobby channel.
+ * Broadcasts normal chat as S->C 21 (`CChatStage::sub_4B070C` /
+ * `CGameStage::sub_4F4D49`). Do not append S->C 15: in the Lobby root-vtable view,
+ * `CLobbyStage::sub_4C86A2` routes opcode 15 to `sub_4C5DE7` (`GuildUserOnly` modal).
  */
 function broadcastNormalChat(
   state: WorldState,
   session: ClientSession,
   senderName: string,
-  msg: string,
-  chatType = 0
+  msg: string
 ): void {
   const formatted = `${senderName} : ${msg}`;
   if (session.currentRoomNumber !== null) {
@@ -371,14 +371,6 @@ function broadcastNormalChat(
         w21.writeU8(0); // normal color flag
         return w21;
       });
-      state.broadcastToRoom(room, () => {
-        const w15 = new PacketWriter(ServerOpcode.ChatBroadcast15);
-        w15.writeU8(chatType);
-        w15.writeU8(session.roomSlotIndices[0] ?? 0);
-        w15.writeString(senderName);
-        w15.writeString(msg);
-        return w15;
-      });
       return;
     }
   }
@@ -388,14 +380,6 @@ function broadcastNormalChat(
     w21.writeString(formatted);
     w21.writeU8(0);
     return w21;
-  });
-  state.broadcastToLobby(session.channelIndex, () => {
-    const w15 = new PacketWriter(ServerOpcode.ChatBroadcast15);
-    w15.writeU8(chatType);
-    w15.writeU8(0);
-    w15.writeString(senderName);
-    w15.writeString(msg);
-    return w15;
   });
 }
 
@@ -426,20 +410,6 @@ function sendWhisperChat(
     w24.writeU8(0); // NotInSameChannel
     w24.writeString(targetName);
     session.sendPacket(w24);
-  }
-
-  const makeW15 = () => {
-    const w15 = new PacketWriter(ServerOpcode.ChatBroadcast15);
-    w15.writeU8(2); // whisper
-    w15.writeU8(0);
-    w15.writeString(senderName);
-    w15.writeString(msg);
-    w15.writeString(targetName);
-    return w15;
-  };
-  session.sendPacket(makeW15());
-  if (targetSession && targetSession.sessionId !== session.sessionId) {
-    targetSession.sendPacket(makeW15());
   }
 }
 
@@ -584,7 +554,7 @@ export function handleCommonPacket(
       const _speakerType = reader.remaining >= 1 ? reader.readU8() : 0;
       const msg = reader.remaining >= 2 ? reader.readString() : "";
       const senderName = session.users[localIdx]?.username ?? session.users[0]?.username ?? `Player${session.sessionId}`;
-      broadcastNormalChat(state, session, senderName, msg, 0);
+      broadcastNormalChat(state, session, senderName, msg);
       break;
     }
 
@@ -629,7 +599,7 @@ export function handleCommonPacket(
     case ClientOpcode.CheckIdOrNormalChat: {
       const msg = reader.remaining >= 2 ? reader.readString() : "";
       const senderName = session.users[0]?.username ?? `Player${session.sessionId}`;
-      broadcastNormalChat(state, session, senderName, msg, 0);
+      broadcastNormalChat(state, session, senderName, msg);
       break;
     }
 
@@ -663,12 +633,59 @@ export function handleCommonPacket(
           break;
         }
       }
-      broadcastNormalChat(state, session, senderName, msg, 1);
+      broadcastNormalChat(state, session, senderName, msg);
       break;
     }
 
-    case ClientOpcode.ReturnToChannelSelect:
-    case ClientOpcode.AdminNoticeChat:
+    case ClientOpcode.ReturnToChannelSelect: {
+      if (session.connectionKind !== "game" || session.stageId !== StageId.Lobby) {
+        logger.warn("Stage", "Ignored return-to-channel-select request outside the GameServer Lobby", {
+          sessionId: session.sessionId,
+          connectionKind: session.connectionKind,
+          stageId: formatStageId(session.stageId),
+          payloadBytes: reader.remaining,
+        });
+        break;
+      }
+
+      const previousStageId = session.stageId;
+      session.stageId = StageId.SelectServer;
+      logger.info("Stage", "Client returned from Lobby to channel selection", {
+        sessionId: session.sessionId,
+        previousStageId,
+        previousStage: formatStageId(previousStageId),
+        targetStageId: session.stageId,
+        targetStage: formatStageId(session.stageId),
+        serverResponseSent: false,
+      });
+      break;
+    }
+
+    case ClientOpcode.ClientPeriodicStatus: {
+      if (reader.remaining !== 8) {
+        logger.warn("Heartbeat", "Ignored malformed C->S 14 periodic status packet", {
+          sessionId: session.sessionId,
+          connectionKind: session.connectionKind,
+          stageId: formatStageId(session.stageId),
+          expectedPayloadBytes: 8,
+          receivedPayloadBytes: reader.remaining,
+        });
+        break;
+      }
+
+      const clientTick = reader.readU32(); // `timeGetTime()` in `sub_5AA9CC`.
+      const opaqueContextU32 = reader.readU32(); // `dword_974D8C + 24`; semantic meaning unknown.
+      logger.debug("Heartbeat", "Received periodic client status report", {
+        sessionId: session.sessionId,
+        connectionKind: session.connectionKind,
+        stageId: formatStageId(session.stageId),
+        clientTick,
+        opaqueContextU32,
+        responseSent: false,
+      });
+      break;
+    }
+
     case ClientOpcode.ChatMessageWithType: {
       let chatType = 0;
       if (reader.remaining >= 3) {
@@ -687,7 +704,7 @@ export function handleCommonPacket(
       if (chatType === 2 && targetName) {
         sendWhisperChat(state, session, senderName, targetName, msg);
       } else {
-        broadcastNormalChat(state, session, senderName, msg, chatType);
+        broadcastNormalChat(state, session, senderName, msg);
       }
       break;
     }

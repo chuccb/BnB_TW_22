@@ -190,6 +190,63 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(config.gameUdpPort).toBe(config.gameTcpPort + 1);
   });
 
+  test("C->S 14 periodic status is not misrouted as chat or an S->C 15 Lobby alert", () => {
+    const config = loadConfig({ dbPath: ":memory:" });
+    using state = new WorldState(config);
+    const client = new SimulatedClient();
+    const session = state.createSession(client.onWireBytes, "127.0.0.1", 51010, "0.0.0.0", 0, "game");
+    session.sendConnectHello(config);
+    session.stageId = StageId.Lobby;
+    session.channelIndex = 1;
+
+    client.sendToServer(
+      state,
+      session.sessionId,
+      new PacketWriter(ClientOpcode.ClientPeriodicStatus)
+        .writeU32(123_456) // `timeGetTime()` from `sub_5AA9CC`
+        .writeU32(0x1234_5678) // opaque `dword_974D8C + 24`
+    );
+
+    expect(client.receivedPackets).toHaveLength(0);
+    expect(session.stageId).toBe(StageId.Lobby);
+  });
+
+  test("C->S 13 returns a Lobby session to SelectServer without chat side effects", () => {
+    const config = loadConfig({ dbPath: ":memory:" });
+    using state = new WorldState(config);
+    const client = new SimulatedClient();
+    const session = state.createSession(client.onWireBytes, "127.0.0.1", 51011, "0.0.0.0", 0, "game");
+    session.sendConnectHello(config);
+    session.stageId = StageId.Lobby;
+    session.channelIndex = 1;
+
+    client.sendToServer(state, session.sessionId, new PacketWriter(ClientOpcode.ReturnToChannelSelect));
+
+    expect(session.stageId).toBe(StageId.SelectServer);
+    expect(client.receivedPackets).toHaveLength(0);
+  });
+
+  test("Lobby normal chat sends S->C 21 only, never the S->C 15 GuildUserOnly modal", () => {
+    const config = loadConfig({ dbPath: ":memory:" });
+    using state = new WorldState(config);
+    const client = new SimulatedClient();
+    const session = state.createSession(client.onWireBytes, "127.0.0.1", 51012, "0.0.0.0", 0, "game");
+    session.sendConnectHello(config);
+    session.stageId = StageId.Lobby;
+    session.channelIndex = 1;
+
+    client.sendToServer(
+      state,
+      session.sessionId,
+      new PacketWriter(ClientOpcode.CheckIdOrNormalChat).writeString("hello")
+    );
+
+    const normalChat = client.popByOpcode(ServerOpcode.NormalChat)!;
+    expect(normalChat.readString()).toBe("Player1 : hello");
+    expect(normalChat.readU8()).toBe(0);
+    expect(client.popByOpcode(ServerOpcode.LobbyGuildUserOnlyNotice)).toBeUndefined();
+  });
+
   test("Full 2-player playable loop across all client stages and exact CA.exe opcodes", () => {
     clearRecentLogs();
     const config = loadConfig({ dbPath: ":memory:", publicIp: "198.51.100.28" });
