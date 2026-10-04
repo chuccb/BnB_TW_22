@@ -8,6 +8,11 @@ import {
 import { DEFAULT_C_CHANNELS, type CChannelInfo } from "../protocol/channelCache.ts";
 import type { PacketWriter } from "../protocol/primitives.ts";
 import { loadClientResources, type ClientResources } from "../resources/archive.ts";
+import {
+  formatClientOpcode,
+  formatServerOpcode,
+  formatStageId,
+} from "../utils/logger.ts";
 
 export type { CChannelInfo } from "../protocol/channelCache.ts";
 
@@ -70,6 +75,31 @@ export interface GameRoom {
 }
 
 export type ClientConnectionKind = "login" | "game";
+export type ServerCloseReason = "startup-failure" | "server-shutdown" | "packet-processing-error";
+export type TcpPacketDirection = "C->S" | "S->C";
+
+interface TcpPacketTraceEvent {
+  atMs: number;
+  direction: TcpPacketDirection;
+  label: string;
+  packetBytes: number;
+  stageId: number;
+}
+
+export interface TcpPacketTraceSummary {
+  /** Inbound events are decoded packets; outbound events are server socket.write calls. */
+  clientToServerDecodedPackets: number;
+  serverToClientWriteCalls: number;
+  /** Number of old events omitted from the bounded, per-session timeline. */
+  omittedTraceEvents: number;
+  lastClientPacketAgoMs: number | null;
+  lastServerWriteAgoMs: number | null;
+  pendingReceiveBytes: number;
+  /** Human-readable chronological summary; packet bodies are never included. */
+  packetFlow: string;
+}
+
+const MAX_SESSION_TRACE_EVENTS = 48;
 
 export class ClientSession {
   public readonly sessionId: number;
@@ -101,6 +131,18 @@ export class ClientSession {
   public lastPingTick = 0;
   public lastAntiHackStatus = 0;
 
+  /** Explicit server-initiated close request, if one was made before TCP close. */
+  public serverCloseReason: ServerCloseReason | null = null;
+  /** Socket errors are retained for the final connection summary without implying who closed it. */
+  public socketErrorMessage: string | null = null;
+
+  private readonly packetTrace: TcpPacketTraceEvent[] = [];
+  private omittedPacketTraceEvents = 0;
+  private clientToServerDecodedPackets = 0;
+  private serverToClientWriteCalls = 0;
+  private lastClientPacketAtMs: number | null = null;
+  private lastServerWriteAtMs: number | null = null;
+
   constructor(
     sessionId: number,
     sendRaw: (bytes: Uint8Array) => void,
@@ -130,6 +172,72 @@ export class ClientSession {
     };
   }
 
+  /** Record only packet direction, opcode, stage, size, and time—never the body. */
+  public recordPacketTrace(
+    direction: TcpPacketDirection,
+    opcode: number | null,
+    packetBytes: number,
+    stageId: number = this.stageId,
+    label?: string,
+    atMs: number = Date.now()
+  ): void {
+    const packetLabel =
+      label ??
+      (opcode === null
+        ? "ConnectHello"
+        : direction === "C->S"
+          ? formatClientOpcode(opcode)
+          : formatServerOpcode(opcode));
+
+    if (direction === "C->S") {
+      this.clientToServerDecodedPackets++;
+      this.lastClientPacketAtMs = atMs;
+    } else {
+      this.serverToClientWriteCalls++;
+      this.lastServerWriteAtMs = atMs;
+    }
+
+    if (this.packetTrace.length === MAX_SESSION_TRACE_EVENTS) {
+      this.packetTrace.shift();
+      this.omittedPacketTraceEvents++;
+    }
+
+    this.packetTrace.push({
+      atMs,
+      direction,
+      label: packetLabel,
+      packetBytes: Math.max(0, packetBytes),
+      stageId,
+    });
+  }
+
+  public getPacketTraceSummary(closedAtMs: number = Date.now()): TcpPacketTraceSummary {
+    const packetFlow = this.packetTrace.length === 0
+      ? "<no decoded TCP packets>"
+      : this.packetTrace
+          .map((event) => {
+            const elapsedMs = Math.max(0, event.atMs - this.connectedAtMs);
+            return `+${elapsedMs}ms ${event.direction} ${event.label} ${event.packetBytes}B @${formatStageId(event.stageId)}`;
+          })
+          .join(" | ");
+
+    return {
+      clientToServerDecodedPackets: this.clientToServerDecodedPackets,
+      serverToClientWriteCalls: this.serverToClientWriteCalls,
+      omittedTraceEvents: this.omittedPacketTraceEvents,
+      lastClientPacketAgoMs:
+        this.lastClientPacketAtMs === null
+          ? null
+          : Math.max(0, closedAtMs - this.lastClientPacketAtMs),
+      lastServerWriteAgoMs:
+        this.lastServerWriteAtMs === null
+          ? null
+          : Math.max(0, closedAtMs - this.lastServerWriteAtMs),
+      pendingReceiveBytes: this.socketState.pendingReceiveBytes,
+      packetFlow,
+    };
+  }
+
   public sendConnectHello(config: ServerConfig): ConnectHelloInfo {
     const info: ConnectHelloInfo = {
       flag: 0,
@@ -146,12 +254,14 @@ export class ClientSession {
       this.packetLogContext()
     );
     this.sendRaw(frame);
+    this.recordPacketTrace("S->C", null, frame.length - 3, this.stageId, "ConnectHello");
     return info;
   }
 
   public sendPacket(writer: PacketWriter): void {
     const frame = this.socketState.encodePacket(writer, 0x00, this.packetLogContext());
     this.sendRaw(frame);
+    this.recordPacketTrace("S->C", writer.opcode, frame.length - 7);
   }
 }
 

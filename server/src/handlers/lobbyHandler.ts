@@ -1,6 +1,7 @@
 import { ClientOpcode, ServerOpcode, StageId } from "../protocol/opcodes.ts";
 import { PacketReader, PacketWriter } from "../protocol/primitives.ts";
 import type { ClientSession, GameRoom, WorldState } from "../state/worldState.ts";
+import { formatServerOpcode, formatStageId, formatU8Hex, logger } from "../utils/logger.ts";
 import { sendChannelListAndLoads } from "./channelHandler.ts";
 import { buildCoupleInfoSyncPacket250 } from "./commonHandler.ts";
 import {
@@ -325,6 +326,31 @@ export function handleLobbyPacket(
       for (const room of state.rooms.values()) {
         session.sendPacket(buildLobbyRoomEntryPacket(room));
       }
+
+      logger.info("LobbyInit", "Queued initial Lobby sync frames", {
+        sessionId: session.sessionId,
+        stageId: formatStageId(session.stageId),
+        playerCount: session.users.length,
+        serverOpcodes: user
+          ? [
+              ServerOpcode.ExpSync,
+              ServerOpcode.LucciSync,
+              ServerOpcode.InventoryData,
+              ServerOpcode.EquippedAvatarData,
+              ServerOpcode.InventoryExpansionSlots,
+              ServerOpcode.CoupleInfoSync,
+            ].map(formatServerOpcode)
+          : [],
+        playerFields: user
+          ? {
+              expValueIn89: user.exp,
+              opcode186WireU32Values: [0, user.lucci],
+              opcode186SecondU32LowByte: formatU8Hex(user.lucci),
+            }
+          : null,
+        coupleAnniversaryFeature30: state.config.enabledFeatures.has(30),
+        existingRoomEntries: state.rooms.size,
+      });
       break;
     }
 

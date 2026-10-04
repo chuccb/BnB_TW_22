@@ -47,7 +47,9 @@ function detectDefaultLogLevel(): LogLevel {
   const isTestEnv =
     process.env.NODE_ENV === "test" ||
     process.argv.some((arg) => arg.includes("test") || arg.endsWith(".test.ts"));
-  return isTestEnv ? "silent" : "debug";
+  // Normal runs show lifecycle summaries and handler outcomes. Enable the packet-level
+  // framing diagnostics explicitly with BNB_LOG_LEVEL=debug when needed.
+  return isTestEnv ? "silent" : "info";
 }
 
 let currentLogLevel: LogLevel = detectDefaultLogLevel();

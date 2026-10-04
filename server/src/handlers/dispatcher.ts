@@ -197,6 +197,7 @@ export function dispatchTcpPacket(
   reader: PacketReader
 ): void {
   const { opcode } = reader;
+  session.recordPacketTrace("C->S", opcode, reader.plain.length);
   logger.debug("Dispatcher", `Received ${formatClientOpcode(opcode)}`, {
     sessionId: session.sessionId,
     connectionKind: session.connectionKind,

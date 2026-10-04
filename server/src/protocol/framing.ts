@@ -250,6 +250,11 @@ export class PacketSocketState {
 
   private rxBuffer: Uint8Array = new Uint8Array(0);
 
+  /** Bytes received but not yet enough to form a complete TCP frame. */
+  public get pendingReceiveBytes(): number {
+    return this.rxBuffer.length;
+  }
+
   constructor(role: "server" | "client" = "server") {
     this.role = role;
   }

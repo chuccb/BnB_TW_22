@@ -1,8 +1,13 @@
 import type { TCPSocketListener, udp } from "bun";
 import { type ServerConfig, loadConfig } from "../config/index.ts";
 import { dispatchTcpPacket, dispatchUdpDatagram } from "../handlers/dispatcher.ts";
-import { type ClientConnectionKind, type ClientSession, WorldState } from "../state/worldState.ts";
-import { formatHexPreview, logger } from "../utils/logger.ts";
+import {
+  type ClientConnectionKind,
+  type ClientSession,
+  type ServerCloseReason,
+  WorldState,
+} from "../state/worldState.ts";
+import { formatHexPreview, formatStageId, logger } from "../utils/logger.ts";
 
 interface SocketData {
   session: ClientSession;
@@ -75,13 +80,20 @@ export class CrazyArcadeServer implements Disposable, AsyncDisposable {
         gameTcpPort: this.config.gameTcpPort,
         gameUdpPort: this.config.gameUdpPort,
       };
-      logger.info("Network", "CrazyArcade v22 services listening", {
-        host: this.config.host,
-        ...ports,
+      logger.info("Network", "LoginServer and GameServer listeners ready", {
+        bindHost: this.config.host,
+        loginServer: {
+          tcpPort: ports.tcpPort,
+          udpPort: ports.udpPort,
+        },
+        gameServer: {
+          tcpPort: ports.gameTcpPort,
+          udpPort: ports.gameUdpPort,
+        },
       });
       return ports;
     } catch (error) {
-      this.closeListeners();
+      this.closeListeners("startup-failure");
       logger.error("Network", "Failed to start one or more server endpoints", {
         host: this.config.host,
         requestedLoginTcpPort,
@@ -194,11 +206,12 @@ export class CrazyArcadeServer implements Disposable, AsyncDisposable {
               dispatchTcpPacket(world, session, packet);
             }
           } catch (error) {
-            logger.error("TCP", `${label} packet processing failed; closing client socket`, {
+            session.serverCloseReason = "packet-processing-error";
+            logger.error("TCP", `${label} packet processing failed; ending socket`, {
               sessionId: session.sessionId,
               remoteAddress: session.remoteAddress,
               remotePort: session.remotePort,
-              stageId: session.stageId,
+              stageId: formatStageId(session.stageId),
               error: error instanceof Error ? error.message : String(error),
             });
             socket.end();
@@ -208,18 +221,26 @@ export class CrazyArcadeServer implements Disposable, AsyncDisposable {
         close(socket) {
           const session = socket.data?.session;
           if (!session) return;
-          logger.info("TCP", `${label} client disconnected`, {
+          const closedAtMs = Date.now();
+          logger.info("TCP", `${label} TCP socket closed`, {
             sessionId: session.sessionId,
             remoteAddress: session.remoteAddress,
             remotePort: session.remotePort,
-            stageId: session.stageId,
-            connectedForMs: Date.now() - session.connectedAtMs,
+            stageId: formatStageId(session.stageId),
+            connectedForMs: closedAtMs - session.connectedAtMs,
+            closeInitiator: session.serverCloseReason ? "server-requested" : "unknown",
+            serverCloseReason: session.serverCloseReason ?? undefined,
+            socketError: session.socketErrorMessage ?? undefined,
+            ...session.getPacketTraceSummary(closedAtMs),
           });
           world.removeSession(session.sessionId);
         },
 
         error(socket, error) {
           const session = socket.data?.session;
+          if (session) {
+            session.socketErrorMessage = error.message;
+          }
           logger.error("TCP", `${label} socket error`, {
             sessionId: session?.sessionId,
             remoteAddress: socket.remoteAddress,
@@ -268,7 +289,10 @@ export class CrazyArcadeServer implements Disposable, AsyncDisposable {
     });
   }
 
-  private closeListeners(): void {
+  private closeListeners(reason: Exclude<ServerCloseReason, "packet-processing-error">): void {
+    for (const session of this.state.sessions.values()) {
+      session.serverCloseReason ??= reason;
+    }
     for (const server of this.tcpServers.splice(0)) {
       server.stop(true);
     }
@@ -278,7 +302,7 @@ export class CrazyArcadeServer implements Disposable, AsyncDisposable {
   }
 
   public stop(): void {
-    this.closeListeners();
+    this.closeListeners("server-shutdown");
     this.state.db.close();
   }
 

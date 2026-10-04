@@ -12,7 +12,7 @@ import { ClientOpcode, ServerOpcode, StageId } from "../src/protocol/opcodes.ts"
 import { PacketReader, PacketWriter } from "../src/protocol/primitives.ts";
 import { verifySmartStreamSchema } from "../src/resources/archive.ts";
 import { WorldState } from "../src/state/worldState.ts";
-import { clearRecentLogs, getRecentLogs } from "../src/utils/logger.ts";
+import { clearRecentLogs, formatU8Hex, getRecentLogs } from "../src/utils/logger.ts";
 
 type LiveTcpSocket = {
   write(bytes: Uint8Array): number;
@@ -191,6 +191,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
   });
 
   test("Full 2-player playable loop across all client stages and exact CA.exe opcodes", () => {
+    clearRecentLogs();
     const config = loadConfig({ dbPath: ":memory:", publicIp: "198.51.100.28" });
     using state = new WorldState(config);
 
@@ -436,6 +437,23 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(client1.popByOpcode(ServerOpcode.EquippedAvatarData)).toBeDefined();
     expect(client1.popByOpcode(ServerOpcode.InventoryExpansionSlots)).toBeDefined();
     expect(client1.popByOpcode(ServerOpcode.CoupleInfoSync)).toBeDefined();
+
+    const lobbyInitLog = getRecentLogs().findLast((entry) => entry.category === "LobbyInit");
+    expect(lobbyInitLog?.data?.playerCount).toBe(1);
+    expect(lobbyInitLog?.data?.serverOpcodes).toEqual([
+      "89 (ExpSync)",
+      "186 (LucciSync)",
+      "194 (InventoryData)",
+      "196 (EquippedAvatarData)",
+      "268 (InventoryExpansionSlots)",
+      "250 (CoupleInfoSync)",
+    ]);
+    const lobbyPlayerFields = lobbyInitLog?.data?.playerFields as
+      | Record<string, unknown>
+      | undefined;
+    expect(lobbyPlayerFields?.expValueIn89).toBe(loggedInUser.exp);
+    expect(lobbyPlayerFields?.opcode186WireU32Values).toEqual([0, loggedInUser.lucci]);
+    expect(lobbyPlayerFields?.opcode186SecondU32LowByte).toBe(formatU8Hex(loggedInUser.lucci));
 
     client1.sendToServer(
       state,
@@ -1484,6 +1502,45 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(client1.popByOpcode(ServerOpcode.GuildOrUserStatus)?.readU8()).toBe(0);
   });
 
+  test("server shutdown is reported as a server-requested TCP close", async () => {
+    const server = new CrazyArcadeServer({
+      host: "127.0.0.1",
+      tcpPort: 0,
+      udpPort: 0,
+      gameTcpPort: 0,
+      gameUdpPort: 0,
+      dbPath: ":memory:",
+    });
+    let client: LiveTcpClient | null = null;
+    let stopped = false;
+
+    try {
+      const ports = await server.start();
+      client = await LiveTcpClient.connect(ports.tcpPort);
+      const sessionId = [...server.state.sessions.values()][0]?.sessionId;
+      expect(sessionId).toBeDefined();
+
+      clearRecentLogs();
+      server.stop();
+      stopped = true;
+      await Bun.sleep(10);
+
+      const closeLog = getRecentLogs().findLast(
+        (entry) =>
+          entry.category === "TCP" &&
+          entry.message === "LoginServer TCP socket closed" &&
+          entry.data?.sessionId === sessionId
+      );
+      expect(closeLog?.data?.closeInitiator).toBe("server-requested");
+      expect(closeLog?.data?.serverCloseReason).toBe("server-shutdown");
+      expect(closeLog?.data?.serverToClientWriteCalls).toBe(1);
+      expect(closeLog?.data?.clientToServerDecodedPackets).toBe(0);
+    } finally {
+      client?.close();
+      if (!stopped) server.stop();
+    }
+  });
+
   test("LoginServer -> GameServer TCP handoff uses ConnectHello, channel ordinal, and auth token", async () => {
     await using server = new CrazyArcadeServer({
       host: "127.0.0.1",
@@ -1538,6 +1595,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     // `sub_56C0C8` closes the LoginServer socket before connecting to the advertised GameServer.
     loginClient.close();
     const gameClient = await LiveTcpClient.connect(ports.gameTcpPort);
+    let gameSessionId: number | undefined;
     try {
       const handoffAck = gameClient.waitForOpcode(ServerOpcode.SessionHandoffAck);
       const questSync = gameClient.waitForOpcode(ServerOpcode.QuestConfigSync);
@@ -1561,6 +1619,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
       const gameSession = [...server.state.sessions.values()].find(
         (session) => session.connectionKind === "game"
       );
+      gameSessionId = gameSession?.sessionId;
       expect(gameSession?.stageId).toBe(StageId.Lobby);
       expect(gameSession?.channelIndex).toBe(0);
       expect(gameSession?.users[0]?.username).toBe("live_tester");
@@ -1585,11 +1644,14 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
       const uploadLogs = getRecentLogs().filter((entry) => entry.category === "CrashDump");
       expect(uploadLogs).toHaveLength(2);
       expect(uploadLogs[0]?.data?.uploadForm).toBe("metadata");
-      expect(uploadLogs[0]?.data?.payloadLengthMatches).toBe(true);
+      expect(uploadLogs[0]?.data?.transferFieldU32).toBe(16_000);
+      expect(uploadLogs[0]?.data?.declaredByteCount).toBeUndefined();
+      expect(uploadLogs[0]?.data?.payloadShapeMatches).toBe(true);
       expect(uploadLogs[1]?.data?.uploadForm).toBe("chunk");
+      expect(uploadLogs[1]?.data?.transferFieldU32).toBe(16_000);
       expect(uploadLogs[1]?.data?.declaredByteCount).toBe(16_000);
       expect(uploadLogs[1]?.data?.payloadByteCount).toBe(16_000);
-      expect(uploadLogs[1]?.data?.payloadLengthMatches).toBe(true);
+      expect(uploadLogs[1]?.data?.payloadShapeMatches).toBe(true);
       expect(
         getRecentLogs().some(
           (entry) => entry.category === "ChannelCache" && entry.message.includes("Received 9")
@@ -1632,5 +1694,21 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     } finally {
       gameClient.close();
     }
+
+    await Bun.sleep(10);
+    const gameCloseLog = getRecentLogs().findLast(
+      (entry) =>
+        entry.category === "TCP" &&
+        entry.message === "GameServer TCP socket closed" &&
+        entry.data?.sessionId === gameSessionId
+    );
+    expect(gameCloseLog?.data?.closeInitiator).toBe("unknown");
+    expect(gameCloseLog?.data?.serverCloseReason).toBeUndefined();
+    expect(gameCloseLog?.data?.clientToServerDecodedPackets).toBe(5);
+    expect(gameCloseLog?.data?.serverToClientWriteCalls).toBe(9);
+    expect(gameCloseLog?.data?.pendingReceiveBytes).toBe(0);
+    expect(gameCloseLog?.data?.packetFlow).toContain("C->S 83 (EnterLobby)");
+    expect(gameCloseLog?.data?.packetFlow).toContain("S->C 89 (ExpSync)");
+    expect(gameCloseLog?.data?.packetFlow).not.toContain("live_tester");
   });
 });

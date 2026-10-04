@@ -41,7 +41,9 @@ The implementation keeps the observed client names alongside readable TypeScript
 | `GAME_UDP_PORT` | `9340` | GameServer UDP (`GAME_TCP_PORT + 1` by default) |
 | `MESSENGER_PORT` | `8339` | Messenger handoff port |
 | `DB_PATH` | `server/bnb_tw22.db` | SQLite database path |
-| `BNB_LOG_LEVEL` | `debug` outside tests | Structured logger threshold |
+| `BNB_LOG_LEVEL` | `info` outside tests | `info` shows lifecycle/handler summaries; set `debug` for per-frame crypto/framing details |
+
+Connection-close summaries include a bounded, chronological TCP packet timeline with direction, opcode, stage, plaintext packet size (including opcode; ConnectHello data for the initial handshake), time since accept, and idle time before close. Inbound entries are fully decoded packets; outbound entries mean the server called `socket.write`, not that the client acknowledged or parsed those bytes. Packet bodies are not included in the summary. `BNB_LOG_LEVEL=debug` retains the detailed per-frame diagnostics.
 
 `CLIENT_ROOT` may be supplied if the original client artifacts are not next to this repository's `server/` directory.
 

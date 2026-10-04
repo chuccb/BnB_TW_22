@@ -467,12 +467,12 @@ export function handleCommonPacket(
       }
 
       const transferFlag = reader.readU8();
-      const declaredByteCount = reader.readU32();
+      const transferFieldU32 = reader.readU32();
       const payloadByteCount = reader.remaining;
-      const payloadLengthMatches =
+      const payloadShapeMatches =
         transferFlag === 0
           ? payloadByteCount === 0
-          : transferFlag === 1 && payloadByteCount === declaredByteCount;
+          : transferFlag === 1 && payloadByteCount === transferFieldU32;
       const uploadForm =
         transferFlag === 0 ? "metadata" : transferFlag === 1 ? "chunk" : "unknown";
       const details = {
@@ -481,12 +481,14 @@ export function handleCommonPacket(
         stageId: session.stageId,
         transferFlag,
         uploadForm,
-        declaredByteCount,
+        // Only flag=1 is source-confirmed as a byte count. Keep flag=0's u32 neutral.
+        transferFieldU32,
+        ...(transferFlag === 1 ? { declaredByteCount: transferFieldU32 } : {}),
         payloadByteCount,
-        payloadLengthMatches,
+        payloadShapeMatches,
       };
 
-      if (payloadLengthMatches) {
+      if (payloadShapeMatches) {
         logger.info("CrashDump", "Received C->S 8 Crash_CA.dmp upload packet", details);
       } else {
         logger.warn(

@@ -37,7 +37,7 @@ export const ClientOpcode = {
   SelectChannel: 5, // CSelectServerStage::sub_56AF39
   SessionHandoff: 6, // sub_5D8879 / sub_5D893D / sub_5D8A3F
   UploadCrashReport: 7, // sub_5A885A / sub_5D090B: [str crashInfo] (CA_Crash_info.nfo / Crash_CA.dmp.log)
-  UploadCrashDump: 8, // sub_5D06FA: [u8 flag=1, u32 byteCount, block(byteCount)]; sub_5D137C sends flag=0 without a block
+  UploadCrashDump: 8, // sub_5D06FA: flag=1 u32 byteCount + block; sub_5D137C sends flag=0 without a block (u32 meaning unknown)
   RequestChannelList: 9, // sub_5D3BFC: [u32 channel2_%03d%s.ssd checksum]
   RequestChannelList10: 10, // Channel list refresh alias
   LoginPassport: 11, // sub_5D85A0: keyed passport (0xAABBCCDD)

@@ -31,7 +31,8 @@ import {
   normalizeCChannelCategory,
 } from "../src/protocol/channelCache.ts";
 import { decodeClientText, encodeClientText } from "../src/protocol/textEncoding.ts";
-import { ClientOpcode, ServerOpcode } from "../src/protocol/opcodes.ts";
+import { ClientOpcode, ServerOpcode, StageId } from "../src/protocol/opcodes.ts";
+import { ClientSession } from "../src/state/worldState.ts";
 import {
   clearRecentLogs,
   formatClientOpcode,
@@ -351,6 +352,81 @@ describe("Protocol Layer — CRC, Cipher, Primitives, SmartStream & Framing", ()
     expect(formatClientOpcode(5)).toBe("5 (SelectChannel)");
     expect(formatServerOpcode(7)).toBe("7 (ChannelSelectResult)");
     expect(formatStageId(10)).toBe("10 (SelectServer)");
+  });
+
+  test("TCP close trace summarizes direction, opcode, stage, sizes, and quiet time without bodies", () => {
+    const session = new ClientSession(
+      77,
+      () => {},
+      "127.0.0.1",
+      61964,
+      "127.0.0.1",
+      9339,
+      "game"
+    );
+    const startedAt = session.connectedAtMs;
+
+    session.recordPacketTrace("S->C", null, 48, StageId.Login, "ConnectHello", startedAt + 4);
+    session.recordPacketTrace(
+      "C->S",
+      ClientOpcode.SessionHandoff,
+      29,
+      StageId.Login,
+      undefined,
+      startedAt + 101
+    );
+    session.recordPacketTrace(
+      "S->C",
+      ServerOpcode.SessionHandoffAck,
+      3,
+      StageId.Lobby,
+      undefined,
+      startedAt + 102
+    );
+
+    const summary = session.getPacketTraceSummary(startedAt + 103);
+    expect(summary.clientToServerDecodedPackets).toBe(1);
+    expect(summary.serverToClientWriteCalls).toBe(2);
+    expect(summary.lastClientPacketAgoMs).toBe(2);
+    expect(summary.lastServerWriteAgoMs).toBe(1);
+    expect(summary.pendingReceiveBytes).toBe(0);
+    expect(summary.packetFlow).toBe(
+      "+4ms S->C ConnectHello 48B @1 (Login) | " +
+        "+101ms C->S 6 (SessionHandoff) 29B @1 (Login) | " +
+        "+102ms S->C 33 (SessionHandoffAck) 3B @11 (Lobby)"
+    );
+    expect(summary.packetFlow).not.toContain("sessionKey");
+  });
+
+  test("TCP close trace retains only the newest 48 events and counts omissions", () => {
+    const session = new ClientSession(
+      78,
+      () => {},
+      "127.0.0.1",
+      61965,
+      "127.0.0.1",
+      9339,
+      "login"
+    );
+    const startedAt = session.connectedAtMs;
+
+    for (let index = 0; index < 50; index++) {
+      session.recordPacketTrace(
+        "C->S",
+        ClientOpcode.RequestChannelList,
+        6,
+        StageId.SelectServer,
+        undefined,
+        startedAt + index
+      );
+    }
+
+    const summary = session.getPacketTraceSummary(startedAt + 51);
+    expect(summary.clientToServerDecodedPackets).toBe(50);
+    expect(summary.omittedTraceEvents).toBe(2);
+    expect(summary.packetFlow.split(" | ")).toHaveLength(48);
+    expect(summary.packetFlow).not.toContain("+0ms");
+    expect(summary.packetFlow).toContain("+2ms C->S 9 (RequestChannelList)");
   });
 
   test("ConnectHello advances the S->C counter exactly once and logs the 40 -> 43 handshake", () => {
