@@ -52,10 +52,15 @@ const MAX_TCP_PAYLOAD_BYTES = 16 * 1024 * 1024;
 const CRC_COUNTER_PROBE_DELTAS = [-6, -3, 3, 6, 768, 1536] as const;
 const MAX_CRC_SEED_SCAN_PAYLOAD_BYTES = 4096;
 
-function findClientOpcodeDiagnostic(plain: Uint8Array): string {
-  if (plain.length < 2) return "<unavailable: payload shorter than opcode>";
+function readUntrustedClientOpcode(plain: Uint8Array): number | undefined {
+  if (plain.length < 2) return undefined;
   const encodedOpcode = ((plain[0]! << 8) | plain[1]!) & 0xffff;
-  const opcode = (encodedOpcode ^ 0xa569) & 0xffff;
+  return (encodedOpcode ^ 0xa569) & 0xffff;
+}
+
+function findClientOpcodeDiagnostic(plain: Uint8Array): string {
+  const opcode = readUntrustedClientOpcode(plain);
+  if (opcode === undefined) return "<unavailable: payload shorter than opcode>";
   return REDACTED_CLIENT_PAYLOAD_OPCODES.has(opcode)
     ? "<redacted sensitive client opcode>"
     : formatClientOpcode(opcode);
@@ -99,10 +104,101 @@ function findCrcSeedsForTrailer(
   return { scanned: true, seeds };
 }
 
+export type PreLoginSsdChecksumFieldName =
+  | "fxdynimginfo"
+  | "csysstr"
+  | "multisvr"
+  | "filterstr"
+  | "multisvrn";
+
+export interface PreLoginSsdChecksumExpectations {
+  fieldVariants: Partial<Record<PreLoginSsdChecksumFieldName, readonly number[]>>;
+  knownResourceVariants: readonly number[];
+}
+
 export interface PacketLogContext {
   sessionId?: number;
   connectionKind?: string;
   stageId?: number;
+  /** Expected client-resource hashes used only to emit boolean pre-login diagnostics. */
+  preLoginSsdChecksumExpectations?: PreLoginSsdChecksumExpectations;
+}
+
+function diagnosePreLoginSsdChecksumFields(
+  plain: Uint8Array,
+  expectations?: PreLoginSsdChecksumExpectations
+):
+  | {
+      comparedFieldCount: number;
+      trailingBytes: number;
+      fields: Array<{
+        name: PreLoginSsdChecksumFieldName;
+        present: boolean;
+        fieldResourceAvailable: boolean;
+        matchesFieldResource: boolean | null;
+        matchesAnyKnownResource: boolean | null;
+      }>;
+    }
+  | undefined {
+  if (
+    !expectations ||
+    readUntrustedClientOpcode(plain) !== ClientOpcode.PreLoginSsdCheck ||
+    plain.length < 2
+  ) {
+    return undefined;
+  }
+
+  const reader = new PacketReader(plain, 2);
+  const fields: PreLoginSsdChecksumFieldName[] = [
+    "fxdynimginfo",
+    "csysstr",
+    "multisvr",
+    "filterstr",
+    "multisvrn",
+  ];
+  const fieldResults: Array<{
+    name: PreLoginSsdChecksumFieldName;
+    present: boolean;
+    fieldResourceAvailable: boolean;
+    matchesFieldResource: boolean | null;
+    matchesAnyKnownResource: boolean | null;
+  }> = [];
+
+  for (const name of fields) {
+    const expectedVariants = expectations.fieldVariants[name];
+    const fieldResourceAvailable = expectedVariants !== undefined && expectedVariants.length > 0;
+    const present = reader.remaining >= 4;
+    if (!present) {
+      fieldResults.push({
+        name,
+        present: false,
+        fieldResourceAvailable,
+        matchesFieldResource: null,
+        matchesAnyKnownResource: null,
+      });
+      continue;
+    }
+
+    const clientChecksum = reader.readU32();
+    fieldResults.push({
+      name,
+      present: true,
+      fieldResourceAvailable,
+      matchesFieldResource: fieldResourceAvailable
+        ? clientChecksum === 0 || expectedVariants!.includes(clientChecksum)
+        : null,
+      matchesAnyKnownResource:
+        clientChecksum === 0 || expectations.knownResourceVariants.includes(clientChecksum),
+    });
+  }
+
+  return {
+    comparedFieldCount: fieldResults.filter(
+      (field) => field.present && field.fieldResourceAvailable
+    ).length,
+    trailingBytes: reader.remaining,
+    fields: fieldResults,
+  };
 }
 
 export interface ConnectHelloInfo {
@@ -412,6 +508,10 @@ export class PacketSocketState {
           const counterCrcMatches = findCounterCrcMatches(counter, cipher, actualCrc, N);
           const crcSeedMatches = findCrcSeedMatches(counter, plain, actualCrc);
           const crcSeedsForTrailer = findCrcSeedsForTrailer(plain, actualCrc);
+          const preLoginSsdChecksumFields = diagnosePreLoginSsdChecksumFields(
+            plain,
+            logContext.preLoginSsdChecksumExpectations
+          );
           const crcScopeProbes = [
             { scope: "decryptedPayloadFull", bytes: plain },
             { scope: "decryptedPayloadWithoutOpcode", bytes: plain.subarray(Math.min(2, N)) },
@@ -446,6 +546,7 @@ export class PacketSocketState {
             payloadBytes: N,
             trailerOffset: 4 + N,
             untrustedOpcode: findClientOpcodeDiagnostic(plain),
+            preLoginSsdChecksumFields,
             counter,
             cipherCounter: counter,
             crcSeedByte: formatU8Hex(counter),

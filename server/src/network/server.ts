@@ -99,6 +99,40 @@ export class CrazyArcadeServer implements Disposable, AsyncDisposable {
     const label = CONNECTION_LABEL[connectionKind];
     const world = this.state;
     const config = this.config;
+    const ssdChecksumVariants = (filename: string): number[] => {
+      const entry = world.resources.ssdFiles.get(filename);
+      if (!entry) return [];
+      return [
+        ...new Set([
+          entry.adler32Zero,
+          entry.diskAdler32Zero,
+          entry.rawCrc32,
+          entry.uncompressedCrc32,
+          entry.crc32,
+        ]),
+      ];
+    };
+    const preLoginSsdChecksumExpectations = {
+      fieldVariants: {
+        fxdynimginfo: ssdChecksumVariants("fxdynimginfo.ssd"),
+        csysstr: ssdChecksumVariants("csysstr.ssd"),
+        multisvr: ssdChecksumVariants("multisvr.ssd"),
+        filterstr: ssdChecksumVariants("filterstr.ssd"),
+        multisvrn: ssdChecksumVariants("multisvrn.ssd"),
+      },
+      knownResourceVariants: [
+        0,
+        ...new Set(
+          Array.from(world.resources.ssdFiles.values()).flatMap((entry) => [
+            entry.adler32Zero,
+            entry.diskAdler32Zero,
+            entry.rawCrc32,
+            entry.uncompressedCrc32,
+            entry.crc32,
+          ])
+        ),
+      ],
+    };
 
     return Bun.listen<SocketData>({
       hostname: config.host,
@@ -154,6 +188,7 @@ export class CrazyArcadeServer implements Disposable, AsyncDisposable {
               sessionId: session.sessionId,
               connectionKind: session.connectionKind,
               stageId: session.stageId,
+              preLoginSsdChecksumExpectations,
             });
             for (const packet of packets) {
               dispatchTcpPacket(world, session, packet);

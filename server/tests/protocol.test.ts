@@ -366,6 +366,90 @@ describe("Protocol Layer — CRC, Cipher, Primitives, SmartStream & Framing", ()
     }
   });
 
+  test("CRC-failed pre-login packets compare resource hashes without logging their values", () => {
+    const previousLevel = getLogLevel();
+    setLogLevel("silent");
+    clearRecentLogs();
+    try {
+      const server = new PacketSocketState("server");
+      const client = new PacketSocketState("client");
+      const hello = server.encodeConnectHello({
+        flag: 0,
+        minVersion: 22,
+        currentVersion: 22,
+        sessionKey: 0x12340001,
+        noticeUrl: "http://tw.beanfun.com/bnb/",
+        extraFlag: 0,
+      });
+      client.decodeConnectHello(hello);
+
+      const checksums = {
+        fxdynimginfo: 0x084341a5,
+        csysstr: 0xe734d04f,
+        multisvr: 0x11111111,
+        filterstr: 0x000e496d,
+      };
+      const frame = client.encodePacket(
+        new PacketWriter(ClientOpcode.PreLoginSsdCheck, 2)
+          .writeU32(checksums.fxdynimginfo)
+          .writeU32(checksums.csysstr)
+          .writeU32(0x22222222)
+          .writeU32(checksums.filterstr)
+      );
+      frame[frame.length - 1] ^= 0x01;
+
+      expect(() => server.feed(frame, {
+        preLoginSsdChecksumExpectations: {
+          fieldVariants: {
+            fxdynimginfo: [checksums.fxdynimginfo],
+            csysstr: [checksums.csysstr],
+            multisvr: [checksums.multisvr],
+            filterstr: [checksums.filterstr],
+          },
+          knownResourceVariants: Object.values(checksums),
+        },
+      })).toThrow("C->S CRC8 mismatch");
+      const mismatch = getRecentLogs().find((entry) =>
+        entry.message.includes("C->S CRC8 mismatch")
+      );
+      const analysis = mismatch?.data?.preLoginSsdChecksumFields as
+        | {
+            comparedFieldCount: number;
+            trailingBytes: number;
+            fields: Array<{
+              name: string;
+              present: boolean;
+              matchesFieldResource: boolean | null;
+              matchesAnyKnownResource: boolean | null;
+            }>;
+          }
+        | undefined;
+      expect(analysis?.comparedFieldCount).toBe(4);
+      expect(analysis?.trailingBytes).toBe(0);
+      expect(
+        analysis?.fields.map(({ name, present, matchesFieldResource, matchesAnyKnownResource }) => [
+          name,
+          present,
+          matchesFieldResource,
+          matchesAnyKnownResource,
+        ])
+      ).toEqual([
+        ["fxdynimginfo", true, true, true],
+        ["csysstr", true, true, true],
+        ["multisvr", true, false, false],
+        ["filterstr", true, true, true],
+        ["multisvrn", false, null, null],
+      ]);
+      const serializedLog = JSON.stringify(mismatch);
+      expect(serializedLog).not.toContain("084341A5");
+      expect(serializedLog).not.toContain("E734D04F");
+      expect(serializedLog).not.toContain("22222222");
+      expect(serializedLog).not.toContain("000E496D");
+    } finally {
+      setLogLevel(previousLevel);
+    }
+  });
+
   test("C->S CRC failure logs redact credential opcodes and never log plaintext payloads", () => {
     const previousLevel = getLogLevel();
     setLogLevel("silent");
