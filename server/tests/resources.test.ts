@@ -117,12 +117,15 @@ describe("Client Resource Archives — Fx.idx, .i16 Tables, Maps & All 12 .ssd/.
     const systemStrings = new SmartStreamReader(resources.ssdFiles.csysstr.decompressed);
     const systemStringCount = systemStrings.readU16();
     let upperLevelOnly: string | undefined;
+    let failedToConnSvr: string | undefined;
     for (let i = 0; i < systemStringCount; i++) {
       const key = systemStrings.readString();
       const value = systemStrings.readString();
       if (key === "UpperLevelOnly") upperLevelOnly = value;
+      if (key === "FailedToConnSvr") failedToConnSvr = value;
     }
     expect(upperLevelOnly).toBe("選擇的頻道只能%d級以上才能進入");
+    expect(failedToConnSvr).toBe("因您的連線不穩定，請重新登入");
     expect(systemStrings.remaining()).toBe(0);
   });
 

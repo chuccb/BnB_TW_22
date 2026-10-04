@@ -52,7 +52,6 @@ const CHANNEL_OPCODES = new Set<number>([
   ClientOpcode.SelectChannelLegacy,
   ClientOpcode.SelectChannel,
   ClientOpcode.SessionHandoff,
-  ClientOpcode.RequestChannelList8,
   ClientOpcode.RequestChannelList,
   ClientOpcode.RequestChannelList10,
 ]);
@@ -137,6 +136,7 @@ const ROOM_OPCODES = new Set<number>([
 
 const COMMON_OPCODES = new Set<number>([
   ClientOpcode.UploadCrashReport,
+  ClientOpcode.UploadCrashDump,
   ClientOpcode.ClientReportOrLobbyEnter,
   ClientOpcode.ReturnToChannelSelect,
   ClientOpcode.AdminNoticeChat,

@@ -180,14 +180,15 @@ export function handleChannelSelect(
  *     [u32 isRegisteredFlag if sent via `sub_5D893D`]
  *   [u8 targetMode, u32 a2, u32 a3]
  *
- * Server replies:
+ * Lobby-target reply sequence:
  *   - S->C 33 (`CSelectServerStage::sub_56A9DA` -> `CStage::sub_4B96B1`):
- *       if feature 22 enabled (true in TW): u8(0)
- *       Transitions client to Stage 11 (`CLobbyStage`)
- *   - S->C 9 (`CStage::sub_4B8D42`):
- *       u32 stageId (11 = CLobbyStage, 14 = CShopStageNew)
- *   - S->C 75 (`CStage::sub_4B94A6`):
- *       u32 questConfigCount (0) -> triggers client to send `C->S 83` (Enter Lobby)
+ *       if feature 22 is enabled (true in TW): u8(0); transitions to Stage 11 (`CLobbyStage`)
+ *   - S->C 75 (`CStage::sub_4B94A6`): u32 questConfigCount (0), prompting `C->S 83` (Enter Lobby)
+ *
+ * Do not send S->C 9 as a lobby stage transition here. `CSelectServerStage` falls back to
+ * `CStage::sub_4BDBF5`, where opcode 9 calls `sub_4B8D42` and interprets the u32 as a
+ * `Crash_CA.dmp` file offset, prompting a C->S 8 dump-chunk upload. The non-Lobby targetMode
+ * path remains stage-specific and is intentionally left unchanged pending its own verification.
  */
 export function handleSessionAuthHandoff(
   state: WorldState,
@@ -266,15 +267,21 @@ export function handleSessionAuthHandoff(
     }
     session.sendPacket(w33);
 
-    // S->C 9 (`CStage::sub_4B8D42`)
-    const w9 = new PacketWriter(ServerOpcode.StageTransition);
-    w9.writeU32(StageId.Lobby);
-    session.sendPacket(w9);
-
     // S->C 75 (`CStage::sub_4B94A6` -> triggers C->S 83 Enter Lobby)
     const w75 = new PacketWriter(ServerOpcode.QuestConfigSync);
     w75.writeU32(0); // questConfigCount = 0
     session.sendPacket(w75);
+
+    logger.info("SessionHandoff", "Sent source-confirmed Lobby handoff sequence", {
+      sessionId: session.sessionId,
+      stageId: StageId.Lobby,
+      serverOpcodes: [
+        formatServerOpcode(ServerOpcode.SessionHandoffAck),
+        formatServerOpcode(ServerOpcode.QuestConfigSync),
+      ],
+      omittedOpcode9Reason:
+        "CStage::sub_4B8D42 expects a Crash_CA.dmp file offset, not a stage id",
+    });
   } else {
     const w9 = new PacketWriter(ServerOpcode.StageTransition);
     w9.writeU32(targetStage);
@@ -299,7 +306,6 @@ export function handleChannelPacket(
     case ClientOpcode.SessionHandoff:
       handleSessionAuthHandoff(state, session, reader);
       break;
-    case ClientOpcode.RequestChannelList8:
     case ClientOpcode.RequestChannelList:
     case ClientOpcode.RequestChannelList10:
       handlePostLoginChannelRequest(state, session, reader);

@@ -12,6 +12,7 @@ import { ClientOpcode, ServerOpcode, StageId } from "../src/protocol/opcodes.ts"
 import { PacketReader, PacketWriter } from "../src/protocol/primitives.ts";
 import { verifySmartStreamSchema } from "../src/resources/archive.ts";
 import { WorldState } from "../src/state/worldState.ts";
+import { clearRecentLogs, getRecentLogs } from "../src/utils/logger.ts";
 
 type LiveTcpSocket = {
   write(bytes: Uint8Array): number;
@@ -34,6 +35,7 @@ class LiveTcpClient {
   private preHelloBytes = new Uint8Array(0);
   private readonly queuedPackets: PacketReader[] = [];
   private readonly waiters: PacketWaiter[] = [];
+  public readonly receivedOpcodes: number[] = [];
   private resolveHello!: () => void;
   private rejectHello!: (error: Error) => void;
   private readonly helloReady = new Promise<void>((resolve, reject) => {
@@ -124,6 +126,7 @@ class LiveTcpClient {
 
   private decodePackets(bytes: Uint8Array): void {
     for (const packet of this.socketState.feed(bytes)) {
+      this.receivedOpcodes.push(packet.opcode);
       const waiterIndex = this.waiters.findIndex((waiter) => waiter.opcode === packet.opcode);
       if (waiterIndex < 0) {
         this.queuedPackets.push(packet);
@@ -375,7 +378,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(client1.popByOpcode(ServerOpcode.MessengerHandoff)).toBeDefined();
     expect(session1.stageId).toBe(StageId.SelectServer);
 
-    // 5. Select Channel (C->S 5 -> S->C 7) & Session Auth Handoff (C->S 6 -> S->C 33, 9, 75)
+    // 5. Select Channel (C->S 5 -> S->C 7) & Session Auth Handoff (C->S 6 -> S->C 33, 75)
     client1.sendToServer(
       state,
       session1.sessionId,
@@ -393,9 +396,9 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
       session1.sessionId,
       new PacketWriter(6).writeU8(1).writeString("bazzi_tw").writeU32(token1)
     );
-    expect(client1.popByOpcode(33)?.readU8()).toBe(0);
-    expect(client1.popByOpcode(9)?.readU32()).toBe(StageId.Lobby);
-    expect(client1.popByOpcode(75)?.readU32()).toBe(0);
+    expect(client1.popByOpcode(ServerOpcode.SessionHandoffAck)?.readU8()).toBe(0);
+    expect(client1.popByOpcode(ServerOpcode.StageTransition)).toBeUndefined();
+    expect(client1.popByOpcode(ServerOpcode.QuestConfigSync)?.readU32()).toBe(0);
     expect(session1.stageId).toBe(StageId.Lobby);
 
     // `CStage::sub_4B94A6` may request channel data again after reconnect. On the
@@ -1055,7 +1058,8 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     );
     expect(client1.popByOpcode(ServerOpcode.ShopEquipResult)).toBeDefined();
 
-    // 16. Leave Room (C->S 78 -> S->C 9 Stage 11 + S->C 103 9B payload to remaining player)
+    // 16. Leave Room (current server output: C->S 78 -> S->C 9 u32(11) + S->C 103).
+    // The opcode-9 leave response is a separate known defect in the generic CPrepareStage path.
     client1.sendToServer(state, session1.sessionId, new PacketWriter(ClientOpcode.LeaveRoom));
     client1.popByOpcode(ServerOpcode.StageTransition); // pop earlier Stage 14 transition
     expect(client1.popByOpcode(ServerOpcode.StageTransition)?.readU32()).toBe(StageId.Lobby);
@@ -1536,7 +1540,6 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     const gameClient = await LiveTcpClient.connect(ports.gameTcpPort);
     try {
       const handoffAck = gameClient.waitForOpcode(ServerOpcode.SessionHandoffAck);
-      const stageTransition = gameClient.waitForOpcode(ServerOpcode.StageTransition);
       const questSync = gameClient.waitForOpcode(ServerOpcode.QuestConfigSync);
       gameClient.send(
         new PacketWriter(ClientOpcode.SessionHandoff)
@@ -1546,8 +1549,14 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
       );
 
       expect((await handoffAck).readU8()).toBe(0);
-      expect((await stageTransition).readU32()).toBe(StageId.Lobby);
       expect((await questSync).readU32()).toBe(0);
+      // S->C 33 performs the Lobby transition. S->C 9 would instead be treated by
+      // CStage::sub_4B8D42 as a Crash_CA.dmp offset request and cause an unsolicited C->S 8.
+      expect(gameClient.receivedOpcodes).toEqual([
+        ServerOpcode.SessionHandoffAck,
+        ServerOpcode.QuestConfigSync,
+      ]);
+      expect(gameClient.hasQueuedOpcode(ServerOpcode.StageTransition)).toBe(false);
 
       const gameSession = [...server.state.sessions.values()].find(
         (session) => session.connectionKind === "game"
@@ -1555,6 +1564,37 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
       expect(gameSession?.stageId).toBe(StageId.Lobby);
       expect(gameSession?.channelIndex).toBe(0);
       expect(gameSession?.users[0]?.username).toBe("live_tester");
+
+      // C->S 8 is a Crash_CA.dmp upload, not the channel-cache CRC request (C->S 9).
+      // Follow it with C->S 83 to synchronize on a server reply over the same TCP stream.
+      clearRecentLogs();
+      const dumpChunk = new Uint8Array(16_000).fill(0xcd);
+      const lobbyInit = gameClient.waitForOpcode(ServerOpcode.ExpSync);
+      gameClient.send(
+        new PacketWriter(ClientOpcode.UploadCrashDump).writeU8(0).writeU32(dumpChunk.length)
+      );
+      gameClient.send(
+        new PacketWriter(ClientOpcode.UploadCrashDump)
+          .writeU8(1)
+          .writeU32(dumpChunk.length)
+          .writeBlock(dumpChunk)
+      );
+      gameClient.send(new PacketWriter(ClientOpcode.EnterLobby));
+      expect((await lobbyInit).readU8()).toBe(0);
+
+      const uploadLogs = getRecentLogs().filter((entry) => entry.category === "CrashDump");
+      expect(uploadLogs).toHaveLength(2);
+      expect(uploadLogs[0]?.data?.uploadForm).toBe("metadata");
+      expect(uploadLogs[0]?.data?.payloadLengthMatches).toBe(true);
+      expect(uploadLogs[1]?.data?.uploadForm).toBe("chunk");
+      expect(uploadLogs[1]?.data?.declaredByteCount).toBe(16_000);
+      expect(uploadLogs[1]?.data?.payloadByteCount).toBe(16_000);
+      expect(uploadLogs[1]?.data?.payloadLengthMatches).toBe(true);
+      expect(
+        getRecentLogs().some(
+          (entry) => entry.category === "ChannelCache" && entry.message.includes("Received 9")
+        )
+      ).toBe(false);
 
       // After reconnect the original CStage may repeat C->S 9; it must not replay the login handoff.
       gameClient.send(new PacketWriter(ClientOpcode.RequestChannelList).writeU32(0));

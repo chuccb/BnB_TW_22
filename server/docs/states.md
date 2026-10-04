@@ -27,7 +27,8 @@ The Taiwan login path uses a bootstrap connection, a LoginServer connection, and
      ▼
 [GameServer TCP 9339, new CPacketSocket]
      ├── Connect Hello, then C->S 6 with the S->C 4 session token
-     ├── S->C 33 + 9 + 75: lobby stage handoff
+     ├── S->C 33 + 75: Lobby stage handoff (`33` enters Stage 11; `75` prompts C->S 83)
+     ├── No S->C 9 on the Lobby handoff: generic `CStage` opcode 9 requests a Crash_CA.dmp chunk
      └── C->S 9 may repeat after reconnect; it is not a second LoginServer cache handoff
 ```
 
@@ -58,7 +59,7 @@ The default Taiwan peer ports are LoginServer TCP/UDP `3838/3839` and GameServer
                                                        │ C->S 5 (u8 category, u32 ordinal)│
                                                        │ S->C 7 (result=1, Game IP/port) │
                                                        │ [Reconnect to GameServer TCP]  │
-                                                       │ C->S 6 token -> S->C 33, 9, 75 │
+                                                       │ C->S 6 token -> S->C 33, 75     │
                                                        ▼                                │
 ┌──────────────────┐  C->S 37/38 -> S->C 261/16  ┌─────────────────────┐  C->S 13 (Back)│
 │ 14: CShopStageNew│◄───────────────────────────►│   11: CLobbyStage   ├────────────────┘
@@ -66,7 +67,7 @@ The default Taiwan peer ports are LoginServer TCP/UDP `3838/3839` and GameServer
 └──────────────────┘                             └────┬───────────▲────┘
                                                       │           │
                           C->S 75 / 79 (Create Room)  │           │ C->S 78 (Leave Room)
-                          C->S 76 (Join Room)         │           │ S->C 9 (u32(11))
+                          C->S 76 (Join Room)         │           │ current server S->C 9 (separate fix pending)
                           C->S 77 / 81 (Quick Join)   │           │ S->C 103 (To Room)
                           S->C 79 / 80 + S->C 102     ▼           │
                                                  ┌────────────────┴────┐
@@ -87,6 +88,8 @@ The default Taiwan peer ports are LoginServer TCP/UDP `3838/3839` and GameServer
                                                  │  S->C 148 (Result)  │
                                                  └─────────────────────┘
 ```
+
+**Opcode 9 scope.** The GameServer Lobby handoff no longer sends S->C 9: in the `CSelectServerStage` fallback, opcode 9 is the `Crash_CA.dmp` file-offset request described in `packets.md`. Other uses of the shared `ServerOpcode.StageTransition` constant (including the existing room-leave response) are not changed by this fix and need separate, stage-specific regression coverage before the shared name or behavior is revised.
 
 ---
 

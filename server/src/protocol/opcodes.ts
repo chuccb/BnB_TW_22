@@ -37,7 +37,7 @@ export const ClientOpcode = {
   SelectChannel: 5, // CSelectServerStage::sub_56AF39
   SessionHandoff: 6, // sub_5D8879 / sub_5D893D / sub_5D8A3F
   UploadCrashReport: 7, // sub_5A885A / sub_5D090B: [str crashInfo] (CA_Crash_info.nfo / Crash_CA.dmp.log)
-  RequestChannelList8: 8, // Channel list request alias
+  UploadCrashDump: 8, // sub_5D06FA: [u8 flag=1, u32 byteCount, block(byteCount)]; sub_5D137C sends flag=0 without a block
   RequestChannelList: 9, // sub_5D3BFC: [u32 channel2_%03d%s.ssd checksum]
   RequestChannelList10: 10, // Channel list refresh alias
   LoginPassport: 11, // sub_5D85A0: keyed passport (0xAABBCCDD)
@@ -83,7 +83,7 @@ export const ClientOpcode = {
   CreateRoom: 75, // sub_4CD379 / sub_4CAC9F / sub_4CB60D / sub_4CC28E -> S->C 79 + S->C 102
   JoinRoom: 76, // sub_4C4D93 -> S->C 80 + S->C 102
   QuickJoin: 77, // sub_4C83BA / CNormalLobbyStrategy::sub_4CCCE2 -> S->C 81
-  LeaveRoom: 78, // sub_5AA580 -> S->C 9 + S->C 103
+  LeaveRoom: 78, // sub_5AA580: []; current server's S->C 9 reply is a separate Prepare-stage defect
   CreateRoomShort: 79, // sub_4C070B -> S->C 79 + S->C 102
   RoomListScrollOrDetail: 80, // sub_4A496F -> S->C 83
   QuickJoinShort: 81, // Quick join alias -> S->C 81
@@ -247,7 +247,8 @@ export const ServerOpcode = {
   SystemStringSsd: 2, // sub_5D00B9: csysstr.ssd
   LoginResult: 4, // CLoginStage::sub_567400 -> sub_566E08
   ChannelSelectResult: 7, // CSelectServerStage::sub_56C0C8
-  StageTransition: 9, // CStage::sub_4B8D42: [u32 targetStageId]
+  // Stage-specific overload: generic CStage::sub_4BDBF5 routes S->C 9 to a Crash_CA.dmp offset request (-> C->S 8).
+  StageTransition: 9,
   ChannelListSsd: 10, // sub_5D42CF -> sub_5D3E91: channel2_%03d%s.ssd
   MessengerHandoff: 11, // CLoginStage::sub_567B0F
   ChannelLoads: 12, // sub_5D4139: [u16 count, u16[count] load]

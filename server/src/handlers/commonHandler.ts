@@ -3,6 +3,7 @@ import { ClientOpcode, ServerOpcode } from "../protocol/opcodes.ts";
 import { PacketReader, PacketWriter } from "../protocol/primitives.ts";
 import { SmartStreamWriter } from "../protocol/stream.ts";
 import type { ClientSession, WorldState } from "../state/worldState.ts";
+import { logger } from "../utils/logger.ts";
 
 /**
  * Writes a single `CRankMan` rank entry matching `sub_4A4FBD` (`0x004A4FBD`):
@@ -452,6 +453,55 @@ export function handleCommonPacket(
   reader: PacketReader
 ): void {
   switch (opcode) {
+    case ClientOpcode.UploadCrashDump: {
+      // `CStage::sub_4B8D42` -> `sub_5D06FA` sends flag=1 chunks from Crash_CA.dmp:
+      // `[u8 flag, u32 byteCount, block(byteCount)]`. `sub_5D137C` uses flag=0 without a block.
+      if (reader.remaining < 5) {
+        logger.warn("CrashDump", "Rejected C->S 8 packet with a truncated upload header", {
+          sessionId: session.sessionId,
+          connectionKind: session.connectionKind,
+          stageId: session.stageId,
+          headerBytes: reader.remaining,
+        });
+        return;
+      }
+
+      const transferFlag = reader.readU8();
+      const declaredByteCount = reader.readU32();
+      const payloadByteCount = reader.remaining;
+      const payloadLengthMatches =
+        transferFlag === 0
+          ? payloadByteCount === 0
+          : transferFlag === 1 && payloadByteCount === declaredByteCount;
+      const uploadForm =
+        transferFlag === 0 ? "metadata" : transferFlag === 1 ? "chunk" : "unknown";
+      const details = {
+        sessionId: session.sessionId,
+        connectionKind: session.connectionKind,
+        stageId: session.stageId,
+        transferFlag,
+        uploadForm,
+        declaredByteCount,
+        payloadByteCount,
+        payloadLengthMatches,
+      };
+
+      if (payloadLengthMatches) {
+        logger.info("CrashDump", "Received C->S 8 Crash_CA.dmp upload packet", details);
+      } else {
+        logger.warn(
+          "CrashDump",
+          "Received malformed C->S 8 Crash_CA.dmp upload packet",
+          details
+        );
+      }
+
+      // Crash dumps are not retained by this reconstruction. Consume the opaque block without
+      // copying or logging its contents so later diagnostics only expose safe packet metadata.
+      reader.offset = reader.plain.length;
+      break;
+    }
+
     case ClientOpcode.UploadCrashReport:
     case ClientOpcode.ClientReportOrLobbyEnter:
     case ClientOpcode.UpdateUserOptions:
