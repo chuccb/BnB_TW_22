@@ -9,7 +9,10 @@ import {
   logger,
 } from "../utils/logger.ts";
 import { sendChannelListAndLoads } from "./channelHandler.ts";
-import { buildCoupleInfoSyncPacket250 } from "./commonHandler.ts";
+import {
+  buildCoupleInfoSyncPacket250,
+  buildDynamicMapConfigPacket207,
+} from "./commonHandler.ts";
 import {
   buildSetPlayerPacket,
   computeSlotStateFlags,
@@ -338,6 +341,34 @@ export function handleLobbyPacket(
         session.sendPacket(buildLobbyRoomEntryPacket(room));
       }
 
+      // The Taiwan client has feature 32 disabled, so the S->C 75 handler sends
+      // C->S 83 but no C->S 338. The exact `LoadingChannelInfo` notice is closed
+      // by Lobby's S->C 207 handler (`sub_4C86A2`); send the existing
+      // dynamic-map/stage-config packet after C->S 83 has entered Lobby. When
+      // feature 32 is enabled, the client's empty C->S 338 continues to elicit it.
+      const feature32Enabled = state.config.enabledFeatures.has(32);
+      const sendLobbyStageConfig207Fallback =
+        opcode === ClientOpcode.EnterLobby &&
+        session.connectionKind === "game" &&
+        !feature32Enabled;
+      if (sendLobbyStageConfig207Fallback) {
+        session.sendPacket(buildDynamicMapConfigPacket207(state));
+      }
+
+      const lobbyServerOpcodes: number[] = user
+        ? [
+            ServerOpcode.ExpSync,
+            ServerOpcode.LucciSync,
+            ServerOpcode.InventoryData,
+            ServerOpcode.EquippedAvatarData,
+            ServerOpcode.InventoryExpansionSlots,
+            ServerOpcode.CoupleInfoSync,
+          ]
+        : [];
+      if (sendLobbyStageConfig207Fallback) {
+        lobbyServerOpcodes.push(ServerOpcode.DynamicMapAndStageConfig);
+      }
+
       logger.info("LobbyInit", "Queued initial Lobby sync frames", {
         sessionId: session.sessionId,
         linkedLoginSessionId: session.linkedLoginSessionId,
@@ -347,16 +378,10 @@ export function handleLobbyPacket(
         lobbyEntrySignalObserved: session.lobbyEntryPacketSeen,
         clientUiModalStateObservable: false,
         playerCount: session.users.length,
-        serverOpcodes: user
-          ? [
-              ServerOpcode.ExpSync,
-              ServerOpcode.LucciSync,
-              ServerOpcode.InventoryData,
-              ServerOpcode.EquippedAvatarData,
-              ServerOpcode.InventoryExpansionSlots,
-              ServerOpcode.CoupleInfoSync,
-            ].map(formatServerOpcode)
-          : [],
+        serverOpcodes: lobbyServerOpcodes.map(formatServerOpcode),
+        feature32Enabled,
+        stageConfig207WriteCall: sendLobbyStageConfig207Fallback,
+        clientModalDismissalVerified: false,
         playerFields: user
           ? {
               expValueIn89: user.exp,

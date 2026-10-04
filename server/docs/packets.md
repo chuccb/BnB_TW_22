@@ -166,7 +166,7 @@ The server defaults to `BNB_LOG_LEVEL=info` and emits a multi-line, chronologica
 
 | Opcode | Dir | Handler | Exact Payload Schema | Effects & Notes |
 |---:|---|---|---|---|
-| `83` (`0x0053`) | C->S | `CStage::sub_4B94A6` (`0x004B94A6`) | *(empty)* | Client signal prompted by S->C 75; the reconstruction uses it to trigger initial Lobby sync (`S->C 89`, `186`, `194`, `196`, `268`, `250`, plus room entries). The current handler does not send S->C 207 here. `LoadingChannelInfo` has a source-confirmed S->C 207 close path, but its extracted text (`頻道連線中請稍候…`) differs from the user's exact report (`頻道連線中請稍後…`), so no UI-close fallback is inferred from C->S 83 alone. |
+| `83` (`0x0053`) | C->S | `CStage::sub_4B94A6` (`0x004B94A6`) | *(empty)* | Client signal prompted by S->C 75; the reconstruction uses it to trigger initial Lobby sync (`S->C 89`, `186`, `194`, `196`, `268`, `250`, plus room entries). With feature 32 disabled, the server then sends S->C 207, which the client uses to close a pending `LoadingChannelInfo` notice. C->S 83 remains a client signal, not proof of visible dismissal. |
 | `67` (`0x0043`) | C->S | `CLobbyStage::sub_4C266D` / `sub_4C50C4` | `u16` roomIndex, `u32` roomKey | Requests Room Detail Info (`S->C 83`). |
 | `75` / `79` | C->S | `sub_4CD379`, `sub_4CAC9F`, `sub_4C070B` | `str` roomName, `[str password]`, `u8` isPrivate, `u8` localCnt, `localCnt * u8 charId`, `u8` gameMode, `u32` mapTheme | Creates a new room (`S->C 79` + `S->C 102` full snapshot -> Stage `12`). |
 | `76` (`0x004C`) | C->S | `CLobbyStage::sub_4C4D93` (`0x004C4D93`) | `u16` roomNumber, `u32` roomKey, `str` password (or `u8(0)`), `u8` localCnt, `localCnt * u8 charId` | Joins existing room (`S->C 80` + `S->C 102` -> Stage `12`). |

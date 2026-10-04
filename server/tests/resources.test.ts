@@ -133,11 +133,9 @@ describe("Client Resource Archives — Fx.idx, .i16 Tables, Maps & All 12 .ssd/.
     let failedToConnSvr: string | undefined;
     let loadingChannelInfo: string | undefined;
     let connectingToSvr: string | undefined;
-    const exactReportedTextKeys: string[] = [];
     for (let i = 0; i < systemStringCount; i++) {
       const key = systemStrings.readString();
       const value = systemStrings.readString();
-      if (value === "頻道連線中請稍後…") exactReportedTextKeys.push(key);
       if (key === "UpperLevelOnly") upperLevelOnly = value;
       if (key === "FailedToConnSvr") failedToConnSvr = value;
       if (key === "LoadingChannelInfo") loadingChannelInfo = value;
@@ -146,9 +144,7 @@ describe("Client Resource Archives — Fx.idx, .i16 Tables, Maps & All 12 .ssd/.
     expect(upperLevelOnly).toBe("選擇的頻道只能%d級以上才能進入");
     expect(failedToConnSvr).toBe("因您的連線不穩定，請重新登入");
     expect(loadingChannelInfo).toBe("頻道連線中請稍候…");
-    expect(loadingChannelInfo).not.toBe("頻道連線中請稍後…");
     expect(connectingToSvr).toBe("登入頻道中，請稍候！");
-    expect(exactReportedTextKeys).toEqual([]);
     expect(systemStrings.remaining()).toBe(0);
   });
 

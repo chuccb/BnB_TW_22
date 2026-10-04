@@ -2008,6 +2008,9 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
       clearRecentLogs();
       const dumpChunk = new Uint8Array(16_000).fill(0xcd);
       const lobbyInit = gameClient.waitForOpcode(ServerOpcode.ExpSync);
+      const loadingChannelInfoStageConfig = gameClient.waitForOpcode(
+        ServerOpcode.DynamicMapAndStageConfig
+      );
       gameClient.send(
         new PacketWriter(ClientOpcode.UploadCrashDump).writeU8(0).writeU32(dumpChunk.length)
       );
@@ -2019,6 +2022,14 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
       );
       gameClient.send(new PacketWriter(ClientOpcode.EnterLobby));
       expect((await lobbyInit).readU8()).toBe(0);
+      const stageConfig207 = await loadingChannelInfoStageConfig;
+      expect(stageConfig207.readU8()).toBe(0); // opaque first field; reconstruction placeholder
+      expect(stageConfig207.readU32()).toBe(server.state.resources.ssdFiles.fxdynmapinfo.adler32Zero);
+      expect(stageConfig207.readU8()).toBe(0);
+      expect(stageConfig207.readU16()).toBe(0);
+      expect(stageConfig207.readU32()).toBe(0);
+      expect(stageConfig207.readU8()).toBe(0);
+      expect(stageConfig207.remaining).toBe(0);
       expect(gameSession?.stageId).toBe(StageId.Lobby);
       expect(gameSession?.pendingStageId).toBeNull();
       expect(gameSession?.lobbyEntryPacketSeen).toBe(true);
@@ -2053,9 +2064,23 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
         ServerOpcode.EquippedAvatarData,
         ServerOpcode.InventoryExpansionSlots,
         ServerOpcode.CoupleInfoSync,
+        ServerOpcode.DynamicMapAndStageConfig,
       ]);
       expect(lobbyInitPackets.map((entry) => entry.data?.payloadBytes)).toEqual([
-        7, 10, 31, 51, 7, 6,
+        7, 10, 31, 51, 7, 6, 15,
+      ]);
+      const lobbyInitLog = getRecentLogs().findLast((entry) => entry.category === "LobbyInit");
+      expect(lobbyInitLog?.data?.feature32Enabled).toBe(false);
+      expect(lobbyInitLog?.data?.stageConfig207WriteCall).toBe(true);
+      expect(lobbyInitLog?.data?.clientModalDismissalVerified).toBe(false);
+      expect(lobbyInitLog?.data?.serverOpcodes).toEqual([
+        "89 (ExpSync)",
+        "186 (LucciSync)",
+        "194 (InventoryData)",
+        "196 (EquippedAvatarData)",
+        "268 (InventoryExpansionSlots)",
+        "250 (CoupleInfoSync)",
+        "207 (DynamicMapAndStageConfig)",
       ]);
       expect(lobbyInitPackets.every((entry) =>
         entry.data?.connectionKind === "game" && entry.data?.stageId === StageId.Lobby
@@ -2087,12 +2112,13 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(gameCloseLog?.data?.closeInitiator).toBe("unknown");
     expect(gameCloseLog?.data?.serverCloseReason).toBeUndefined();
     expect(gameCloseLog?.data?.clientToServerDecodedPackets).toBe(5);
-    expect(gameCloseLog?.data?.serverToClientWriteCalls).toBe(9);
+    expect(gameCloseLog?.data?.serverToClientWriteCalls).toBe(10);
     expect(gameCloseLog?.data?.pendingReceiveBytes).toBe(0);
     expect(gameCloseLog?.data?.lobbyEntryPacketSeen).toBe(true);
     expect(gameCloseLog?.data?.linkedLoginSessionId).toBe(linkedLoginSessionId);
     expect(gameCloseLog?.message).toContain("C->S [decoded] 83 (EnterLobby)");
     expect(gameCloseLog?.message).toContain("S->C [write-call] 89 (ExpSync)");
+    expect(gameCloseLog?.message).toContain("S->C [write-call] 207 (DynamicMapAndStageConfig)");
     expect(gameCloseLog?.message).toContain("modal/UI state remains unobservable");
     expect(gameCloseLog?.message).not.toContain("live_tester");
   });
