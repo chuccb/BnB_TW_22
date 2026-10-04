@@ -196,7 +196,7 @@ export function handleChannelSelect(
  * After that handoff the client-side `CSelectServerStage` has state 2. Its root vtable
  * dispatches S->C 13 to `sub_56A9DA`, which passes the feature-22 byte (TW sends `u8(0)`)
  * to `CStage::sub_4B96B1` and requests `StageId.Lobby` (11). S->C 75 then invokes
- * `CStage::sub_4B94A6`, which sends C->S 83 and, when enabled, C->S 338.
+ * `CStage::sub_4B94A6`, which sends C->S 83 and, when feature 32 is enabled, an empty C->S 338.
  *
  * Do not send S->C 9 as a Lobby transition: the SelectServer fallback interprets S->C 9 as
  * a `Crash_CA.dmp` file offset (`sub_4B8D42`) and prompts a C->S 8 dump-chunk upload.
@@ -456,7 +456,7 @@ export function handleSessionAuthHandoff(
   }
   session.sendPacket(lobbyTransition);
 
-  // S->C 75: sub_4B94A6 prompts C->S 83 and feature-32 C->S 338. The client's
+  // S->C 75: sub_4B94A6 prompts C->S 83 and, with feature 32, an empty C->S 338. The client's
   // sub_5AD7DE packet drain stops when the requested StageId differs, leaving 75 for
   // dispatch after the main loop constructs the StageId 11 Lobby stage.
   const questConfigSync = new PacketWriter(ServerOpcode.QuestConfigSync);

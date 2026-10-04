@@ -299,6 +299,9 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
   test("Full 2-player playable loop across all client stages and exact CA.exe opcodes", () => {
     clearRecentLogs();
     const config = loadConfig({ dbPath: ":memory:", publicIp: "198.51.100.28" });
+    // Exercise the alternate source-confirmed path where the client emits the
+    // empty C->S 338 packet (the default Taiwan feature set does not enable 32).
+    config.enabledFeatures = new Set(config.enabledFeatures).add(32);
     using state = new WorldState(config);
 
     let client1 = new SimulatedClient();
@@ -577,12 +580,18 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(session1.pendingStageId).toBeNull();
     expect(session1.lobbyEntryPacketSeen).toBe(true);
 
-    // 5b. Post-stage-sync C->S 338 -> S->C 207 (`sub_4BCABF`) -> C->S 282 (`sub_4DD5D3`) -> S->C 205 (`sub_4E0131` `fxdynmapinfo.ssd`)
-    client1.sendToServer(state, session1.sessionId, new PacketWriter(ClientOpcode.PostStageSync338).writeU8(1));
+    // 5b. Feature-32 C->S 338 is an empty packet (`sub_4B94A6` writes no fields).
+    // S->C 207 carries the map checksum; a mismatch can request C->S 282 -> S->C 205.
+    client1.sendToServer(state, session1.sessionId, new PacketWriter(ClientOpcode.PostStageSync338));
     const p207 = client1.popByOpcode(ServerOpcode.DynamicMapAndStageConfig)!;
     expect(p207).toBeDefined();
-    expect(p207.readU8()).toBe(1);
+    expect(p207.readU8()).toBe(0); // opaque stage/config field; local reconstruction default
     expect(p207.readU32()).toBe(state.resources.ssdFiles.fxdynmapinfo.adler32Zero);
+    expect(p207.readU8()).toBe(0); // macroDetectorFlag
+    expect(p207.readU16()).toBe(0); // val9757A0 (semantics unresolved)
+    expect(p207.readU32()).toBe(0); // val9757A4 (semantics unresolved)
+    expect(p207.readU8()).toBe(0); // extraCount
+    expect(p207.remaining).toBe(0);
 
     client1.sendToServer(state, session1.sessionId, new PacketWriter(ClientOpcode.RequestDynamicMapInfoSsd));
     const p205 = client1.popByOpcode(ServerOpcode.DynamicMapInfoSsdStream)!;
@@ -726,6 +735,17 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(session2.pendingStageId).toBe(StageId.Lobby);
     client2.sendToServer(state, session2.sessionId, new PacketWriter(ClientOpcode.EnterLobby));
     expect(session2.stageId).toBe(StageId.Lobby);
+    // Feature 32 is enabled for this flow, so the source-confirmed empty C->S 338
+    // elicits S->C 207, the Lobby code path that closes a pending LoadingChannelInfo notice.
+    client2.sendToServer(state, session2.sessionId, new PacketWriter(ClientOpcode.PostStageSync338));
+    const client2StageConfig = client2.popByOpcode(ServerOpcode.DynamicMapAndStageConfig)!;
+    expect(client2StageConfig.readU8()).toBe(0);
+    expect(client2StageConfig.readU32()).toBe(state.resources.ssdFiles.fxdynmapinfo.adler32Zero);
+    expect(client2StageConfig.readU8()).toBe(0);
+    expect(client2StageConfig.readU16()).toBe(0);
+    expect(client2StageConfig.readU32()).toBe(0);
+    expect(client2StageConfig.readU8()).toBe(0);
+    expect(client2StageConfig.remaining).toBe(0);
     for (const opcode of [
       ServerOpcode.ExpSync,
       ServerOpcode.LucciSync,

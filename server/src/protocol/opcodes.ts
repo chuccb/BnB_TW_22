@@ -238,7 +238,7 @@ export const ClientOpcode = {
   SecurityHashReply1: 332, // sub_4B8F3F: [u32 hash] (reply to S->C 281)
   SecurityHashReply2: 333, // sub_4BAE58: [u32 hash] (reply to S->C 284)
   ClientAuditLog: 337, // sub_476AD6 / CChatStage::sub_4AEE8E / sub_53809C: [str tag, str detail]
-  PostStageSync338: 338, // CStage::sub_4B94A6 -> S->C 207 (sub_4BCABF)
+  PostStageSync338: 338, // empty C->S frame from CStage::sub_4B94A6 -> S->C 207 (sub_4BCABF)
 } as const satisfies Record<string, number>;
 
 export const ServerOpcode = {
@@ -277,7 +277,7 @@ export const ServerOpcode = {
   RankingList: 69, // sub_4A5114: [u16 startRank, u8 count, count*sub_4A4FBD]
   UserInfoModal70: 70, // CChatStage::sub_4AFCFD
   UserStats71: 71, // CMyInfoDlg::sub_541F65
-  QuestConfigSync: 75, // CStage::sub_4B94A6 -> triggers client C->S 83 + C->S 338
+  QuestConfigSync: 75, // CStage::sub_4B94A6 -> C->S 83 + empty C->S 338 when feature 32 is enabled
   CreateRoomResult: 79, // CNormalLobbyStrategy::sub_4CCE53
   JoinRoomResult: 80, // CLobbyStage::sub_4C455D
   QuickJoinOrUserProfile: 81, // CLobbyStage::sub_4C4635 (QuickJoin) / CStage::sub_4BCDFF (UserProfile)

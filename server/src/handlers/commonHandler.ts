@@ -243,20 +243,20 @@ export function buildUserInfoResultPacket(
 
 /**
  * Builds S->C 207 (`CStage::sub_4BDBF5` case `207` -> `sub_4BCABF` at `0x004BCABF`):
- *   u8 flag (`*(_BYTE *)(dword_929D6C + 92)`)
+ *   u8 opaqueStageConfigFlag (`sub_4BCABF` stores it at `dword_929D6C + 92`; semantic value unknown)
  *   u32 fxdynmapinfoChecksum (`sub_4E0207(i_4, v2)` -> if mismatch, client sends `C->S 282`)
  *   u8 macroDetectorFlag (`sub_6F6810`)
  *   u16 val9757A0
  *   u32 val9757A4
  *   u8 extraCount
  *   extraCount * u8
+ *
+ * `C->S 338` has no payload in `sub_4B94A6`; this reconstruction uses zero for the
+ * opaque first field and does not derive it from request bytes.
  */
-export function buildDynamicMapConfigPacket207(
-  state: WorldState,
-  flag: number = 0
-): PacketWriter {
+export function buildDynamicMapConfigPacket207(state: WorldState): PacketWriter {
   const w207 = new PacketWriter(ServerOpcode.DynamicMapAndStageConfig);
-  w207.writeU8(flag & 0xff);
+  w207.writeU8(0); // opaqueStageConfigFlag; current reconstruction placeholder
   w207.writeU32(state.resources.ssdFiles.fxdynmapinfo.adler32Zero);
   w207.writeU8(0); // macroDetectorFlag
   w207.writeU16(0); // dword_9757A0
@@ -590,9 +590,15 @@ export function handleCommonPacket(
     }
 
     case ClientOpcode.PostStageSync338: {
-      // C->S 338 (`sub_4B94A6`) -> S->C 207 (`sub_4BCABF`)
-      const flag = reader.remaining >= 1 ? reader.readU8() : 0;
-      session.sendPacket(buildDynamicMapConfigPacket207(state, flag));
+      // `sub_4B94A6` creates and sends C->S 338 without writing any payload.
+      // Its S->C 207 reply can trigger the dynamic-map checksum follow-up (C->S 282).
+      if (reader.remaining !== 0) {
+        logger.warn("Protocol", "C->S 338 had unexpected trailing bytes", {
+          sessionId: session.sessionId,
+          trailingBytes: reader.remaining,
+        });
+      }
+      session.sendPacket(buildDynamicMapConfigPacket207(state));
       break;
     }
 

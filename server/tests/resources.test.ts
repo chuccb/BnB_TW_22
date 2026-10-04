@@ -21,6 +21,7 @@ describe("Client Resource Archives — Fx.idx, .i16 Tables, Maps & All 12 .ssd/.
     expect(isFeatureEnabledTW(22)).toBe(true);
     expect(isFeatureEnabledTW(23)).toBe(false);
     expect(isFeatureEnabledTW(26)).toBe(false);
+    expect(isFeatureEnabledTW(32)).toBe(false);
   });
   test("Decrypts Fx.idx (sub_673110), loads CGameMapInfoList, BomberAttr, ItemAttr, and verifies all 12 .ssd/.ini streams", () => {
     const resources = loadClientResources();
@@ -125,19 +126,29 @@ describe("Client Resource Archives — Fx.idx, .i16 Tables, Maps & All 12 .ssd/.
       expect(verified.remaining).toBe(0);
     }
 
-    // The client uses this csysstr.ssd key when sub_56AF39 rejects a channel level.
+    // Cross-check channel-level and connection/Lobby dialog strings in csysstr.ssd.
     const systemStrings = new SmartStreamReader(resources.ssdFiles.csysstr.decompressed);
     const systemStringCount = systemStrings.readU16();
     let upperLevelOnly: string | undefined;
     let failedToConnSvr: string | undefined;
+    let loadingChannelInfo: string | undefined;
+    let connectingToSvr: string | undefined;
+    const exactReportedTextKeys: string[] = [];
     for (let i = 0; i < systemStringCount; i++) {
       const key = systemStrings.readString();
       const value = systemStrings.readString();
+      if (value === "頻道連線中請稍後…") exactReportedTextKeys.push(key);
       if (key === "UpperLevelOnly") upperLevelOnly = value;
       if (key === "FailedToConnSvr") failedToConnSvr = value;
+      if (key === "LoadingChannelInfo") loadingChannelInfo = value;
+      if (key === "ConnectingToSvr") connectingToSvr = value;
     }
     expect(upperLevelOnly).toBe("選擇的頻道只能%d級以上才能進入");
     expect(failedToConnSvr).toBe("因您的連線不穩定，請重新登入");
+    expect(loadingChannelInfo).toBe("頻道連線中請稍候…");
+    expect(loadingChannelInfo).not.toBe("頻道連線中請稍後…");
+    expect(connectingToSvr).toBe("登入頻道中，請稍候！");
+    expect(exactReportedTextKeys).toEqual([]);
     expect(systemStrings.remaining()).toBe(0);
   });
 

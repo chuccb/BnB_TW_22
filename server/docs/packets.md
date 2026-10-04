@@ -155,8 +155,8 @@ The server defaults to `BNB_LOG_LEVEL=info` and emits a multi-line, chronologica
 | `97` (`0x0061`) | C->S | `CChatStage::sub_4AD598` (`0x004AD598`) | `str` message | Team chat (`S->C 114` in `CPrepareStage`). |
 | `70` (`0x0046`) | C->S | `CChatStage::sub_4ABBDE` (`0x004ABBDE`) | `u8` subOp (`0`), `str` targetUsername | Queries user profile (`/who`, replies with `S->C 81` & `S->C 70`). |
 | `81` (`0x0051`) | S->C | `CStage::sub_4BCDFF` (`0x004BCDFF`) | `str` username, `u32` lv, `u32` exp, `u32` wins, `u32` draws, `u32` losses, `u32` rank, `u8` gender, `str` guildName, `u8` guildMark, `u8` localIdx, `u16` itemCount, `itemCount * u32 itemCode`, `str` comment | Displays user profile info. |
-| `338` (`0x0152`) | C->S | `CStage::sub_4B94A6` (`0x004B94A6`) | `u8` flag (`0`) | Post-stage-sync notification (`S->C 207`). |
-| `207` (`0x00CF`) | S->C | `CStage::sub_4BCABF` (`0x004BCABF`) | `u8` flag, `u32` fxdynmapinfoChecksum (`0x79476A94`, passed to `sub_4E0207`), `u8` macroFlag, `u16` v9757A0, `u32` v9757A4, `u8` extraCount | If `fxdynmapinfoChecksum` differs from client's local `fxdynmapinfo.ssd`, client sends `C->S 282` (`sub_4DD5D3`). |
+| `338` (`0x0152`) | C->S | `CStage::sub_4B94A6` (`0x004B94A6`) | *(empty)* | Sent only when client feature 32 is enabled; `sub_4B94A6` sends the packet without writing any payload. It elicits S->C 207. |
+| `207` (`0x00CF`) | S->C | `CStage::sub_4BCABF` (`0x004BCABF`) | `u8` opaque stage/config field, `u32` fxdynmapinfoChecksum (`0x79476A94`, passed to `sub_4E0207`), `u8` macroFlag, `u16` v9757A0, `u32` v9757A4, `u8` extraCount, then `extraCount * u8` | A checksum mismatch can prompt C->S 282 (`sub_4DD5D3`). Independently, `CLobbyStage::sub_4C86A2` closes the pending `LoadingChannelInfo` notice when `j[2047]` is non-null. The reconstruction uses zero for the opaque field/other unresolved values. |
 | `282` (`0x011A`) | C->S | `sub_4DD5D3` (`0x004DD5D3`) | *(empty)* | Requests updated `fxdynmapinfo.ssd` stream (`S->C 205`). |
 | `205` (`0x00CD`) | S->C | `CStage::sub_4E0131` -> `sub_4DFE20` (`0x004DFE20`) | `stream` (`fxdynmapinfo.ssd` `CISmartStream`: `871` entries with 18B v22 tail) | Updates client's `fxdynmapinfo.ssd` on disk and reloads dynamic map table (`remaining === 0`). |
 
@@ -166,7 +166,7 @@ The server defaults to `BNB_LOG_LEVEL=info` and emits a multi-line, chronologica
 
 | Opcode | Dir | Handler | Exact Payload Schema | Effects & Notes |
 |---:|---|---|---|---|
-| `83` (`0x0053`) | C->S | `CStage::sub_4B94A6` (`0x004B94A6`) | *(empty)* | Client signal prompted by S->C 75; the reconstruction uses it to trigger initial Lobby sync (`S->C 89`, `186`, `194`, `196`, `268`, `250`, plus room entries). It does not prove a local wait/modal UI was dismissed. |
+| `83` (`0x0053`) | C->S | `CStage::sub_4B94A6` (`0x004B94A6`) | *(empty)* | Client signal prompted by S->C 75; the reconstruction uses it to trigger initial Lobby sync (`S->C 89`, `186`, `194`, `196`, `268`, `250`, plus room entries). The current handler does not send S->C 207 here. `LoadingChannelInfo` has a source-confirmed S->C 207 close path, but its extracted text (`頻道連線中請稍候…`) differs from the user's exact report (`頻道連線中請稍後…`), so no UI-close fallback is inferred from C->S 83 alone. |
 | `67` (`0x0043`) | C->S | `CLobbyStage::sub_4C266D` / `sub_4C50C4` | `u16` roomIndex, `u32` roomKey | Requests Room Detail Info (`S->C 83`). |
 | `75` / `79` | C->S | `sub_4CD379`, `sub_4CAC9F`, `sub_4C070B` | `str` roomName, `[str password]`, `u8` isPrivate, `u8` localCnt, `localCnt * u8 charId`, `u8` gameMode, `u32` mapTheme | Creates a new room (`S->C 79` + `S->C 102` full snapshot -> Stage `12`). |
 | `76` (`0x004C`) | C->S | `CLobbyStage::sub_4C4D93` (`0x004C4D93`) | `u16` roomNumber, `u32` roomKey, `str` password (or `u8(0)`), `u8` localCnt, `localCnt * u8 charId` | Joins existing room (`S->C 80` + `S->C 102` -> Stage `12`). |
