@@ -74,7 +74,7 @@ export const ClientOpcode = {
   RoomDetailOrUserInfo: 67, // sub_4C266D: [u16 roomIdx, u32 roomKey] -> S->C 83
   QueryGuildInfo: 68, // sub_53DEEA -> S->C 34
   QueryUserBrief: 69, // sub_4A0321: [u32 userId] -> S->C 70
-  QueryUserInfo: 70, // CChatStage::sub_4ABBDE: [u8(0), str username] -> S->C 81 + S->C 70
+  QueryUserInfo: 70, // CChatStage::sub_4ABBDE: [u8(0), str username] -> S->C 81 + 70; distinct from S->C ServerOpcode 70 PUserInfoResult
   UpdateUserOptions: 71, // sub_4A63C9: [u8 optionFlags]
   UseSuperSpeaker: 72, // sub_4A3E36: [u8 localIdx, u8 speakerType, str msg] -> S->C 65 + S->C 21
   SaveDefaultChars: 73, // sub_4BABFF / sub_54728B: [u8 playerCount, playerCount * u8 charId]
@@ -249,6 +249,7 @@ export const ServerOpcode = {
   LobbyGuildUserOnlyNotice: 15, // CLobbyStage::sub_4C86A2 -> sub_4C5DE7; modal + PostQuitMessage
   ShopInitAndStage14: 16, // sub_4BB82A: shop checksums (fxstock, stringtable, packagemap) + qmarksfn.ssd + banners
   PingRequest: 18, // CStage::sub_4BDBF5: [u32 tick, u32 seq]
+  UserDynamicInfoSync: 19, // CStage::sub_4BDBF5 case 19 -> stage vtable +0xDC -> sub_4BA3BA -> sub_5ED779; current server does not send this readiness update
   NormalChat: 21, // CChatStage::sub_4B070C / CGameStage::sub_4F4D49
   WhisperOrEmotion: 23, // CChatStage::sub_4A8727 / CGameStage::sub_4F4F4B
   WhisperDeliveryStatus: 24, // CChatStage::sub_4AE106
@@ -268,7 +269,7 @@ export const ServerOpcode = {
   SuperSpeakerBanner: 65, // sub_4B976C -> sub_4A03EB
   RankingListAlt: 66, // sub_4A51B5: [u16 startRank, u8 count, count*sub_4A4FBD]
   RankingList: 69, // sub_4A5114: [u16 startRank, u8 count, count*sub_4A4FBD]
-  UserInfoModal70: 70, // CChatStage::sub_4AFCFD
+  UserInfoModal70: 70, // PUserInfoResult -> Lobby sub_4C128B clears stage+6180, then sub_4A6379 -> sub_4BBCA8; modal may re-enter the +380-gated Shop helper, but does not set +380
   UserStats71: 71, // CMyInfoDlg::sub_541F65
   QuestConfigSync: 75, // CStage::sub_4B94A6 -> C->S 83 + empty C->S 338 when feature 32 is enabled
   CreateRoomResult: 79, // CNormalLobbyStrategy::sub_4CCE53

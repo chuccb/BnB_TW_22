@@ -205,7 +205,15 @@ export function buildUserProfilePacket81(
 }
 
 /**
- * Builds S->C 70 (`CStage` User Profile / Info Modal result).
+ * Builds this reconstruction's S->C 70 profile-query response.
+ * The typed PUserInfoResult marshaller (sub_4368BF) also begins with a u32,
+ * but its full field mapping is not yet reconciled with this builder. The Lobby
+ * Shop readiness field is set by the separate S->C 19 fallback route
+ * (sub_4BDBF5 case 19 -> sub_4BA3BA -> sub_5ED779); S->C 70's registered
+ * profile-result route first clears a separate LobbyStage+6180 field, then
+ * enters the profile delegate. A modal result can call sub_4BAACB(-1), but that
+ * helper still checks +380 and does not set it. Do not treat this response as
+ * the readiness update or a validated bootstrap payload.
  */
 export function buildUserInfoResultPacket(
   state: WorldState,
