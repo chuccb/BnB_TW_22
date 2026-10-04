@@ -31,6 +31,7 @@ import {
   normalizeCChannelCategory,
 } from "../src/protocol/channelCache.ts";
 import { decodeClientText, encodeClientText } from "../src/protocol/textEncoding.ts";
+import { parseSessionHandoffPayload } from "../src/handlers/channelHandler.ts";
 import { ClientOpcode, ServerOpcode, StageId } from "../src/protocol/opcodes.ts";
 import { ClientSession } from "../src/state/worldState.ts";
 import {
@@ -348,10 +349,61 @@ describe("Protocol Layer — CRC, Cipher, Primitives, SmartStream & Framing", ()
     }
   });
 
-  test("Structured logs use reverse symbolic names for client/server opcodes and stages", () => {
+  test("C->S 6 parser keeps the three client handoff layouts and numeric namespaces distinct", () => {
+    const selectServerHandoff = new PacketWriter(ClientOpcode.SessionHandoff)
+      .writeU8(2)
+      .writeString("player_one")
+      .writeU32(0x11111111) // field95 / LoginResult session token
+      .writeU32(0xa1a1a1a1) // field97; meaning unknown
+      .writeString("player_two")
+      .writeU32(0x22222222)
+      .writeU32(0xb2b2b2b2)
+      .writeU8(14) // opaque CNetworkFacade+8 byte, not a StageId
+      .writeU32(0x01020304) // dword_92AAEC + 888
+      .writeU32(0x05060708); // dword_92AAEC + 892
+    const parsedSelectServer = parseSessionHandoffPayload(
+      new PacketReader(selectServerHandoff.toPayload(), 3)
+    );
+    expect(parsedSelectServer).toEqual({
+      declaredPlayerCount: 2,
+      players: [
+        { username: "player_one", sessionToken: 0x11111111, field97U32: 0xa1a1a1a1 },
+        { username: "player_two", sessionToken: 0x22222222, field97U32: 0xb2b2b2b2 },
+      ],
+      wireLayout: "sub_5D893D",
+      networkObjectByte: 14,
+      trailingHandoffFieldsU32: [0x01020304, 0x05060708],
+      unreadTrailingBytes: 0,
+    });
+
+    const reconnect = new PacketWriter(ClientOpcode.SessionHandoff)
+      .writeU8(1)
+      .writeString("player_one")
+      .writeU32(0x11111111)
+      .writeU8(StageId.Shop);
+    const parsedReconnect = parseSessionHandoffPayload(new PacketReader(reconnect.toPayload(), 3));
+    expect(parsedReconnect.wireLayout).toBe("sub_5D8A3F");
+    expect(parsedReconnect.reconnectContextByte).toBe(StageId.Shop);
+    expect(parsedReconnect.networkObjectByte).toBeUndefined();
+    expect(parsedReconnect.unreadTrailingBytes).toBe(0);
+
+    const minimal = new PacketWriter(ClientOpcode.SessionHandoff)
+      .writeU8(1)
+      .writeString("player_one")
+      .writeU32(0x11111111);
+    expect(parseSessionHandoffPayload(new PacketReader(minimal.toPayload(), 3)).wireLayout)
+      .toBe("sub_5D8879");
+  });
+
+  test("Structured logs keep client opcodes, server opcodes, and StageIds in separate namespaces", () => {
     expect(formatClientOpcode(5)).toBe("5 (SelectChannel)");
     expect(formatServerOpcode(7)).toBe("7 (ChannelSelectResult)");
+    expect(formatClientOpcode(13)).toBe("13 (ReturnToChannelSelect)");
+    expect(formatServerOpcode(13)).toBe("13 (LobbyStageTransition)");
+    expect(formatServerOpcode(33)).toBe("33 (SelectServerDynamicI16Data)");
     expect(formatStageId(10)).toBe("10 (SelectServer)");
+    expect(formatStageId(11)).toBe("11 (Lobby)");
+    expect(formatStageId(13)).toBe("13 (Game)");
   });
 
   test("TCP close trace summarizes direction, opcode, stage, sizes, and quiet time without bodies", () => {
@@ -371,13 +423,13 @@ describe("Protocol Layer — CRC, Cipher, Primitives, SmartStream & Framing", ()
       "C->S",
       ClientOpcode.SessionHandoff,
       29,
-      StageId.Login,
+      StageId.SelectServer,
       undefined,
       startedAt + 101
     );
     session.recordPacketTrace(
       "S->C",
-      ServerOpcode.SessionHandoffAck,
+      ServerOpcode.LobbyStageTransition,
       3,
       StageId.Lobby,
       undefined,
@@ -392,8 +444,8 @@ describe("Protocol Layer — CRC, Cipher, Primitives, SmartStream & Framing", ()
     expect(summary.pendingReceiveBytes).toBe(0);
     expect(summary.packetFlow).toBe(
       "+4ms S->C ConnectHello 48B @1 (Login) | " +
-        "+101ms C->S 6 (SessionHandoff) 29B @1 (Login) | " +
-        "+102ms S->C 33 (SessionHandoffAck) 3B @11 (Lobby)"
+        "+101ms C->S 6 (SessionHandoff) 29B @10 (SelectServer) | " +
+        "+102ms S->C 13 (LobbyStageTransition) 3B @11 (Lobby)"
     );
     expect(summary.packetFlow).not.toContain("sessionKey");
   });

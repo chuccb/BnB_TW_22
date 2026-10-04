@@ -318,7 +318,13 @@ export class GameDatabase implements Disposable {
       `UPDATE inventory SET customText = $customText WHERE userId = $userId AND itemId = $itemId`
     );
     this.deleteInventoryItemStmt = this.db.query(
-      `DELETE FROM inventory WHERE userId = $userId AND itemId = $itemId`
+      `DELETE FROM inventory
+       WHERE id = (
+         SELECT id FROM inventory
+         WHERE userId = $userId AND itemId = $itemId
+         ORDER BY id ASC
+         LIMIT 1
+       )`
     );
     this.clearUserEquippedStmt = this.db.query(
       `UPDATE inventory SET equippedSlot = 0 WHERE userId = $userId`
@@ -694,6 +700,36 @@ export class GameDatabase implements Disposable {
     ).id;
   }
 
+  /**
+   * Executes one local-demo shop purchase atomically: spend Lucci first, fall back to Cash,
+   * and create one inventory row only when the account can pay. The fixture amount is supplied
+   * by the caller and is not an official Taiwan shop price.
+   */
+  public purchaseStockItem(userId: number, itemCode: number, price: number): UserRecord | null {
+    const safePrice = Math.max(0, Math.trunc(price));
+    const tx = this.db.transaction(() => {
+      const user = this.getUserById(userId);
+      if (!user) return null;
+
+      let lucci = user.lucci;
+      let cash = user.cash;
+      if (lucci >= safePrice) {
+        lucci -= safePrice;
+      } else if (cash >= safePrice) {
+        cash -= safePrice;
+      } else {
+        return null;
+      }
+
+      const updatedUser = this.updateCurrencyStmt.get({ id: userId, lucci, cash });
+      if (!updatedUser) return null;
+
+      this.addInventoryItem(userId, itemCode, itemCode, 1, 1, 0);
+      return updatedUser;
+    });
+    return tx();
+  }
+
   public setStockEquipped(userId: number, itemCode: number, equipped: number): void {
     if (equipped > 0) {
       this.db
@@ -710,24 +746,32 @@ export class GameDatabase implements Disposable {
   }
 
   public deleteStockItem(userId: number, itemCode: number): number {
-    this.deleteInventoryItemStmt.run({ userId, itemId: itemCode });
-    return 0;
+    return this.deleteInventoryItemStmt.run({ userId, itemId: itemCode }).changes;
   }
 
+  /**
+   * Local reconstruction policy: match the supplied fixture item code to `inventory.itemId`,
+   * delete one oldest matching row, and refund only after one row is actually removed. The
+   * C->S 283 client-key-to-database mapping is unverified; this is not a claim that the key is
+   * the inventory table's primary key.
+   */
   public resellStockItem(
     userId: number,
     itemCode: number,
     refundLucci: number
   ): UserRecord | null {
     const tx = this.db.transaction(() => {
-      this.deleteInventoryItemStmt.run({ userId, itemId: itemCode });
       const user = this.getUserById(userId);
       if (!user) return null;
+
+      const deletion = this.deleteInventoryItemStmt.run({ userId, itemId: itemCode });
+      if (deletion.changes !== 1) return null;
+
       return this.updateCurrencyStmt.get({
         id: userId,
         lucci: user.lucci + Math.max(0, refundLucci),
         cash: user.cash,
-      })!;
+      }) ?? null;
     });
     return tx();
   }

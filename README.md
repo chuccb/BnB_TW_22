@@ -4,7 +4,7 @@ This repository contains the original Taiwan client artifacts and a separate Typ
 
 ## Repository layout
 
-- `CA.exe`, `CA.exe.c`, `.idx` / `.idd`, `.ssd`, `.ini`, `CATW.ini`, and `extracted/` — client binaries, decompilation, and evidence-bearing resources. These remain at the repository root so the server can load them without copying large proprietary assets.
+- `CA.exe`, `CA.exe.c`, `.idx` / `.idd`, `.ssd`, `.ini`, and `extracted/` — client binaries, decompilation, and game-evidence resources. These remain at the repository root so the server can load them without copying large proprietary assets. `CATW.ini` is GameGuard-related, unrelated to the game itself, and excluded from client/game evidence.
 - `CrazyArcade_Client_to_Server_Faithful_Reconstruction.md` — the reconstruction requirements and research constraints.
 - `server/` — all runnable server code, SQLite persistence, tests, lockfile, and the supporting packet/state/evidence documentation. See [`server/README.md`](server/README.md).
 

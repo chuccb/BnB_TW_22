@@ -603,26 +603,28 @@ export function handleShopPacket(
 
     case ClientOpcode.ShopBuyItem:
     case ClientOpcode.ShopBuyItemPass: {
-      // C->S 270 (`sub_58EAEF` -> `sub_58B130`) / C->S 309 (`sub_58B871`) -> S->C 199 (`sub_58EBFE`)
+      // C->S 270 (`sub_58B130`) is two u32 values; 309 (`sub_58B871`) prefixes
+      // the same pair with a string. The first comes from the selected client's
+      // item object (+8); the second field's business meaning is not established.
       if (opcode === ClientOpcode.ShopBuyItemPass && reader.remaining >= 2) {
         reader.readString(); // nexonPass
       }
-      const packageOrStockId = reader.remaining >= 4 ? reader.readU32() : 1001;
-      const _discountCoupon = reader.remaining >= 4 ? reader.readU32() : 0;
-      const customText = reader.remaining >= 2 ? reader.readString() : "";
+      const itemKey = reader.remaining >= 4 ? reader.readU32() : 1001;
+      // This local fixture uses the first value as its inventory item code; official mapping is unverified.
+      const opaqueRequestValue = reader.remaining >= 4 ? reader.readU32() : 0;
+      void opaqueRequestValue; // Preserved as a parsed wire field; no meaning is inferred.
 
-      if (user) {
-        const price = 100;
-        if (user.lucci >= price) {
-          user.lucci -= price;
-        } else if (user.cash >= price) {
-          user.cash -= price;
-        }
-        state.db.updateUserCurrency(user.id, user.lucci, user.cash);
-        state.db.addStockItem(user.id, packageOrStockId, 1, 1, customText);
+      const price = 100; // Local demo economy only; not a recovered Taiwan shop price.
+      const updatedUser = user ? state.db.purchaseStockItem(user.id, itemKey, price) : null;
+      const w199 = new PacketWriter(ServerOpcode.ShopBuyResult);
+      if (!updatedUser) {
+        w199.writeU8(1); // Client treats result 1 as a purchase error; no more fields are read.
+        session.sendPacket(w199);
+        break;
       }
 
-      const w199 = new PacketWriter(ServerOpcode.ShopBuyResult);
+      user!.lucci = updatedUser.lucci;
+      user!.cash = updatedUser.cash;
       w199.writeU8(0); // 0 = purchase success (`sub_58EBFE`)
       w199.writeVariantTime();
       session.sendPacket(w199);
@@ -634,9 +636,14 @@ export function handleShopPacket(
     }
 
     case ClientOpcode.InventoryDeleteItem: {
-      // C->S 271 (`sub_58013E`: `[u32 stockId, u32 slotIdx]`) -> S->C 202 (`sub_547038`)
+      // C->S 271 (`sub_58013E`): resolved stock-container u32, optional feature-26 string,
+      // then caller-supplied u32. Taiwan feature 26 is disabled; the second value is opaque.
       const stockId = reader.remaining >= 4 ? reader.readU32() : 0;
-      const _slotIdx = reader.remaining >= 4 ? reader.readU32() : 0;
+      if (state.config.enabledFeatures.has(26) && reader.remaining >= 2) {
+        reader.readString();
+      }
+      const opaqueClientValue = reader.remaining >= 4 ? reader.readU32() : 0;
+      void opaqueClientValue;
       if (user && stockId > 0) {
         state.db.deleteStockItem(user.id, stockId);
       }
@@ -885,20 +892,25 @@ export function handleShopPacket(
     }
 
     case ClientOpcode.ShopResellItem: {
-      // C->S 283 (`sub_58BFE0`: `[u32 stockId, u32 slotIdx]`) -> S->C 212 (`sub_546D3F`)
-      const stockId = reader.remaining >= 4 ? reader.readU32() : 1001;
-      const _slotIdx = reader.remaining >= 4 ? reader.readU32() : 0;
-      const refundLucci = 500;
-      if (user) {
-        const updated = state.db.resellStockItem(user.id, stockId, refundLucci);
-        if (updated) {
-          user.lucci = updated.lucci;
-        }
-      }
+      // C->S 283 (`sub_58BFE0`): selected-object `+8` u32, then a caller-supplied u32.
+      // Neither field's database identity is established. This local fixture maps the first
+      // value to inventory.itemId (not inventory.id); that mapping is reconstruction-only.
+      const clientItemKey = reader.remaining >= 4 ? reader.readU32() : 0;
+      const opaqueClientValue = reader.remaining >= 4 ? reader.readU32() : 0;
+      void opaqueClientValue;
+      const refundLucci = 500; // Local demo economy only; not a recovered Taiwan resale value.
+      const updated = user ? state.db.resellStockItem(user.id, clientItemKey, refundLucci) : null;
       const w212 = new PacketWriter(ServerOpcode.ShopResellResult);
-      w212.writeU8(0); // 0 = resell success (`sub_546D3F`)
-      w212.writeString(`Item #${stockId}`);
-      w212.writeU32(stockId);
+      if (!updated) {
+        w212.writeU8(1); // `sub_546D3F` maps result 1 to ResellItemFail; no further fields are read.
+        session.sendPacket(w212);
+        break;
+      }
+
+      user!.lucci = updated.lucci;
+      w212.writeU8(0); // Success: `sub_546D3F` reads the item name and result values.
+      w212.writeString(`Item #${clientItemKey}`);
+      w212.writeU32(clientItemKey);
       w212.writeU32(0);
       w212.writeU32(refundLucci);
       session.sendPacket(w212);

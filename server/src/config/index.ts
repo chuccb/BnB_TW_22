@@ -30,7 +30,7 @@ export interface ServerConfig {
 }
 
 /**
- * Taiwan region feature flags from sub_5CEA88 (0x005CEA88) when dword_92AC84 == 8
+ * Taiwan feature IDs inserted by sub_5CEE8E for region mask 8; sub_5CEA88 queries membership.
  */
 export const TW_ENABLED_FEATURES = new Set<number>([
   0, 1, 2, 7, 9, 10, 11, 14, 15, 16, 17, 19, 20, 21, 22, 24, 29, 30, 31, 33, 34, 35,

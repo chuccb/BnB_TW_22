@@ -7,7 +7,13 @@ import {
 } from "../protocol/channelCache.ts";
 import { PacketReader, PacketWriter, ipv4ToUint32 } from "../protocol/primitives.ts";
 import { SmartStreamWriter } from "../protocol/stream.ts";
-import { formatClientOpcode, formatServerOpcode, logger } from "../utils/logger.ts";
+import {
+  formatClientOpcode,
+  formatServerOpcode,
+  formatStageId,
+  formatU8Hex,
+  logger,
+} from "../utils/logger.ts";
 import type { ClientSession, WorldState } from "../state/worldState.ts";
 import { handlePostLoginChannelRequest } from "./authHandler.ts";
 
@@ -171,122 +177,298 @@ export function handleChannelSelect(
 }
 
 /**
- * Handles C->S 6 (`sub_5D8879` / `sub_5D893D` / `sub_5D8A3F` at `0x005D8879`..`0x005D8A3F`):
- * Client sends:
- *   u8 localPlayerCount
- *   For each local player:
- *     str username
- *     u32 sessionToken
- *     [u32 isRegisteredFlag if sent via `sub_5D893D`]
- *   [u8 targetMode, u32 a2, u32 a3]
+ * The client has three observed C->S 6 writers; they are not one interchangeable schema:
  *
- * Lobby-target reply sequence:
- *   - S->C 33 (`CSelectServerStage::sub_56A9DA` -> `CStage::sub_4B96B1`):
- *       if feature 22 is enabled (true in TW): u8(0); transitions to Stage 11 (`CLobbyStage`)
- *   - S->C 75 (`CStage::sub_4B94A6`): u32 questConfigCount (0), prompting `C->S 83` (Enter Lobby)
+ * - `sub_5D893D` (called by `CSelectServerStage::sub_56C0C8` after successful S->C 7):
+ *   `u8 count`, each `[str username, u32 field95 (LoginResult session token),
+ *   u32 field97 (meaning unknown)]`, then `[u8 CNetworkFacade+8, u32 handoffFieldA,
+ *   u32 handoffFieldB]`.
+ * - `sub_5D8A3F`: `u8 count`, each `[str username, u32 field95]`, then one byte.
+ *   At the `sub_4B3BF9` call site that byte is `sub_5AA664`'s current StageId, not a
+ *   destination StageId.
+ * - `sub_5D8879`: `u8 count`, each `[str username, u32 field95]`.
  *
- * Do not send S->C 9 as a lobby stage transition here. `CSelectServerStage` falls back to
- * `CStage::sub_4BDBF5`, where opcode 9 calls `sub_4B8D42` and interprets the u32 as a
- * `Crash_CA.dmp` file offset, prompting a C->S 8 dump-chunk upload. The non-Lobby targetMode
- * path remains stage-specific and is intentionally left unchanged pending its own verification.
+ * Only the full `sub_5D893D` layout is the confirmed SelectServer -> GameServer handoff.
+ * Its `CNetworkFacade+8` byte and two trailing u32s are retained as opaque fields; none is
+ * compared to a `StageId`.
+ *
+ * After that handoff the client-side `CSelectServerStage` has state 2. Its root vtable
+ * dispatches S->C 13 to `sub_56A9DA`, which passes the feature-22 byte (TW sends `u8(0)`)
+ * to `CStage::sub_4B96B1` and requests `StageId.Lobby` (11). S->C 75 then invokes
+ * `CStage::sub_4B94A6`, which sends C->S 83 and, when enabled, C->S 338.
+ *
+ * Do not send S->C 9 as a Lobby transition: the SelectServer fallback interprets S->C 9 as
+ * a `Crash_CA.dmp` file offset (`sub_4B8D42`) and prompts a C->S 8 dump-chunk upload.
+ */
+export type SessionHandoffWireLayout = "sub_5D893D" | "sub_5D8A3F" | "sub_5D8879" | "unknown";
+
+export interface SessionHandoffPlayerFields {
+  username: string;
+  sessionToken: number;
+  /** Per-player u32 read by `sub_5D92F2`; business meaning is not established. */
+  field97U32?: number;
+}
+
+export interface ParsedSessionHandoffPayload {
+  declaredPlayerCount: number;
+  players: SessionHandoffPlayerFields[];
+  wireLayout: SessionHandoffWireLayout;
+  /** The byte read from `CNetworkFacade+8` by `sub_5D893D`; its meaning is unknown. */
+  networkObjectByte?: number;
+  /** The single byte written by `sub_5D8A3F` (current StageId at the traced call site). */
+  reconnectContextByte?: number;
+  trailingHandoffFieldsU32: number[];
+  unreadTrailingBytes: number;
+}
+
+/** Parse the source-derived C->S 6 variants without conflating their trailing bytes. */
+export function parseSessionHandoffPayload(reader: PacketReader): ParsedSessionHandoffPayload {
+  const declaredPlayerCount = reader.remaining >= 1 ? reader.readU8() : 0;
+  const playerCount = Math.min(2, Math.max(1, declaredPlayerCount));
+  const playersStart = reader.offset;
+  type HandoffCandidate = ParsedSessionHandoffPayload & { endOffset: number };
+
+  const tryParseLayout = (
+    wireLayout: SessionHandoffWireLayout,
+    hasField97: boolean,
+    expectedTailBytes: number
+  ): HandoffCandidate | undefined => {
+    const probe = new PacketReader(reader.plain, reader.degree, false);
+    probe.offset = playersStart;
+    const players: SessionHandoffPlayerFields[] = [];
+
+    for (let index = 0; index < playerCount; index++) {
+      if (probe.remaining < 2) return undefined;
+      const stringOffset = probe.offset;
+      const username = probe.readString();
+      if (probe.offset === stringOffset || probe.remaining < (hasField97 ? 8 : 4)) {
+        return undefined;
+      }
+      const sessionToken = probe.readU32();
+      const player: SessionHandoffPlayerFields = { username, sessionToken };
+      if (hasField97) player.field97U32 = probe.readU32();
+      players.push(player);
+    }
+
+    if (probe.remaining !== expectedTailBytes) return undefined;
+
+    let networkObjectByte: number | undefined;
+    let reconnectContextByte: number | undefined;
+    const trailingHandoffFieldsU32: number[] = [];
+    if (wireLayout === "sub_5D893D") {
+      networkObjectByte = probe.readU8();
+      trailingHandoffFieldsU32.push(probe.readU32(), probe.readU32());
+    } else if (wireLayout === "sub_5D8A3F") {
+      reconnectContextByte = probe.readU8();
+    }
+
+    if (probe.remaining !== 0) return undefined;
+    return {
+      declaredPlayerCount,
+      players,
+      wireLayout,
+      ...(networkObjectByte === undefined ? {} : { networkObjectByte }),
+      ...(reconnectContextByte === undefined ? {} : { reconnectContextByte }),
+      trailingHandoffFieldsU32,
+      unreadTrailingBytes: 0,
+      endOffset: probe.offset,
+    };
+  };
+
+  const candidate =
+    tryParseLayout("sub_5D893D", true, 9) ??
+    tryParseLayout("sub_5D8A3F", false, 1) ??
+    tryParseLayout("sub_5D8879", false, 0);
+  if (candidate) {
+    reader.offset = candidate.endOffset;
+    const { endOffset: _endOffset, ...parsed } = candidate;
+    return parsed;
+  }
+
+  // Preserve a useful username/token prefix for malformed or unrecognized variants, while
+  // leaving the rest unread so the handoff log exposes the exact unparsed tail length.
+  const fallback = new PacketReader(reader.plain, reader.degree, false);
+  fallback.offset = playersStart;
+  const players: SessionHandoffPlayerFields[] = [];
+  for (let index = 0; index < playerCount; index++) {
+    if (fallback.remaining < 2) break;
+    const stringOffset = fallback.offset;
+    const username = fallback.readString();
+    if (fallback.offset === stringOffset || fallback.remaining < 4) break;
+    players.push({ username, sessionToken: fallback.readU32() });
+  }
+  reader.offset = fallback.offset;
+  return {
+    declaredPlayerCount,
+    players,
+    wireLayout: "unknown",
+    trailingHandoffFieldsU32: [],
+    unreadTrailingBytes: reader.remaining,
+  };
+}
+
+/**
+ * Handles the confirmed channel-select C->S 6 (`sub_5D893D`) on a GameServer session.
+ * Other same-opcode client writers are parsed for diagnostics, but are not treated as a
+ * Lobby destination without independent stage-specific evidence.
  */
 export function handleSessionAuthHandoff(
   state: WorldState,
   session: ClientSession,
   reader: PacketReader
 ): void {
-  const playerCount = Math.min(2, Math.max(1, reader.remaining >= 1 ? reader.readU8() : 1));
-  const usernames: string[] = [];
-  let token = 0;
-
-  for (let i = 0; i < playerCount; i++) {
-    const username = reader.remaining >= 2 ? reader.readString() : `player${session.sessionId}`;
-    const tok = reader.remaining >= 4 ? reader.readU32() : 0;
-    if (i === 0) {
-      token = tok;
-    }
-    // Check if sub_5D893D format includes u32 isRegisteredFlag per player:
-    // If remaining has enough bytes for another string (if i+1 < playerCount) or trailing 9 bytes (u8 + u32 + u32)
-    if (playerCount === 1 && reader.remaining === 13) {
-      reader.readU32(); // isRegisteredFlag
-    }
-    usernames.push(username);
-  }
-
-  let targetMode = 0;
-  if (reader.remaining >= 1) {
-    targetMode = reader.readU8();
-  }
-
+  const handoff = parseSessionHandoffPayload(reader);
+  const playerCount = handoff.players.length;
+  const usernames = handoff.players.map(
+    (player, index) => player.username || `player${session.sessionId}_${index + 1}`
+  );
+  const tokens = handoff.players.map((player) => player.sessionToken);
+  const token = tokens[0] ?? 0;
   const savedSession = state.sessionsByToken.get(token);
-  session.channelIndex = savedSession?.channelIndex ?? session.channelIndex;
-  session.authTokens = Array.from({ length: playerCount }, () => token);
-  logger.info("SessionHandoff", "Received C->S 6 on the GameServer connection", {
+
+  logger.info("SessionHandoff", `Received ${formatClientOpcode(ClientOpcode.SessionHandoff)}`, {
     sessionId: session.sessionId,
     connectionKind: session.connectionKind,
     remoteAddress: session.remoteAddress,
     remotePort: session.remotePort,
-    tokenPresent: token !== 0,
-    tokenFound: savedSession !== undefined,
-    channelIndex: session.channelIndex,
+    wireLayout: handoff.wireLayout,
+    declaredPlayerCount: handoff.declaredPlayerCount,
     playerCount,
-    usernames,
-    targetMode,
+    players: handoff.players.map((player, index) => ({
+      username: usernames[index],
+      tokenPresent: player.sessionToken !== 0,
+      field97Present: player.field97U32 !== undefined,
+    })),
+    networkObjectByte:
+      handoff.networkObjectByte === undefined
+        ? undefined
+        : `${handoff.networkObjectByte} (${formatU8Hex(handoff.networkObjectByte)})`,
+    reconnectContextByte:
+      handoff.reconnectContextByte === undefined
+        ? undefined
+        : `${handoff.reconnectContextByte} (${formatU8Hex(handoff.reconnectContextByte)})`,
+    trailingHandoffFieldCount: handoff.trailingHandoffFieldsU32.length,
+    unreadTrailingBytes: handoff.unreadTrailingBytes,
+    tokenFound: savedSession !== undefined,
   });
 
-  session.users = [];
-  session.netSlotIds = [];
-  session.equippedCharIds = [];
+  const rejectHandoff = (reason: string): void => {
+    logger.warn("SessionHandoff", "Rejected GameServer session handoff; no Lobby transition sent", {
+      sessionId: session.sessionId,
+      connectionKind: session.connectionKind,
+      wireLayout: handoff.wireLayout,
+      declaredPlayerCount: handoff.declaredPlayerCount,
+      parsedPlayerCount: playerCount,
+      tokenPresent: token !== 0,
+      tokenFound: savedSession !== undefined,
+      rejectionReason: reason,
+    });
+  };
 
-  for (let i = 0; i < playerCount; i++) {
-    const uname = savedSession?.usernames[i] ?? usernames[i] ?? `player${session.sessionId}`;
-    const auth = state.db.authenticateOrCreate(uname, "");
-    if (auth.user) {
-      session.users.push(auth.user);
-      session.netSlotIds.push(savedSession?.netSlotIds[i] ?? state.allocateNetSlotId());
-      session.equippedCharIds.push(savedSession?.charIds[i] ?? auth.user.equippedChar);
-    }
+  if (session.connectionKind !== "game") {
+    rejectHandoff("not-a-GameServer-connection");
+    return;
+  }
+  if (handoff.wireLayout !== "sub_5D893D") {
+    rejectHandoff("unconfirmed-C-to-S-6-layout");
+    return;
+  }
+  if (
+    handoff.declaredPlayerCount < 1 ||
+    handoff.declaredPlayerCount > 2 ||
+    handoff.declaredPlayerCount !== playerCount
+  ) {
+    rejectHandoff("invalid-local-player-count");
+    return;
+  }
+  if (!savedSession || token === 0) {
+    rejectHandoff("no-auth-session-for-token");
+    return;
+  }
+  if (savedSession.channelIndex === null) {
+    rejectHandoff("channel-not-selected-for-token");
+    return;
+  }
+  if (
+    savedSession.usernames.length !== playerCount ||
+    savedSession.netSlotIds.length !== playerCount ||
+    savedSession.charIds.length !== playerCount
+  ) {
+    rejectHandoff("saved-session-player-count-mismatch");
+    return;
+  }
+  if (tokens.length !== playerCount || tokens.some((playerToken) => playerToken !== token)) {
+    rejectHandoff("player-auth-token-mismatch");
+    return;
+  }
+  if (
+    handoff.players.some(
+      (player, index) => player.username.toLowerCase() !== savedSession.usernames[index]!.toLowerCase()
+    )
+  ) {
+    rejectHandoff("player-name-does-not-match-token");
+    return;
   }
 
-  const targetStage = targetMode === StageId.Shop ? StageId.Shop : StageId.Lobby;
-  session.stageId = targetStage;
-  logger.info("SessionHandoff", "Restored players on GameServer session", {
+  const restoredUsers: ClientSession["users"] = [];
+  for (const username of savedSession.usernames) {
+    const user = state.db.getUserByUsername(username);
+    if (!user) {
+      rejectHandoff("saved-user-no-longer-exists");
+      return;
+    }
+    restoredUsers.push(user);
+  }
+
+  session.channelIndex = savedSession.channelIndex;
+  session.authTokens = [...tokens];
+  session.users = restoredUsers;
+  session.netSlotIds = [...savedSession.netSlotIds];
+  session.equippedCharIds = [...savedSession.charIds];
+
+  const previousStageId = session.stageId;
+  session.stageId = StageId.Lobby;
+  logger.info("SessionHandoff", "Restored authenticated players on the GameServer session", {
     sessionId: session.sessionId,
-    stageId: targetStage,
+    previousStageId,
+    previousStage: formatStageId(previousStageId),
+    targetStageId: StageId.Lobby,
+    targetStage: formatStageId(StageId.Lobby),
     channelIndex: session.channelIndex,
     users: session.users.map((user) => user.username),
     netSlotIds: session.netSlotIds,
     tokenFound: savedSession !== undefined,
   });
 
-  if (targetStage === StageId.Lobby) {
-    // S->C 33 (`CSelectServerStage::sub_56A9DA` -> `CStage::sub_4B96B1`)
-    const w33 = new PacketWriter(ServerOpcode.SessionHandoffAck);
-    if (state.config.enabledFeatures.has(22)) {
-      w33.writeU8(0);
-    }
-    session.sendPacket(w33);
-
-    // S->C 75 (`CStage::sub_4B94A6` -> triggers C->S 83 Enter Lobby)
-    const w75 = new PacketWriter(ServerOpcode.QuestConfigSync);
-    w75.writeU32(0); // questConfigCount = 0
-    session.sendPacket(w75);
-
-    logger.info("SessionHandoff", "Sent source-confirmed Lobby handoff sequence", {
-      sessionId: session.sessionId,
-      stageId: StageId.Lobby,
-      serverOpcodes: [
-        formatServerOpcode(ServerOpcode.SessionHandoffAck),
-        formatServerOpcode(ServerOpcode.QuestConfigSync),
-      ],
-      omittedOpcode9Reason:
-        "CStage::sub_4B8D42 expects a Crash_CA.dmp file offset, not a stage id",
-    });
-  } else {
-    const w9 = new PacketWriter(ServerOpcode.StageTransition);
-    w9.writeU32(targetStage);
-    session.sendPacket(w9);
+  // S->C 13: root-vtable slot 48 -> sub_56A9DA -> sub_4B96B1 -> StageId.Lobby (11).
+  const lobbyTransition = new PacketWriter(ServerOpcode.LobbyStageTransition);
+  if (state.config.enabledFeatures.has(22)) {
+    lobbyTransition.writeU8(0); // Taiwan feature 22: sub_4B96B1 consumes one byte.
   }
+  session.sendPacket(lobbyTransition);
+
+  // S->C 75: sub_4B94A6 prompts C->S 83 and feature-32 C->S 338. The client's
+  // sub_5AD7DE packet drain stops when the requested StageId differs, leaving 75 for
+  // dispatch after the main loop constructs the StageId 11 Lobby stage.
+  const questConfigSync = new PacketWriter(ServerOpcode.QuestConfigSync);
+  questConfigSync.writeU32(0); // questConfigCount = 0
+  session.sendPacket(questConfigSync);
+
+  logger.info("SessionHandoff", "Sent GameServer Lobby transition sequence", {
+    sessionId: session.sessionId,
+    targetStageId: StageId.Lobby,
+    targetStage: formatStageId(StageId.Lobby),
+    serverOpcodes: [
+      formatServerOpcode(ServerOpcode.LobbyStageTransition),
+      formatServerOpcode(ServerOpcode.QuestConfigSync),
+    ],
+    feature22Enabled: state.config.enabledFeatures.has(22),
+    opcode13PayloadBytes: state.config.enabledFeatures.has(22) ? 1 : 0,
+    clientAcceptanceVerified: false,
+    clientStageLifecyclePath:
+      "sub_4B96B1 -> sub_5AAA5C(StageId 11) -> CMainSystem::sub_5AA3F4 -> sub_5AEF3F(CMainWnd*)",
+    clientStageLifecycleRuntimeVerified: false,
+  });
 }
 
 /**

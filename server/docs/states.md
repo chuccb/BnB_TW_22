@@ -26,13 +26,16 @@ The Taiwan login path uses a bootstrap connection, a LoginServer connection, and
           client closes LoginServer socket and connects to the advertised endpoint
      ▼
 [GameServer TCP 9339, new CPacketSocket]
-     ├── Connect Hello, then C->S 6 with the S->C 4 session token
-     ├── S->C 33 + 75: Lobby stage handoff (`33` enters Stage 11; `75` prompts C->S 83)
+     ├── Connect Hello, then C->S 6 (`sub_5D893D` full layout; includes the S->C 4 session token)
+     ├── S->C 13 (`LobbyStageTransition`; feature 22 adds `u8(0)`) requests StageId.Lobby (11)
+     ├── S->C 75 (`u32(0)`) invokes `sub_4B94A6`, prompting C->S 83 and feature-32 C->S 338
      ├── No S->C 9 on the Lobby handoff: generic `CStage` opcode 9 requests a Crash_CA.dmp chunk
      └── C->S 9 may repeat after reconnect; it is not a second LoginServer cache handoff
 ```
 
 The default Taiwan peer ports are LoginServer TCP/UDP `3838/3839` and GameServer TCP/UDP `9339/9340`. `S->C 7` advertises `PUBLIC_IP` and the active GameServer TCP port.
+
+**GameServer handoff gate (server-side reconstruction).** The server accepts C->S 6 only on a GameServer connection using the confirmed `sub_5D893D` layout. It requires one or two players, matching declared/player/slot counts, an already-selected channel, a nonzero token and authentication snapshot from the prior LoginServer session, and matching token and usernames for existing database users. A failed check is logged and rejected without entering Lobby or sending the Lobby transition; it never creates an account. The current handler does not itself close the TCP socket on rejection. These are defensive server rules covered by local tests, not evidence that the official client accepts the resulting transition.
 
 ---
 
@@ -59,10 +62,10 @@ The default Taiwan peer ports are LoginServer TCP/UDP `3838/3839` and GameServer
                                                        │ C->S 5 (u8 category, u32 ordinal)│
                                                        │ S->C 7 (result=1, Game IP/port) │
                                                        │ [Reconnect to GameServer TCP]  │
-                                                       │ C->S 6 token -> S->C 33, 75     │
+                                                       │ C->S 6 -> S->C 13, then 75     │
                                                        ▼                                │
 ┌──────────────────┐  C->S 37/38 -> S->C 261/16  ┌─────────────────────┐  C->S 13 (Back)│
-│ 14: CShopStageNew│◄───────────────────────────►│   11: CLobbyStage   ├────────────────┘
+│ 14: CShopStageNew│◄───────────────────────────►│   11: CLobbyStage   ├────────────────┘  C->S 13 (ReturnToChannelSelect)
 │ 20: CUserMarket  │  C->S 318/320 -> S->C 262   │  (S->C 194,196,250) │
 └──────────────────┘                             └────┬───────────▲────┘
                                                       │           │
@@ -89,7 +92,13 @@ The default Taiwan peer ports are LoginServer TCP/UDP `3838/3839` and GameServer
                                                  └─────────────────────┘
 ```
 
-**Opcode 9 scope.** The GameServer Lobby handoff no longer sends S->C 9: in the `CSelectServerStage` fallback, opcode 9 is the `Crash_CA.dmp` file-offset request described in `packets.md`. Other uses of the shared `ServerOpcode.StageTransition` constant (including the existing room-leave response) are not changed by this fix and need separate, stage-specific regression coverage before the shared name or behavior is revised.
+**Opcode namespaces and transition evidence.** The flow above distinguishes `ClientOpcode`, `ServerOpcode`, and `StageId`: C->S 13 is `ReturnToChannelSelect`, S->C 13 is `LobbyStageTransition` in the SelectServer root-vtable view, and `StageId.Game` is 13 while `StageId.Lobby` is 11. S->C 33 is not the Lobby transition; in the SelectServer root-vtable view it reaches `CStage::sub_4B8D5F` (dynamic-I16 parsing). The Lobby handoff sends S->C 13 before S->C 75. The S->C-13 handler is gated by `CSelectServerStage` state `this+5163 == 2`, which the successful S->C-7 branch sets after calling `sub_5D893D` to send C->S 6. `sub_4B96B1` reads one byte when Taiwan feature 22 is enabled, then calls `sub_5AAA5C` with StageId 11.
+
+**Static stage-switch chain.** `sub_5AAA5C` updates manager bookkeeping from the old StageId and writes 11 at manager offset `+16`. The `CMainSystem` vtable at `.rdata` VA `0x007C1B20` has slot `+12` -> `sub_5AA3F4`, which compares that requested ID with `CMainWnd+180`. In the app loop (`CFxApp::sub_5A2133` -> `sub_5A9EA7`), a mismatch invokes `sub_5AEF3F` with the `CMainWnd*` and requested ID. Its StageId 11 branch tears down the active object, constructs `CLobbyStage` (or `CLobbyStageGuild` when `sub_59DBD9() == 77`), then calls the new object's virtual slot `+160`. The network packet-drain loop `sub_5AD7DE` stops dispatching on the old object once manager and window StageIds differ, so following S->C 75 is left for dispatch after the main-loop stage switch. This traces the static client transition path; it does not substitute for a live trace proving the official client received S->C 13 and completed the stage initialization.
+
+**C->S 6 variants.** `sub_5D893D` is the confirmed post-S->C-7 SelectServer handoff writer and includes a per-player field97 u32, an opaque byte from `CNetworkFacade+8`, and two trailing u32s. `sub_5D8A3F` and `sub_5D8879` emit different shapes. At a traced `sub_5D8A3F` caller the final byte is the current StageId; it is not interchangeable with the `sub_5D893D` byte and neither should be treated as a destination based solely on its numeric value. The server implements the confirmed `sub_5D893D` variant; other C->S-6 variants remain stage-specific/unhandled pending evidence.
+
+**Opcode 9 scope.** The GameServer Lobby handoff does not send S->C 9: in the `CSelectServerStage` fallback, opcode 9 is the `Crash_CA.dmp` file-offset request described in `packets.md`. Other uses of the shared `ServerOpcode.StageTransition` constant (including the existing room-leave response) are not changed by this fix and need separate, stage-specific regression coverage before the shared name or behavior is revised.
 
 ---
 

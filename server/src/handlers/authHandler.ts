@@ -176,9 +176,11 @@ export function handlePreLoginSsdCheck(
 /**
  * Sends S->C 4 (`CLoginStage::sub_567400` -> `sub_566E08`) login result.
  * Exact field layout verified at `0x00567400` and `0x00566E08`. The u16 after the
- * post-exp u8 is the value stored by `sub_5ED30E` and returned by `sub_5ED43B` for
- * channel level checks, so this field carries `user.level`; the neighboring u8's
- * semantic mapping and any LoginResult location for `rankFlag` remain unconfirmed.
+ * post-exp u8 is stored at `this + 20 + 12*i` by `sub_5ED30E` and returned from that
+ * same offset by `sub_5ED43B` for channel level checks, so it carries `user.level`.
+ * The preceding u8 is stored separately at `this + 164 + 12*i` by `sub_561F62`;
+ * its value mapping and any LoginResult location for `rankFlag` remain unconfirmed, so
+ * this reconstruction sends a zero placeholder rather than reusing `user.level`.
  */
 export function buildLoginSuccessPacket(state: WorldState, session: ClientSession): PacketWriter {
   const w = new PacketWriter(ServerOpcode.LoginResult);
@@ -206,9 +208,9 @@ export function buildLoginSuccessPacket(state: WorldState, session: ClientSessio
     w.writeU32(1); // isRegisteredFlag = 1
     w.writeString(user.nickname || user.username);
     w.writeU32(user.exp);
-    w.writeU8(user.level); // Stored separately by `sub_561F62`; semantic mapping is unconfirmed.
+    w.writeU8(0); // `sub_561F62` stores this separately; its value semantics are unconfirmed.
     w.writeU16(user.level); // `sub_5ED43B` returns this value to the channel-level gate.
-    w.writeU8(user.equippedChar);
+    w.writeU8(user.equippedChar); // Local reconstruction mapping; the wire field's identity is unconfirmed.
     w.writeU8(0); // flag43F
     w.writeU8(0); // flag459
     w.writeU32(0); // val425

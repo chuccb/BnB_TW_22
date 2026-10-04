@@ -166,8 +166,8 @@ export const ClientOpcode = {
   CheckNoticeUrl: 267, // -> S->C 163
   ShopEnter: 269, // CShopStageNew::sub_536555 / sub_589DB9: [u8 mode] -> S->C 198
   ShopCashQuery: 269, // sub_589DB9: [u8(0)] -> S->C 198
-  ShopBuyItem: 270, // sub_58EAEF -> sub_58B130: [u32 packageId, u32 discountCoupon] -> S->C 199
-  InventoryDeleteItem: 271, // sub_58013E: [u32 stockId, u32 slotIdx] -> S->C 202
+  ShopBuyItem: 270, // sub_58B130: [u32 selected-object +8, u32 opaque caller value] -> S->C 199
+  InventoryDeleteItem: 271, // sub_58013E: [u32 stock-container value, feature-26 str?, u32 caller value] -> S->C 202
   ShopAction: 273, // CShopStageNew::sub_53C550 -> sub_5816F4: equip/sync active items
   InventoryEquipSync: 273, // sub_5816F4: [u8 mode, u8 playerIdx, u16 count, count*(u8 slot, u32 stockId)]
   ShopUseOrEquip274: 274, // sub_541682 / sub_594F84: [u8 playerIdx, u8 slotIdx, u32 stockId, str customText]
@@ -182,7 +182,7 @@ export const ClientOpcode = {
   ShopRedeemCoupon: 280,
   RequestPackageMapIni: 281, // sub_5943FB: request packagemap.ini SmartStream -> S->C 210 (sub_4B966A)
   RequestDynamicMapInfoSsd: 282, // sub_4DD5D3: request fxdynmapinfo.ssd SmartStream -> S->C 205 (sub_4E0131)
-  ShopResellItem: 283, // sub_58BFE0: [u32 stockId, u32 slotIdx] -> S->C 212 (sub_546D3F)
+  ShopResellItem: 283, // sub_58BFE0: [u32 selected-object +8, u32 caller value] -> S->C 212 (sub_546D3F), DB mapping unverified
   NexonClubAuth: 284, // sub_4BCB70 (CNexonClubDlg): [u8 playerIdx, str clubId, str clubPass]
   ShopLeave: 285, // CShopStageNew::sub_536DB3 / sub_5B76C2 -> S->C 214 / S->C 99
   ShopIdentifyQMark: 285,
@@ -208,7 +208,7 @@ export const ClientOpcode = {
   CoupleBreakup: 306, // sub_5BA899: [u8 playerIdx] -> S->C 254
   GachaponRoll: 307, // CGachaponDlg::sub_5C3330: [u32 couponStockId] -> S->C 255 / 257
   GachaponClose: 308, // sub_5BF559
-  ShopBuyItemPass: 309, // sub_58EAEF -> sub_58B871: [str pass, u32 packageId, u32 discountCoupon] -> S->C 199
+  ShopBuyItemPass: 309, // sub_58B871: [str NexonPass, u32 selected-object +8, u32 opaque caller value] -> S->C 199
   AckGiftDelivery: 310, // sub_58DFE6: [u8 playerIdx]
   QueryMyCharacterRank: 311, // sub_4A4A0F: empty -> S->C 256 (sub_4B96F3 -> sub_4A527F)
   BasketOpen: 312, // sub_5C2A43
@@ -252,14 +252,15 @@ export const ServerOpcode = {
   ChannelListSsd: 10, // sub_5D42CF -> sub_5D3E91: channel2_%03d%s.ssd
   MessengerHandoff: 11, // CLoginStage::sub_567B0F
   ChannelLoads: 12, // sub_5D4139: [u16 count, u16[count] load]
+  LobbyStageTransition: 13, // CSelectServerStage root dispatch: slot 48 -> sub_56A9DA -> CStage::sub_4B96B1; requests StageId.Lobby (11)
   ChatBroadcast15: 15,
   ShopInitAndStage14: 16, // sub_4BB82A: shop checksums (fxstock, stringtable, packagemap) + qmarksfn.ssd + banners
   PingRequest: 18, // CStage::sub_4BDBF5: [u32 tick, u32 seq]
   NormalChat: 21, // CChatStage::sub_4B070C / CGameStage::sub_4F4D49
   WhisperOrEmotion: 23, // CChatStage::sub_4A8727 / CGameStage::sub_4F4F4B
   WhisperDeliveryStatus: 24, // CChatStage::sub_4AE106
-  DynamicI16Data: 32, // CStage::sub_4B8D5F -> sub_59D0D4: [u32 id, u16 version, u32 size, block(size)]
-  SessionHandoffAck: 33, // CSelectServerStage::sub_56A9DA -> CStage::sub_4B96B1
+  DynamicI16Data: 32, // Stage-specific route to CStage::sub_4B8D5F -> sub_59D0D4: [u32 id, u16 version, u32 size, block(size)]
+  SelectServerDynamicI16Data: 33, // CSelectServerStage root dispatch: slot 54 -> CStage::sub_4B8D5F; not the Lobby transition
   GuildOrUserStatus: 34, // CMyInfoDlg::sub_54466F / CExchangeStage::sub_55B6DB
   ShopReturnHandoff: 41, // CShopConnectionMan::sub_52A23C: [u16, u16, u32 key, str, u8=11]
   ShopServerEndpoint: 48, // CShopConnectionMan::sub_529E8D: [u8 ok, u8 flag, u32 token, u32 ip, u16 port]

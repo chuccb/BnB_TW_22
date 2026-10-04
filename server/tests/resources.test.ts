@@ -11,8 +11,17 @@ import {
   verifySmartStreamSchema,
 } from "../src/resources/archive.ts";
 import { SmartStreamReader } from "../src/protocol/stream.ts";
+import { TW_ENABLED_FEATURES, isFeatureEnabledTW } from "../src/config/index.ts";
 
 describe("Client Resource Archives — Fx.idx, .i16 Tables, Maps & All 12 .ssd/.ini Streams", () => {
+  test("Taiwan feature IDs match the region-8 branch in sub_5CEE8E", () => {
+    expect([...TW_ENABLED_FEATURES]).toEqual([
+      0, 1, 2, 7, 9, 10, 11, 14, 15, 16, 17, 19, 20, 21, 22, 24, 29, 30, 31, 33, 34, 35,
+    ]);
+    expect(isFeatureEnabledTW(22)).toBe(true);
+    expect(isFeatureEnabledTW(23)).toBe(false);
+    expect(isFeatureEnabledTW(26)).toBe(false);
+  });
   test("Decrypts Fx.idx (sub_673110), loads CGameMapInfoList, BomberAttr, ItemAttr, and verifies all 12 .ssd/.ini streams", () => {
     const resources = loadClientResources();
 
@@ -54,6 +63,9 @@ describe("Client Resource Archives — Fx.idx, .i16 Tables, Maps & All 12 .ssd/.
     expect(resources.mapGroups[2]?.groupName).toBe("ReBirthMapGroup");
     expect(resources.mapGroups[2]?.mapNames.length).toBe(2);
     expect(resources.initXml).toContain('<nation name="taiwan"/>');
+    expect(resources.initXml).toContain('<info name="couple" attr0="1"/>');
+    expect(resources.initXml).toContain('<info name="quest"  attr0="1"/>');
+    expect(resources.initXml).not.toContain('nation value="tw"');
 
     // CGameMapInfoList::sub_4E8597 extracts Map/* entries in exact Fx.idx order with sub_4E5845 CRC32 & CRC8
     expect(resources.maps.length).toBe(319);

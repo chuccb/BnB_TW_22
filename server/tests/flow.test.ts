@@ -195,8 +195,8 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     const config = loadConfig({ dbPath: ":memory:", publicIp: "198.51.100.28" });
     using state = new WorldState(config);
 
-    const client1 = new SimulatedClient();
-    const session1 = state.createSession(client1.onWireBytes, "127.0.0.1", 51001);
+    let client1 = new SimulatedClient();
+    let session1 = state.createSession(client1.onWireBytes, "127.0.0.1", 51001);
     session1.sendConnectHello(config);
     expect(client1.helloReceived).toBe(true);
     expect(client1.socketState.degree).toBe(3);
@@ -336,7 +336,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(p4.readU32()).toBe(1); // isRegisteredFlag = 1
     expect(p4.readString()).toBe(loggedInUser.nickname || loggedInUser.username);
     expect(p4.readU32()).toBe(loggedInUser.exp);
-    p4.readU8(); // separate post-exp field parsed by `sub_561F62`, not the level-gate value
+    expect(p4.readU8()).toBe(0); // separate `sub_561F62` field; local placeholder, not level gate
     const loginResultGateLevel = p4.readU16(); // `sub_5ED30E` -> `sub_5ED43B`
     expect(loggedInUser.level).toBe(1);
     expect(loggedInUser.rankFlag).toBe(0);
@@ -379,7 +379,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(client1.popByOpcode(ServerOpcode.MessengerHandoff)).toBeDefined();
     expect(session1.stageId).toBe(StageId.SelectServer);
 
-    // 5. Select Channel (C->S 5 -> S->C 7) & Session Auth Handoff (C->S 6 -> S->C 33, 75)
+    // 5. Select Channel (C->S 5 -> S->C 7) & Session Auth Handoff (C->S 6 -> S->C 13, then 75)
     client1.sendToServer(
       state,
       session1.sessionId,
@@ -392,15 +392,63 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(p7.readU32()).toBe(0xc633641c); // PUBLIC_IP, distinct from the local bind address
     expect(p7.readU16()).toBe(9339); // GameServer TCP, not LoginServer TCP
 
+    // Model the actual separate TCP reconnect: keep the token snapshot, remove the closed
+    // LoginServer session, and begin a new GameServer socket with fresh packet state.
+    const loginSession1 = session1;
+    state.removeSession(loginSession1.sessionId);
+    client1 = new SimulatedClient();
+    session1 = state.createSession(
+      client1.onWireBytes,
+      "127.0.0.1",
+      51003,
+      "0.0.0.0",
+      0,
+      "game"
+    );
+    session1.sendConnectHello(config);
+    expect(client1.helloReceived).toBe(true);
+
     client1.sendToServer(
       state,
       session1.sessionId,
-      new PacketWriter(6).writeU8(1).writeString("bazzi_tw").writeU32(token1)
+      new PacketWriter(ClientOpcode.SessionHandoff)
+        .writeU8(1)
+        .writeString("bazzi_tw")
+        .writeU32(token1) // field95 from LoginResult (`sub_5D92A8`)
+        .writeU32(0) // field97 from LoginResult (`sub_5D92F2`); meaning unconfirmed
+        .writeU8(14) // opaque `CNetworkFacade+8`; value 14 is not inferred to mean StageId.Shop
+        .writeU32(0) // global handoff field A (`dword_92AAEC + 888`)
+        .writeU32(0) // global handoff field B (`dword_92AAEC + 892`)
     );
-    expect(client1.popByOpcode(ServerOpcode.SessionHandoffAck)?.readU8()).toBe(0);
+    const p13 = client1.popByOpcode(ServerOpcode.LobbyStageTransition)!;
+    expect(p13.readU8()).toBe(0); // TW feature 22; `sub_4B96B1` consumes one byte
+    expect(p13.remaining).toBe(0);
     expect(client1.popByOpcode(ServerOpcode.StageTransition)).toBeUndefined();
+    expect(client1.popByOpcode(ServerOpcode.SelectServerDynamicI16Data)).toBeUndefined();
     expect(client1.popByOpcode(ServerOpcode.QuestConfigSync)?.readU32()).toBe(0);
     expect(session1.stageId).toBe(StageId.Lobby);
+
+    const handoffReceiveLog = getRecentLogs().findLast(
+      (entry) => entry.category === "SessionHandoff" && entry.message === "Received 6 (SessionHandoff)"
+    );
+    expect(handoffReceiveLog?.data?.wireLayout).toBe("sub_5D893D");
+    expect(handoffReceiveLog?.data?.networkObjectByte).toBe("14 (0x0E)");
+    expect(handoffReceiveLog?.data?.tokenFound).toBe(true);
+    expect(JSON.stringify(handoffReceiveLog?.data)).not.toContain(String(token1));
+    const handoffSendLog = getRecentLogs().findLast(
+      (entry) => entry.category === "SessionHandoff" && entry.message === "Sent GameServer Lobby transition sequence"
+    );
+    expect(handoffSendLog?.data?.targetStage).toBe("11 (Lobby)");
+    expect(handoffSendLog?.data?.serverOpcodes).toEqual([
+      "13 (LobbyStageTransition)",
+      "75 (QuestConfigSync)",
+    ]);
+    expect(handoffSendLog?.data?.opcode13PayloadBytes).toBe(1);
+    expect(handoffSendLog?.data?.clientStageLifecyclePath).toBe(
+      "sub_4B96B1 -> sub_5AAA5C(StageId 11) -> CMainSystem::sub_5AA3F4 -> sub_5AEF3F(CMainWnd*)"
+    );
+    expect(handoffSendLog?.data?.clientStageLifecycleRuntimeVerified).toBe(false);
+    expect(handoffSendLog?.data?.clientAcceptanceVerified).toBe(false);
 
     // `CStage::sub_4B94A6` may request channel data again after reconnect. On the
     // GameServer/Lobby session this is not a second LoginServer handoff.
@@ -492,15 +540,66 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(session1.stageId).toBe(StageId.Prepare);
 
     // 8. Second player logs in and joins Room #1 (C->S 76 -> S->C 80 + S->C 102 + S->C 100 to Chief)
-    const client2 = new SimulatedClient();
-    const session2 = state.createSession(client2.onWireBytes, "127.0.0.1", 51002);
+    let client2 = new SimulatedClient();
+    let session2 = state.createSession(client2.onWireBytes, "127.0.0.1", 51002);
     session2.sendConnectHello(config);
     client2.sendToServer(
       state,
       session2.sessionId,
-      new PacketWriter(31).writeU8(0).writeString("dao_tw")
+      new PacketWriter(ClientOpcode.LoginBeanfunToken).writeU8(0).writeString("dao_tw")
     );
-    expect(client2.popByOpcode(4)?.readU8()).toBe(0);
+    const loginResult2 = client2.popByOpcode(ServerOpcode.LoginResult)!;
+    expect(loginResult2.readU8()).toBe(0);
+    loginResult2.readU16(); // worldId
+    expect(loginResult2.readU8()).toBe(1); // one local player
+    loginResult2.readU32(); // Lucci
+    loginResult2.readU32(); // wins
+    loginResult2.readU32(); // losses
+    const token2 = loginResult2.readU32();
+    expect(token2).toBeGreaterThan(0);
+
+    client2.sendToServer(
+      state,
+      session2.sessionId,
+      new PacketWriter(ClientOpcode.RequestChannelList).writeU32(0)
+    );
+    expect(client2.popByOpcode(ServerOpcode.ChannelListSsd)?.readU8()).toBe(1);
+    expect(client2.popByOpcode(ServerOpcode.ChannelLoads)).toBeDefined();
+    expect(client2.popByOpcode(ServerOpcode.MessengerHandoff)).toBeDefined();
+    client2.sendToServer(
+      state,
+      session2.sessionId,
+      new PacketWriter(ClientOpcode.SelectChannel).writeU8(10).writeU32(0)
+    );
+    expect(client2.popByOpcode(ServerOpcode.ChannelSelectResult)?.readU8()).toBe(1);
+
+    const loginSession2 = session2;
+    state.removeSession(loginSession2.sessionId);
+    client2 = new SimulatedClient();
+    session2 = state.createSession(
+      client2.onWireBytes,
+      "127.0.0.1",
+      51004,
+      "0.0.0.0",
+      0,
+      "game"
+    );
+    session2.sendConnectHello(config);
+    client2.sendToServer(
+      state,
+      session2.sessionId,
+      new PacketWriter(ClientOpcode.SessionHandoff)
+        .writeU8(1)
+        .writeString("dao_tw")
+        .writeU32(token2)
+        .writeU32(0)
+        .writeU8(1)
+        .writeU32(0)
+        .writeU32(0)
+    );
+    expect(client2.popByOpcode(ServerOpcode.LobbyStageTransition)?.readU8()).toBe(0);
+    expect(client2.popByOpcode(ServerOpcode.QuestConfigSync)?.readU32()).toBe(0);
+    expect(session2.stageId).toBe(StageId.Lobby);
 
     client2.sendToServer(
       state,
@@ -1148,10 +1247,8 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
       state,
       session1.sessionId,
       new PacketWriter(ClientOpcode.ShopBuyItem)
-        .writeU32(3001) // stockId
-        .writeU32(100) // price
-        .writeU16(0) // couponType = 0
-        .writeU8(2) // currencyType = 2 (Lucci)
+        .writeU32(3001) // client item-object field at +8; used as demo item key by this reconstruction
+        .writeU32(0) // opaque second u32; meaning unconfirmed
     );
     const p199 = client1.popByOpcode(ServerOpcode.ShopBuyResult)!;
     expect(p199).toBeDefined();
@@ -1241,7 +1338,9 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     );
     expect(client1.popByOpcode(ServerOpcode.BasketCouponCounts)).toBeDefined();
 
-    // Resell Item (`C->S 283`, `sub_58BFE0`: `[u32 stockId, u32 slotIdx]`)
+    // Resell Item (`C->S 283`, `sub_58BFE0`: object `+8` u32, caller-supplied u32).
+    // In this fixture only, 3001 matches the stored `itemId`; this does not establish a
+    // client-key-to-SQLite-row-ID mapping.
     client1.sendToServer(
       state,
       session1.sessionId,
@@ -1252,6 +1351,19 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(p212.readU8()).toBe(0); // result = 0 (`sub_546D3F` resell success)
     expect(p212.readString()).toContain("3001");
     expect(p212.readU32()).toBe(3001);
+
+    // A missing inventory item receives the client's explicit result=1 failure branch;
+    // it must not credit the fixture refund or claim a successful sale.
+    const balanceAfterResell = state.db.getUserById(loggedInUser.id)!.lucci;
+    client1.sendToServer(
+      state,
+      session1.sessionId,
+      new PacketWriter(ClientOpcode.ShopResellItem).writeU32(0xffff_ffff).writeU32(0)
+    );
+    const failedResell = client1.popByOpcode(ServerOpcode.ShopResellResult)!;
+    expect(failedResell.readU8()).toBe(1); // `sub_546D3F` -> `ResellItemFail`
+    expect(failedResell.remaining).toBe(0);
+    expect(state.db.getUserById(loggedInUser.id)?.lucci).toBe(balanceAfterResell);
 
     // 18b. Real UserMarket registration, purchase & Lucci transfer (`C->S 326, 330, 329`)
     client1.sendToServer(
@@ -1502,6 +1614,102 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(client1.popByOpcode(ServerOpcode.GuildOrUserStatus)?.readU8()).toBe(0);
   });
 
+  test("parses C->S 309's leading Nexon Pass string before the opaque u32 pair", () => {
+    const config = loadConfig({ dbPath: ":memory:" });
+    using state = new WorldState(config);
+    const client = new SimulatedClient();
+    const session = state.createSession(client.onWireBytes, "127.0.0.1", 51007, "0.0.0.0", 0, "game");
+    session.sendConnectHello(config);
+    const user = state.db.createUser("pass_buyer", "test-password");
+    const startingLucci = user.lucci;
+    session.users = [user];
+
+    client.sendToServer(
+      state,
+      session.sessionId,
+      new PacketWriter(ClientOpcode.ShopBuyItemPass)
+        .writeString("fixture-pass")
+        .writeU32(3002)
+        .writeU32(0xdead_beef)
+    );
+
+    const result = client.popByOpcode(ServerOpcode.ShopBuyResult)!;
+    expect(result.readU8()).toBe(0);
+    expect(result.readVariantTime()).toBeGreaterThan(45000);
+    expect(state.db.getUserStock(user.id).some((item) => item.itemCode === 3002)).toBe(true);
+    expect(state.db.getUserById(user.id)?.lucci).toBe(startingLucci - 100);
+  });
+
+  test("failed demo purchase returns only the client's failure result and grants no stock", () => {
+    const config = loadConfig({ dbPath: ":memory:" });
+    using state = new WorldState(config);
+    const client = new SimulatedClient();
+    const session = state.createSession(client.onWireBytes, "127.0.0.1", 51006, "0.0.0.0", 0, "game");
+    session.sendConnectHello(config);
+    const user = state.db.createUser("no_funds", "test-password");
+    state.db.updateUserCurrency(user.id, 0, 0);
+    session.users = [user];
+    const inventoryCount = state.db.getUserStock(user.id).length;
+
+    client.sendToServer(
+      state,
+      session.sessionId,
+      new PacketWriter(ClientOpcode.ShopBuyItem).writeU32(3001).writeU32(0)
+    );
+
+    const result = client.popByOpcode(ServerOpcode.ShopBuyResult)!;
+    expect(result.readU8()).toBe(1); // `sub_58EBFE`'s purchase-error path
+    expect(result.remaining).toBe(0);
+    expect(state.db.getUserStock(user.id)).toHaveLength(inventoryCount);
+    expect(state.db.getUserById(user.id)?.lucci).toBe(0);
+    expect(state.db.getUserById(user.id)?.cash).toBe(0);
+    expect(client.popByOpcode(ServerOpcode.InventoryUpdate)).toBeUndefined();
+    expect(client.popByOpcode(ServerOpcode.ShopLucciBalance190)).toBeUndefined();
+  });
+
+  test("rejects an unknown GameServer handoff token without creating a user or entering Lobby", () => {
+    clearRecentLogs();
+    const config = loadConfig({ dbPath: ":memory:" });
+    using state = new WorldState(config);
+    const client = new SimulatedClient();
+    const session = state.createSession(
+      client.onWireBytes,
+      "127.0.0.1",
+      51005,
+      "0.0.0.0",
+      0,
+      "game"
+    );
+    session.sendConnectHello(config);
+
+    client.sendToServer(
+      state,
+      session.sessionId,
+      new PacketWriter(ClientOpcode.SessionHandoff)
+        .writeU8(1)
+        .writeString("untrusted_user")
+        .writeU32(0xdead_beef)
+        .writeU32(0)
+        .writeU8(1)
+        .writeU32(0)
+        .writeU32(0)
+    );
+
+    expect(client.popByOpcode(ServerOpcode.LobbyStageTransition)).toBeUndefined();
+    expect(client.popByOpcode(ServerOpcode.QuestConfigSync)).toBeUndefined();
+    expect(session.stageId).toBe(StageId.Login);
+    expect(session.users).toHaveLength(0);
+    expect(state.db.getUserByUsername("untrusted_user")).toBeNull();
+    expect(
+      getRecentLogs().some(
+        (entry) =>
+          entry.category === "SessionHandoff" &&
+          entry.message === "Rejected GameServer session handoff; no Lobby transition sent" &&
+          entry.data?.rejectionReason === "no-auth-session-for-token"
+      )
+    ).toBe(true);
+  });
+
   test("server shutdown is reported as a server-requested TCP close", async () => {
     const server = new CrazyArcadeServer({
       host: "127.0.0.1",
@@ -1597,24 +1805,29 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     const gameClient = await LiveTcpClient.connect(ports.gameTcpPort);
     let gameSessionId: number | undefined;
     try {
-      const handoffAck = gameClient.waitForOpcode(ServerOpcode.SessionHandoffAck);
+      const lobbyTransition = gameClient.waitForOpcode(ServerOpcode.LobbyStageTransition);
       const questSync = gameClient.waitForOpcode(ServerOpcode.QuestConfigSync);
       gameClient.send(
         new PacketWriter(ClientOpcode.SessionHandoff)
           .writeU8(1)
           .writeString("live_tester")
-          .writeU32(authToken)
+          .writeU32(authToken) // field95 (`sub_5D92A8`)
+          .writeU32(0) // field97 (`sub_5D92F2`); opaque to the server
+          .writeU8(1) // `CNetworkFacade+8`; not interpreted as a StageId
+          .writeU32(0) // `dword_92AAEC + 888`
+          .writeU32(0) // `dword_92AAEC + 892`
       );
 
-      expect((await handoffAck).readU8()).toBe(0);
+      expect((await lobbyTransition).readU8()).toBe(0); // TW feature 22 payload
       expect((await questSync).readU32()).toBe(0);
-      // S->C 33 performs the Lobby transition. S->C 9 would instead be treated by
-      // CStage::sub_4B8D42 as a Crash_CA.dmp offset request and cause an unsolicited C->S 8.
+      // S->C 13 requests StageId.Lobby; S->C 33 maps to the SelectServer dynamic-I16
+      // parser, while S->C 9 would be treated as a Crash_CA.dmp offset request.
       expect(gameClient.receivedOpcodes).toEqual([
-        ServerOpcode.SessionHandoffAck,
+        ServerOpcode.LobbyStageTransition,
         ServerOpcode.QuestConfigSync,
       ]);
       expect(gameClient.hasQueuedOpcode(ServerOpcode.StageTransition)).toBe(false);
+      expect(gameClient.hasQueuedOpcode(ServerOpcode.SelectServerDynamicI16Data)).toBe(false);
 
       const gameSession = [...server.state.sessions.values()].find(
         (session) => session.connectionKind === "game"
