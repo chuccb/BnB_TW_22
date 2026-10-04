@@ -45,6 +45,42 @@ const REDACTED_SERVER_PAYLOAD_OPCODES = new Set<number>([
   ServerOpcode.ShopServerEndpoint,
 ]);
 const MAX_TCP_PAYLOAD_BYTES = 16 * 1024 * 1024;
+// CPacketSocket advances packet counters by three only after successful frames. Probe a
+// small neighborhood on CRC failure to reveal likely one- or two-packet desynchronization;
+// these candidates are diagnostic only and are never accepted as packets.
+const CRC_COUNTER_PROBE_DELTAS = [-6, -3, 3, 6] as const;
+
+function findClientOpcodeDiagnostic(plain: Uint8Array): string {
+  if (plain.length < 2) return "<unavailable: payload shorter than opcode>";
+  const encodedOpcode = ((plain[0]! << 8) | plain[1]!) & 0xffff;
+  const opcode = (encodedOpcode ^ 0xa569) & 0xffff;
+  return REDACTED_CLIENT_PAYLOAD_OPCODES.has(opcode)
+    ? "<redacted sensitive client opcode>"
+    : formatClientOpcode(opcode);
+}
+
+function findCounterCrcMatches(
+  counter: number,
+  cipher: Uint8Array,
+  actualCrc: number,
+  payloadBytes: number
+): number[] {
+  const matches: number[] = [];
+  for (const delta of CRC_COUNTER_PROBE_DELTAS) {
+    const candidateCounter = (counter + delta) >>> 0;
+    const candidatePlain = decryptPayload(candidateCounter, cipher);
+    if (computeCRC8(candidateCounter & 0xff, candidatePlain, payloadBytes) === actualCrc) {
+      matches.push(delta);
+    }
+  }
+  return matches;
+}
+
+function findCrcSeedMatches(counter: number, plain: Uint8Array, actualCrc: number): number[] {
+  return CRC_COUNTER_PROBE_DELTAS.filter(
+    (delta) => computeCRC8((counter + delta) & 0xff, plain) === actualCrc
+  );
+}
 
 export interface ConnectHelloInfo {
   flag: number;
@@ -61,11 +97,16 @@ export class PacketSocketState {
   public key = 0;
   public hasKey = 0;
 
-  // CPacketSocket constants from sub_5D82E1: c1=0x66, c2=0xC0, c3=0xE7, counter=40, step=3
+  // CPacketSocket constants from sub_5D82E1: c1=0x66, c2=0xC0, c3=0xE7,
+  // initial counters=40 and steps=3 (sub_699A50).
   public readonly c1 = 0x66;
   public readonly c2 = 0xc0;
   public readonly c3 = 0xe7;
+  // Server-side mirror of the client's C->S TX field +14 in sub_699E70,
+  // initialized to 40 by sub_699A50; the peer increments it after successful sends.
   public clientToServerCounter = 40;
+  // Server-side TX counter / client RX field +13. The client's ConnectHello
+  // parser (sub_699D60) advances its RX counter 40 -> 43 exactly once.
   public serverToClientCounter = 40;
   public readonly step = 3;
 
@@ -111,8 +152,9 @@ export class PacketSocketState {
     frame[3] = encodeConnectHelloFirstByte(initKey, plain[0]!, repoRoot);
 
     const prevCounter = this.serverToClientCounter;
-    // CPacketSocket::sub_699D60 (0x00699D60, called via vtable + 52 in sub_5D80A7)
-    // increments rxCounter (*(this + 13)) by step (*(this + 15) = 3) ONCE (40 -> 43)!
+    // The peer's CPacketSocket::sub_699D60 (0x00699D60, via vtable +52 in
+    // sub_5D80A7) accepts ConnectHello and advances its RX field +13 by step
+    // +15 once (40 -> 43). Mirror that next S->C counter on this server state.
     this.serverToClientCounter += this.step;
     this.hasKey = 1;
     this.degree = 3;
@@ -337,12 +379,31 @@ export class PacketSocketState {
         const expectedCrc = computeCRC8(counter & 0xff, plain, N);
         const actualCrc = frame[4 + N]!;
         if (actualCrc !== expectedCrc) {
+          // Never log the decrypted body here: the first C->S packet may contain
+          // credentials or session tokens. Only inspect the scrambled opcode and
+          // CRC outcomes under nearby counters, without accepting any candidate.
+          const counterCrcMatches = findCounterCrcMatches(counter, cipher, actualCrc, N);
+          const crcSeedMatches = findCrcSeedMatches(counter, plain, actualCrc);
           logger.error("Framing", "C->S CRC8 mismatch (CReceivedPacketBase::sub_6963B0 error 7)", {
             expectedCrc: formatU8Hex(expectedCrc),
             actualCrc: formatU8Hex(actualCrc),
-            counter,
+            direction: "C->S",
+            degree: 2,
+            sequenceValidated: true,
+            sequenceByte: formatU8Hex(frame[0]!),
+            padByte: formatU8Hex(frame[1]!),
+            encodedPayloadLength: `0x${((frame[2]! << 8) | frame[3]!).toString(16).toUpperCase().padStart(4, "0")}`,
+            frameBytes: frame.length,
             payloadBytes: N,
-            plaintextPreview: "<omitted; CRC failed and payload may contain credentials>",
+            untrustedOpcode: findClientOpcodeDiagnostic(plain),
+            counter,
+            counterStep: this.step,
+            counterAfterValidFrame: (counter + this.step) >>> 0,
+            keyPresent: this.hasKey === 1,
+            counterProbeDeltas: [...CRC_COUNTER_PROBE_DELTAS],
+            counterCrcMatches,
+            crcSeedMatches,
+            diagnosticOnly: true,
           });
           throw new Error(
             `C->S CRC8 mismatch: expected 0x${expectedCrc.toString(16)}, got 0x${actualCrc.toString(16)}`

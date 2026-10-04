@@ -31,6 +31,7 @@ import {
   normalizeCChannelCategory,
 } from "../src/protocol/channelCache.ts";
 import { decodeClientText, encodeClientText } from "../src/protocol/textEncoding.ts";
+import { ClientOpcode } from "../src/protocol/opcodes.ts";
 import {
   clearRecentLogs,
   formatClientOpcode,
@@ -52,6 +53,9 @@ describe("Protocol Layer — CRC, Cipher, Primitives, SmartStream & Framing", ()
     const crc8a = computeCRC8(40, sample, sample.length);
     const crc8b = computeCRC8(40, sample, sample.length);
     expect(crc8a).toBe(crc8b);
+    const crc8Reference = new TextEncoder().encode("123456789");
+    expect(computeCRC8(0, crc8Reference)).toBe(0xf4);
+    expect(computeCRC8(40, crc8Reference)).toBe(0x38);
     expect(crc8a).toBeGreaterThanOrEqual(0);
     expect(crc8a).toBeLessThanOrEqual(255);
   });
@@ -262,6 +266,80 @@ describe("Protocol Layer — CRC, Cipher, Primitives, SmartStream & Framing", ()
       );
       expect(handshakeLog?.data?.counterBefore).toBe(40);
       expect(handshakeLog?.data?.counterAfter).toBe(43);
+    } finally {
+      setLogLevel(previousLevel);
+    }
+  });
+
+  test("C->S CRC diagnostics flag a nearby counter candidate without accepting the frame", () => {
+    const previousLevel = getLogLevel();
+    setLogLevel("silent");
+    clearRecentLogs();
+    try {
+      const server = new PacketSocketState("server");
+      const client = new PacketSocketState("client");
+      const hello = server.encodeConnectHello({
+        flag: 0,
+        minVersion: 22,
+        currentVersion: 22,
+        sessionKey: 0x12340001,
+        noticeUrl: "http://tw.beanfun.com/bnb/",
+        extraFlag: 0,
+      });
+      client.decodeConnectHello(hello);
+
+      // Simulate one successful client frame that the server missed. Force the
+      // sequence byte to the server's expected value so this test reaches CRC diagnosis.
+      client.clientToServerCounter = 43;
+      const frame = client.encodePacket(
+        new PacketWriter(ClientOpcode.PreLoginSsdCheck, 2)
+          .writeU32(0x12345678)
+          .writeU32(0xabcdef01)
+      );
+      frame[0] = 0;
+
+      expect(() => server.feed(frame)).toThrow("C->S CRC8 mismatch");
+      const mismatch = getRecentLogs().find((entry) =>
+        entry.message.includes("C->S CRC8 mismatch")
+      );
+      expect(mismatch?.data?.sequenceValidated).toBe(true);
+      expect(mismatch?.data?.counter).toBe(40);
+      expect(mismatch?.data?.counterCrcMatches).toContain(3);
+      expect(mismatch?.data?.diagnosticOnly).toBe(true);
+      expect(JSON.stringify(mismatch)).not.toContain("plaintextPreview");
+      expect(JSON.stringify(mismatch)).not.toContain("12345678");
+    } finally {
+      setLogLevel(previousLevel);
+    }
+  });
+
+  test("C->S CRC failure logs redact credential opcodes and never log plaintext payloads", () => {
+    const previousLevel = getLogLevel();
+    setLogLevel("silent");
+    clearRecentLogs();
+    try {
+      const server = new PacketSocketState("server");
+      const client = new PacketSocketState("client");
+      const hello = server.encodeConnectHello({
+        flag: 0,
+        minVersion: 22,
+        currentVersion: 22,
+        sessionKey: 0x12340001,
+        noticeUrl: "http://tw.beanfun.com/bnb/",
+        extraFlag: 0,
+      });
+      client.decodeConnectHello(hello);
+      const frame = client.encodePacket(
+        new PacketWriter(ClientOpcode.LoginCredentials, 2).writeString("private-login-payload")
+      );
+      frame[frame.length - 1] ^= 0x01;
+
+      expect(() => server.feed(frame)).toThrow("C->S CRC8 mismatch");
+      const mismatch = getRecentLogs().find((entry) =>
+        entry.message.includes("C->S CRC8 mismatch")
+      );
+      expect(mismatch?.data?.untrustedOpcode).toBe("<redacted sensitive client opcode>");
+      expect(JSON.stringify(mismatch)).not.toContain("private-login-payload");
     } finally {
       setLogLevel(previousLevel);
     }
