@@ -97,7 +97,13 @@ describe("Client Resource Archives — Fx.idx, .i16 Tables, Maps & All 12 .ssd/.
     expect(resources.ssdFiles.get("filterstr.ssd")?.diskAdler32Zero).toBe(0x000e496d);
     expect(resources.ssdFiles.get("esfn.ssd")?.diskAdler32Zero).toBe(0x491e0722);
     expect(resources.ssdFiles.get("fxdynimginfo.ssd")?.diskAdler32Zero).toBe(0x084341a5);
-    expect(resources.ssdFiles.get("fxdynmapinfo.ssd")?.diskAdler32Zero).toBe(0x39ac6777);
+    const dynamicMap = resources.ssdFiles.get("fxdynmapinfo.ssd")!;
+    expect(dynamicMap.diskAdler32Zero).toBe(0x39ac6777); // original on-disk stream
+    expect(dynamicMap.adler32Zero).toBe(0x79476a94); // transcoded v22 SmartStream body
+    expect(dynamicMap.rawBytes).toHaveLength(11_593);
+    expect(dynamicMap.streamContainer).toHaveLength(11_697);
+    expect(dynamicMap.decompressed).toHaveLength(67_238);
+    expect(dynamicMap.entryCount).toBe(871);
     expect(resources.ssdFiles.get("packagemap.ini")?.diskAdler32Zero).toBe(0xdcec1a37);
     expect(resources.ssdFiles.get("stringtable.ini")?.diskAdler32Zero).toBe(0x6683b836);
     expect(resources.ssdFiles.get("fxstock.ini")?.diskAdler32Zero).toBe(0xb5c71db3);

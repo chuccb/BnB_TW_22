@@ -972,7 +972,7 @@ export class GameDatabase implements Disposable {
     let newLucci = user.lucci;
     let newMarket = curMarket;
     if (direction === 1) {
-      // User Lucci -> Market Lucci (`CChangeLucciDlg::sub_575DF9`)
+      // User Lucci -> Market Lucci (local DB adapter direction; C->S 329 does not encode direction)
       const delta = Math.min(newLucci, safeAmt);
       newLucci -= delta;
       newMarket += delta;

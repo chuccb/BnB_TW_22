@@ -2,6 +2,7 @@ import { ClientOpcode, ServerOpcode, StageId } from "../protocol/opcodes.ts";
 import { ipv4ToBytes, PacketReader, PacketWriter, unixMsToVariantTime } from "../protocol/primitives.ts";
 import { SmartStreamWriter } from "../protocol/stream.ts";
 import type { ClientSession, WorldState } from "../state/worldState.ts";
+import { formatStageId, logger } from "../utils/logger.ts";
 
 /**
  * Builds S->C 194 (`CUserInventoryMan::sub_595272` -> `sub_594ECF`) full inventory load
@@ -327,6 +328,10 @@ export function buildBasketCouponCountsPacket259(
  *   str notice
  *   u32 minPrice
  */
+/**
+ * Builds the client-confirmed S->C 265 schema. Default values are local reconstruction
+ * fixtures, not verified production Taiwan market rates or minimum-price policy.
+ */
 export function buildUserMarketFeeInfoPacket265(
   feeRate: number = 5,
   notice: string = "",
@@ -340,15 +345,13 @@ export function buildUserMarketFeeInfoPacket265(
 }
 
 /**
- * Builds S->C 272 (`CMarketSlotWnd::sub_57282A` at `0x0057282A`):
- *   u16 totalCount
- *   u16 pageCount
- *   For each listing:
- *     u32 listingId
- *     u32 stockId (`itemCode`)
- *     str sellerName
- *     u32 price
- *     u16 remainHours
+ * Builds S->C 272 using the verified Client receive route
+ * `CUserMarketStage::sub_574380 -> sub_57226C -> sub_570D2A`:
+ *   u16 count
+ *   count * [u32 field0, u32 field1, str field2, u32 field3, u16 field4]
+ *
+ * The widths/order are client-source-confirmed. Mapping the local demo listing fields
+ * onto these wire fields is reconstruction behavior, not official market data semantics.
  */
 export function buildMarketListPacket272(
   state: WorldState,
@@ -356,7 +359,6 @@ export function buildMarketListPacket272(
 ): PacketWriter {
   const listings = state.db.getActiveMarketListings(searchQuery);
   const w272 = new PacketWriter(ServerOpcode.UserMarketList);
-  w272.writeU16(listings.length);
   w272.writeU16(listings.length);
   for (const item of listings) {
     w272.writeU32(item.id);
@@ -369,14 +371,13 @@ export function buildMarketListPacket272(
 }
 
 /**
- * Builds S->C 275 (`CMarketSlotWnd::sub_572AC5` at `0x00572AC5` My Sales List):
+ * Builds S->C 275 using the verified Client receive route
+ * `CUserMarketStage::sub_574380 -> sub_57175A -> sub_570E5B`:
  *   u16 count
- *   For each listing:
- *     u32 listingId
- *     u32 stockId (`itemCode`)
- *     str sellerName
- *     u32 price
- *     u16 remainHours
+ *   count * [u32 field0, u32 field1, str field2, u32 field3, u16 field4]
+ *
+ * The widths/order are client-source-confirmed. Mapping the local demo listing fields
+ * onto these wire fields is reconstruction behavior, not official market data semantics.
  */
 export function buildMarketMySalesPacket275(
   state: WorldState,
@@ -576,13 +577,36 @@ export function handleShopPacket(
       break;
     }
 
-    case ClientOpcode.EnterShopFromLobby: {
+    case ClientOpcode.StageAction323: {
+      const fieldA = reader.readU8();
+      const fieldB = reader.readU8();
+      const trailingPayloadBytes = reader.remaining;
+      if (trailingPayloadBytes > 0) {
+        logger.warn("Shop", "C->S 323 has unexpected trailing bytes", {
+          sessionId: session.sessionId,
+          stageId: formatStageId(session.stageId),
+          fieldA,
+          fieldB,
+          trailingPayloadBytes,
+        });
+        reader.offset = reader.plain.length;
+      }
+
+      // Local reconstruction policy only; the Client writer does not establish this server response.
       session.stageId = StageId.Shop;
       session.sendPacket(buildShopInitPacket16(state, session));
 
       const w9 = new PacketWriter(ServerOpcode.StageTransition);
       w9.writeU32(StageId.Shop);
       session.sendPacket(w9);
+      logger.info("Shop", "Applied local C->S 323 stage-action policy", {
+        sessionId: session.sessionId,
+        stageId: formatStageId(session.stageId),
+        fieldA,
+        fieldB,
+        trailingPayloadBytes,
+        responsePolicy: "StageId.Shop + S->C 16/9 (local; official server behavior unverified)",
+      });
       break;
     }
 
@@ -1015,185 +1039,204 @@ export function handleShopPacket(
     }
 
     case ClientOpcode.RequestUserMarketConnection: {
-      // CShopConnectionMan::sub_529A69 -> S->C 262 (`sub_52A1D2`) + S->C 265 (`sub_4BB408`) -> StageId.UserMarket (20)
-      session.stageId = StageId.UserMarket;
+      // The client CShopConnectionMan::sub_52A129 consumes S->C 262 as a
+      // connection permission. The S->C 265 handler copies these fields into
+      // C->S 320. Neither packet alone proves the client entered Stage 20.
       const w262 = new PacketWriter(ServerOpcode.UserMarketPermission);
-      w262.writeU8(1); // 1 = allowed -> transitions to Stage 20
+      w262.writeU8(1); // local reconstruction grants the connection permission
       session.sendPacket(w262);
-
       session.sendPacket(buildUserMarketFeeInfoPacket265());
       break;
     }
 
-    case ClientOpcode.UserMarketSearch320: {
-      // C->S 320:
-      // - Empty (`CShopConnectionMan::sub_529A9A` / `CStage::sub_4BB408`): Enter UserMarket (`S->C 269 [u8(1)]`)
-      // - With search params: `S->C 270`
-      if (reader.remaining === 0) {
-        session.stageId = StageId.UserMarket;
-        const w269 = new PacketWriter(ServerOpcode.UserMarketEnterResult);
-        w269.writeU8(1); // 1 = enter UserMarket (`CStage::sub_4BC642`)
-        session.sendPacket(w269);
-        break;
+    case ClientOpcode.UserMarketFeeInfoReply320: {
+      // Binary-confirmed client payload: [u32 feeRate, str notice, u32 minPrice].
+      const feeRate = reader.readU32();
+      const noticeStart = reader.offset;
+      reader.readString();
+      const noticeWireBytes = reader.offset - noticeStart;
+      const minPrice = reader.readU32();
+      const trailingPayloadBytes = reader.remaining;
+      if (trailingPayloadBytes > 0) {
+        logger.warn("UserMarket", "C->S 320 has unexpected trailing bytes", {
+          sessionId: session.sessionId,
+          stageId: formatStageId(session.stageId),
+          trailingPayloadBytes,
+        });
+        reader.offset = reader.plain.length;
       }
 
-      const tab = reader.readU8();
-      const w270 = new PacketWriter(ServerOpcode.UserMarketListingPage);
-      w270.writeU8(tab);
-      w270.writeU8(1); // 1 = success (`sub_56AD64`)
-      w270.writeU16(1); // totalPages
-      w270.writeU16(0); // curPage
-      w270.writeU8(0); // count = 0
+      // This S->C 269 success is a reconstruction choice based on the client's
+      // confirmed CStage::sub_4BC642 transition parser, not a production-server trace.
+      session.stageId = StageId.UserMarket;
+      const w269 = new PacketWriter(ServerOpcode.UserMarketEnterResult);
+      w269.writeU8(1);
+      session.sendPacket(w269);
+      logger.info("UserMarket", "Decoded C->S 320 fee-info fields", {
+        sessionId: session.sessionId,
+        stageId: formatStageId(session.stageId),
+        feeRate,
+        noticeWireBytes,
+        minPrice,
+        trailingPayloadBytes,
+        enterResultWriteCall: true,
+        officialClientTransitionVerified: false,
+      });
+      break;
+    }
+
+    case ClientOpcode.UserMarketStageEntry321: {
+      // CUserMarketStage::sub_5723F6 writes two bytes and then separately emits C->S 98.
+      const fieldA = reader.readU8();
+      const localIdx = reader.readU8();
+      const trailingPayloadBytes = reader.remaining;
+      logger.info("UserMarket", "Decoded C->S 321 UserMarket stage-entry fields", {
+        sessionId: session.sessionId,
+        stageId: formatStageId(session.stageId),
+        fieldA,
+        localIdx,
+        trailingPayloadBytes,
+        responseSent: false,
+      });
+      if (trailingPayloadBytes > 0) reader.offset = reader.plain.length;
+      break;
+    }
+
+    case ClientOpcode.UserMarketStageSync324: {
+      // CUserMarketStage::sub_5722B3 writes [u8 localIdx] when its local sync flag is set.
+      const localIdx = reader.readU8();
+      if (reader.remaining > 0) {
+        logger.warn("UserMarket", "C->S 324 has unexpected trailing bytes", {
+          sessionId: session.sessionId,
+          stageId: formatStageId(session.stageId),
+          localIdx,
+          trailingPayloadBytes: reader.remaining,
+        });
+        reader.offset = reader.plain.length;
+      }
+
+      // Local server reconstruction of the market-stage snapshot. The Client reader widths
+      // are confirmed; server-side dataset/field semantics remain reconstruction choices.
+      const w270 = new PacketWriter(ServerOpcode.UserMarketMaxLucci);
+      w270.writeU32(2_000_000); // local fixture cap; not asserted as official production policy
       session.sendPacket(w270);
-      break;
-    }
 
-    case ClientOpcode.UserMarketDetail321: {
-      // C->S 321:
-      // - Empty (`CUserMarketStage::sub_573B0A`): Leave UserMarket -> `S->C 99 (StageId.Lobby)`
-      // - With `u32 listingId`: `S->C 271`
-      if (reader.remaining === 0) {
-        session.stageId = StageId.Lobby;
-        const w99 = new PacketWriter(ServerOpcode.ShopLeaveReturnStage);
-        w99.writeU16(StageId.Lobby);
-        session.sendPacket(w99);
-        break;
-      }
-
-      const listingId = reader.readU32();
-      const w271 = new PacketWriter(ServerOpcode.UserMarketListingDetail);
-      w271.writeU32(listingId);
-      w271.writeString(user?.username ?? "Seller");
-      w271.writeString("");
-      w271.writeU16(1);
-      w271.writeU32(0);
+      const w271 = new PacketWriter(ServerOpcode.UserMarketBalance);
+      w271.writeU32(user?.marketLucci ?? user?.lucci ?? 50_000);
       session.sendPacket(w271);
-      break;
-    }
 
-    case ClientOpcode.UserMarketBuy322: {
-      const _tab = reader.remaining >= 1 ? reader.readU8() : 0;
-      const listingId = reader.remaining >= 4 ? reader.readU32() : 0;
-      const w272 = new PacketWriter(ServerOpcode.UserMarketBuyResult);
-      w272.writeU8(1);
-      w272.writeU32(listingId);
-      session.sendPacket(w272);
-      break;
-    }
-
-    case ClientOpcode.UserMarketMyListings324: {
-      // C->S 324:
-      // - With `[u8 playerIdx]` (`CMarketSlotWnd::sub_5707D8`):
-      //   Sends `S->C 270` (`maxLucci`), `S->C 271` (`marketLucci`), `S->C 280` (`tradeableItems`), `S->C 272` (`listings`), `S->C 274`
-      if (reader.remaining >= 1) {
-        reader.readU8(); // playerIdx
-        const w270 = new PacketWriter(ServerOpcode.UserMarketMaxLucci);
-        w270.writeU32(2_000_000);
-        session.sendPacket(w270);
-
-        const w271 = new PacketWriter(ServerOpcode.UserMarketBalance);
-        w271.writeU32(user?.marketLucci ?? user?.lucci ?? 50_000);
-        session.sendPacket(w271);
-
-        const stock = user ? state.db.getUserStock(user.id) : [];
-        const w280 = new PacketWriter(ServerOpcode.UserMarketTradeableItems);
-        w280.writeI32(stock.length);
-        for (const s of stock) {
-          w280.writeU32(s.itemCode);
-        }
-        session.sendPacket(w280);
-
-        session.sendPacket(buildMarketListPacket272(state));
+      const stock = user ? state.db.getUserStock(user.id) : [];
+      const w280 = new PacketWriter(ServerOpcode.UserMarketTradeableItems);
+      w280.writeI32(stock.length);
+      for (const item of stock) {
+        w280.writeU32(item.itemCode);
       }
-
-      const w274 = new PacketWriter(ServerOpcode.UserMarketMyListings);
-      w274.writeU8(1);
-      w274.writeU8(0);
-      session.sendPacket(w274);
+      session.sendPacket(w280);
+      session.sendPacket(buildMarketListPacket272(state));
       break;
     }
 
-    case ClientOpcode.UserMarketCancel325: {
-      // C->S 325:
-      // - With `[u8 type, str query]` (`CMarketSlotWnd::sub_570BD3`): search market listings (`S->C 272`)
-      // - Also sends `S->C 275`
-      if (reader.remaining >= 3) {
-        const _searchType = reader.readU8();
-        const query = reader.readString();
-        session.sendPacket(buildMarketListPacket272(state, query));
+    case ClientOpcode.UserMarketFilterState325: {
+      // CMarketSlotWnd::sub_570B4D writes [u8, u8, u16, u8]. The field meanings
+      // are not resolved; this local reconstruction currently returns the list unfiltered.
+      if (reader.remaining !== 5) {
+        logger.warn("UserMarket", "Rejected malformed C->S 325 filter-state packet", {
+          sessionId: session.sessionId,
+          stageId: formatStageId(session.stageId),
+          receivedPayloadBytes: reader.remaining,
+        });
+        reader.offset = reader.plain.length;
         break;
       }
-
-      const w275 = new PacketWriter(ServerOpcode.UserMarketCancelResult);
-      w275.writeU8(1);
-      session.sendPacket(w275);
+      const field0 = reader.readU8();
+      const field1 = reader.readU8();
+      const field2 = reader.readU16();
+      const localIdx = reader.readU8();
+      logger.info("UserMarket", "Decoded C->S 325 market filter-state fields", {
+        sessionId: session.sessionId,
+        stageId: formatStageId(session.stageId),
+        field0,
+        field1,
+        field2,
+        localIdx,
+        responsePolicy: "local listing snapshot",
+        officialServerSemanticsVerified: false,
+      });
+      session.sendPacket(buildMarketListPacket272(state));
       break;
     }
 
-    case ClientOpcode.UserMarketLeave326: {
-      // C->S 326:
-      // - With `[u32 stockId, u32 price]` (`CRegisterItemDlg::sub_5767AD`): Register item on market -> `S->C 273` (`sub_56EE29`)
-      // - Empty: Leave UserMarket -> `S->C 99 (StageId.Lobby)`
-      if (reader.remaining >= 8) {
-        const stockId = reader.readU32();
-        const price = reader.readU32();
-        if (user) {
-          state.db.createMarketListing(user.id, user.username, stockId, price);
-        }
-        const w273 = new PacketWriter(ServerOpcode.UserMarketRegisterResult);
-        w273.writeU16(0); // 0 = registered (`sub_56EE29`)
-        w273.writeU32(stockId);
-        session.sendPacket(w273);
-
-        session.sendPacket(buildMarketListPacket272(state));
-        session.sendPacket(buildMarketMySalesPacket275(state, session));
+    case ClientOpcode.UserMarketRegisterListing326: {
+      // CRegisterItemDlg::sub_5753E3 writes two u32 values. Interpreting them as
+      // item-code/price is limited to this reconstruction's local demo-market adapter.
+      if (reader.remaining !== 8) {
+        logger.warn("UserMarket", "Rejected malformed C->S 326 registration packet", {
+          sessionId: session.sessionId,
+          stageId: formatStageId(session.stageId),
+          receivedPayloadBytes: reader.remaining,
+        });
+        reader.offset = reader.plain.length;
         break;
       }
-
-      session.stageId = StageId.Lobby;
-      const w99 = new PacketWriter(ServerOpcode.ShopLeaveReturnStage);
-      w99.writeU16(StageId.Lobby);
-      session.sendPacket(w99);
-      break;
-    }
-
-    case ClientOpcode.UserMarketCancelListing: {
-      // C->S 327 (`CMarketSlotWnd::sub_5716AB`: `[u32 listingId]`) -> S->C 274 (`sub_56F04F`)
-      const listingId = reader.remaining >= 4 ? reader.readU32() : 0;
-      const cancelled = state.db.cancelMarketListing(listingId, user?.id);
-      const w274 = new PacketWriter(ServerOpcode.UserMarketCancelResult274);
-      w274.writeU16(0); // 0 = cancelled (`sub_56F04F`)
-      w274.writeU32(cancelled?.itemCode ?? 1001);
-      session.sendPacket(w274);
-
+      const selectedItemField = reader.readU32();
+      const priceField = reader.readU32();
+      if (user) {
+        state.db.createMarketListing(user.id, user.username, selectedItemField, priceField);
+      }
+      const w273 = new PacketWriter(ServerOpcode.UserMarketRegisterResult);
+      w273.writeU16(0); // local fixture: result=0, followed by the selected item field
+      w273.writeU32(selectedItemField);
+      session.sendPacket(w273);
       session.sendPacket(buildMarketListPacket272(state));
       session.sendPacket(buildMarketMySalesPacket275(state, session));
       break;
     }
 
-    case ClientOpcode.ShopBalanceQuery328: {
-      // C->S 328:
-      // - In Stage 20 (`CMarketSlotWnd::sub_570D80`): sends `S->C 275` (`buildMarketMySalesPacket275`)
-      // - Also sends `S->C 278` + `S->C 279`
-      if (session.stageId === StageId.UserMarket) {
-        session.sendPacket(buildMarketMySalesPacket275(state, session));
-      }
-      const cash = user?.cash ?? 0;
-      const lucci = user?.lucci ?? 0;
-      const w278 = new PacketWriter(ServerOpcode.ShopCashBalance);
-      w278.writeU32(cash);
-      session.sendPacket(w278);
+    case ClientOpcode.UserMarketCancelListing: {
+      // C->S 327 writes a u32 listing key. The exact DB-key relationship is local adapter policy.
+      const listingId = reader.remaining >= 4 ? reader.readU32() : 0;
+      const cancelled = state.db.cancelMarketListing(listingId, user?.id);
+      const w274 = new PacketWriter(ServerOpcode.UserMarketCancelResult274);
+      w274.writeU16(0); // local fixture result; client parser expects u16 + u32
+      w274.writeU32(cancelled?.itemCode ?? 1001);
+      session.sendPacket(w274);
+      session.sendPacket(buildMarketListPacket272(state));
+      session.sendPacket(buildMarketMySalesPacket275(state, session));
+      break;
+    }
 
-      const w279 = new PacketWriter(ServerOpcode.ShopLucciBalance);
-      w279.writeU32(lucci);
-      session.sendPacket(w279);
+    case ClientOpcode.UserMarketSearchText328: {
+      // CMarketSlotWnd::sub_56EF5B writes [str, u16, u8]. Only the first field is
+      // used as a search hint by this local demo implementation; the other meanings
+      // and production server response remain unverified.
+      const queryStart = reader.offset;
+      const query = reader.readString();
+      const queryWireBytes = reader.offset - queryStart;
+      const fieldU16 = reader.readU16();
+      const localIdx = reader.readU8();
+      const trailingPayloadBytes = reader.remaining;
+      if (trailingPayloadBytes > 0) reader.offset = reader.plain.length;
+      logger.info("UserMarket", "Decoded C->S 328 market search-text fields", {
+        sessionId: session.sessionId,
+        stageId: formatStageId(session.stageId),
+        queryWireBytes,
+        fieldU16,
+        localIdx,
+        trailingPayloadBytes,
+        responsePolicy: "local listing snapshot filtered by text",
+        officialServerSemanticsVerified: false,
+      });
+      session.sendPacket(buildMarketListPacket272(state, query));
       break;
     }
 
     case ClientOpcode.UserMarketTransferLucci: {
-      // C->S 329 (`CChangeLucciDlg::sub_575DF9`: `[u8 direction, u32 amount]`) -> S->C 276 (`sub_56F8C4`)
-      const direction = reader.remaining >= 1 ? reader.readU8() : 1;
+      // C->S 329 (`sub_573F64`) writes `[u8 localIdx, u32 amount]`; the observed writer has no direction byte.
+      // This local demo models the dialog path as Market -> Game. That direction is reconstruction policy,
+      // not a field or bidirectional rule established by the Client packet schema.
+      const localIdx = reader.remaining >= 1 ? reader.readU8() : 0;
       const amount = reader.remaining >= 4 ? reader.readU32() : 0;
+      const direction = 0; // local DB adapter: Market Lucci -> Game Lucci
       let userLucci = user?.lucci ?? 0;
       let marketLucci = user?.marketLucci ?? userLucci;
 
@@ -1206,6 +1249,16 @@ export function handleShopPacket(
           marketLucci = updated.marketLucci ?? updated.lucci;
         }
       }
+
+      logger.info("UserMarket", "Handled C->S 329 transfer dialog with local reconstruction direction", {
+        sessionId: session.sessionId,
+        username: user?.username ?? null,
+        localIdx,
+        amount,
+        direction: "market-to-game (local policy; not encoded by C->S 329)",
+        userLucci,
+        marketLucci,
+      });
 
       const w276 = new PacketWriter(ServerOpcode.UserMarketTransferResult);
       w276.writeU16(0); // 0 = transfer success (`sub_56F8C4`)
@@ -1250,20 +1303,9 @@ export function handleShopPacket(
       break;
     }
 
-    case ClientOpcode.RequestStringTableOrBalance: {
-      // C->S 278: `sub_59449A` requests `stringtable.ini` (`S->C 200` `sub_4B95F7`),
-      // and balance queries expect `S->C 278` (cash) + `S->C 279` (lucci)
-      const cash = user?.cash ?? 0;
-      const lucci = user?.lucci ?? 0;
-
-      const w278 = new PacketWriter(ServerOpcode.ShopCashBalance);
-      w278.writeU32(cash);
-      session.sendPacket(w278);
-
-      const w279 = new PacketWriter(ServerOpcode.ShopLucciBalance);
-      w279.writeU32(lucci);
-      session.sendPacket(w279);
-
+    case ClientOpcode.RequestStringTableIni: {
+      // C->S 278 is emitted empty by sub_59449A on a stringtable checksum mismatch.
+      // The client parser is S->C 200; S->C 278/279 are separate UserMarket notifications.
       session.sendPacket(
         buildIniSmartStreamPacket(state, ServerOpcode.StringTableIniStream, "stringtable.ini")
       );

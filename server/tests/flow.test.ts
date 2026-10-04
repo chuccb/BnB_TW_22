@@ -10,6 +10,10 @@ import {
 } from "../src/protocol/framing.ts";
 import { ClientOpcode, ServerOpcode, StageId } from "../src/protocol/opcodes.ts";
 import { PacketReader, PacketWriter } from "../src/protocol/primitives.ts";
+import {
+  computeSmartStreamBodyChecksum,
+  SmartStreamReader,
+} from "../src/protocol/stream.ts";
 import { verifySmartStreamSchema } from "../src/resources/archive.ts";
 import { WorldState } from "../src/state/worldState.ts";
 import { clearRecentLogs, formatU8Hex, getRecentLogs } from "../src/utils/logger.ts";
@@ -209,6 +213,38 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
 
     expect(client.receivedPackets).toHaveLength(0);
     expect(session.stageId).toBe(StageId.Lobby);
+  });
+
+  test("C->S 322 is decoded as a NexonClub dialog submission, not a UserMarket purchase", () => {
+    clearRecentLogs();
+    const config = loadConfig({ dbPath: ":memory:" });
+    using state = new WorldState(config);
+    const client = new SimulatedClient();
+    const session = state.createSession(client.onWireBytes, "127.0.0.1", 51015, "0.0.0.0", 0, "game");
+    session.sendConnectHello(config);
+    session.stageId = StageId.Lobby;
+
+    client.sendToServer(
+      state,
+      session.sessionId,
+      new PacketWriter(ClientOpcode.NexonClubDialogSubmit322)
+        .writeString("opaque-first-field")
+        .writeString("opaque-dialog-field")
+    );
+
+    expect(session.stageId).toBe(StageId.Lobby);
+    expect(client.receivedPackets).toHaveLength(0);
+    const trace = session.getPacketTraceSummary();
+    expect(trace.clientToServerDecodedPackets).toBe(1);
+    expect(trace.packetFlow).toContain("C->S [decoded] 322 (NexonClubDialogSubmit322)");
+    expect(trace.packetFlow).not.toContain("S->C 322");
+    const dialogLog = getRecentLogs().find(
+      (entry) => entry.category === "NexonClub" && entry.message.includes("Decoded C->S 322")
+    );
+    expect(dialogLog?.data?.firstFieldWireBytes).toBeGreaterThan(0);
+    expect(dialogLog?.data?.secondFieldWireBytes).toBeGreaterThan(0);
+    expect(JSON.stringify(dialogLog?.data)).not.toContain("opaque-first-field");
+    expect(JSON.stringify(dialogLog?.data)).not.toContain("opaque-dialog-field");
   });
 
   test("C->S 13 returns a Lobby session to SelectServer without chat side effects", () => {
@@ -580,27 +616,34 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(session1.pendingStageId).toBeNull();
     expect(session1.lobbyEntryPacketSeen).toBe(true);
 
-    // 5b. Feature-32 C->S 338 is an empty packet (`sub_4B94A6` writes no fields).
-    // S->C 207 carries the map checksum; a mismatch can request C->S 282 -> S->C 205.
+    // This flow enables feature 32 above, so use the empty C->S 338 path to obtain S->C 207.
+    // The default Taiwan C->S 83 -> S->C 207 path is asserted in the separate handoff test below.
     client1.sendToServer(state, session1.sessionId, new PacketWriter(ClientOpcode.PostStageSync338));
     const p207 = client1.popByOpcode(ServerOpcode.DynamicMapAndStageConfig)!;
     expect(p207).toBeDefined();
     expect(p207.readU8()).toBe(0); // opaque stage/config field; local reconstruction default
-    expect(p207.readU32()).toBe(state.resources.ssdFiles.fxdynmapinfo.adler32Zero);
+    const declaredDynMapBodyChecksum = p207.readU32();
+    expect(declaredDynMapBodyChecksum).toBe(state.resources.ssdFiles.fxdynmapinfo.adler32Zero);
     expect(p207.readU8()).toBe(0); // macroDetectorFlag
     expect(p207.readU16()).toBe(0); // val9757A0 (semantics unresolved)
     expect(p207.readU32()).toBe(0); // val9757A4 (semantics unresolved)
     expect(p207.readU8()).toBe(0); // extraCount
     expect(p207.remaining).toBe(0);
 
+    // Manual packet injection exercises only the server's C->S 282 -> S->C 205 path;
+    // it does not run the official Client's checksum comparison after S->C 207.
     client1.sendToServer(state, session1.sessionId, new PacketWriter(ClientOpcode.RequestDynamicMapInfoSsd));
     const p205 = client1.popByOpcode(ServerOpcode.DynamicMapInfoSsdStream)!;
     expect(p205).toBeDefined();
-    const dynMapStream = p205.readSmartStream();
+    const dynMapContainer = p205.readSmartStreamBuffer();
+    // `sub_4DFE20` compares the received packed SmartStream body checksum with S->C 207's declaration.
+    expect(computeSmartStreamBodyChecksum(dynMapContainer)).toBe(declaredDynMapBodyChecksum);
+    const dynMapStream = SmartStreamReader.fromSmartStreamBuffer(dynMapContainer);
     expect(verifySmartStreamSchema("fxdynmapinfo.ssd", dynMapStream.bytes)).toEqual({
       entryCount: 871,
       remaining: 0,
     });
+    expect(p205.remaining).toBe(0);
 
     // 6. Consume the Lobby sync frames queued after the earlier C->S 83, then query User Info.
     expect(client1.popByOpcode(89)).toBeDefined();
@@ -1293,10 +1336,10 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     client1.sendToServer(
       state,
       session1.sessionId,
-      new PacketWriter(ClientOpcode.RequestStringTableOrBalance).writeU8(0)
+      new PacketWriter(ClientOpcode.RequestStringTableIni)
     );
-    expect(client1.popByOpcode(ServerOpcode.ShopCashBalance)).toBeDefined();
-    expect(client1.popByOpcode(ServerOpcode.ShopLucciBalance)).toBeDefined();
+    expect(client1.popByOpcode(ServerOpcode.MarketExpiredReturns)).toBeUndefined();
+    expect(client1.popByOpcode(ServerOpcode.MarketSoldNotifications)).toBeUndefined();
     const p200 = client1.popByOpcode(ServerOpcode.StringTableIniStream)!;
     expect(p200).toBeDefined();
     expect(verifySmartStreamSchema("stringtable.ini", p200.readSmartStream().bytes)).toEqual({
@@ -1353,46 +1396,78 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(p103.readU8()).toBe(1); // newChiefSlotIdx = 1 (`j[779]`)
     expect(p103.remaining).toBe(0);
 
-    // 17. UserMarket flow (`C->S 318 -> S->C 262`, `C->S 320 -> S->C 270`, `C->S 324 -> S->C 274`, `C->S 326 -> S->C 99`)
+    // 17. UserMarket packet sequence. The source confirms the client writers/readers;
+    // this local server's response sequence is tested separately from production behavior.
     client1.sendToServer(
       state,
       session1.sessionId,
-      new PacketWriter(ClientOpcode.RequestUserMarketConnection).writeU8(0)
+      new PacketWriter(ClientOpcode.RequestUserMarketConnection)
     );
-    expect(client1.popByOpcode(ServerOpcode.UserMarketPermission)?.readU8()).toBe(1);
+    const permission262 = client1.popByOpcode(ServerOpcode.UserMarketPermission)!;
+    expect(permission262.readU8()).toBe(1);
+    expect(permission262.remaining).toBe(0);
+    const feeInfo265 = client1.popByOpcode(ServerOpcode.UserMarketFeeInfo)!;
+    expect(feeInfo265.readU32()).toBe(5);
+    expect(feeInfo265.readString()).toBe("");
+    expect(feeInfo265.readU32()).toBe(100);
+    expect(feeInfo265.remaining).toBe(0);
+    expect(session1.stageId).toBe(StageId.Lobby); // S->C 262 is permission, not the stage transition.
+
+    // CStage::sub_4BB408 copies S->C 265 into a C->S 320 [u32, str, u32].
+    client1.sendToServer(
+      state,
+      session1.sessionId,
+      new PacketWriter(ClientOpcode.UserMarketFeeInfoReply320)
+        .writeU32(5)
+        .writeString("")
+        .writeU32(100)
+    );
+    const enterResult269 = client1.popByOpcode(ServerOpcode.UserMarketEnterResult)!;
+    expect(enterResult269.readU8()).toBe(1);
+    expect(enterResult269.remaining).toBe(0);
     expect(session1.stageId).toBe(StageId.UserMarket);
 
+    // CUserMarketStage::sub_5723F6 writes two u8 fields; an empty C->S 321 is not a leave.
+    const receivedPacketCountBefore321 = client1.receivedPackets.length;
     client1.sendToServer(
       state,
       session1.sessionId,
-      new PacketWriter(ClientOpcode.UserMarketSearch320)
-        .writeU8(0)
-        .writeU8(0)
-        .writeU16(0)
-        .writeString("")
+      new PacketWriter(ClientOpcode.UserMarketStageEntry321).writeU8(1).writeU8(0)
     );
-    const p270 = client1.popByOpcode(ServerOpcode.UserMarketListingPage)!;
-    expect(p270).toBeDefined();
-    expect(p270.readU8()).toBe(0); // tab
-    expect(p270.readU8()).toBe(1); // res = 1
+    expect(client1.receivedPackets).toHaveLength(receivedPacketCountBefore321);
+    expect(session1.stageId).toBe(StageId.UserMarket);
 
+    // The same Client function separately sends C->S 98 [u8(0)]. With no room,
+    // this reconstruction's room-only handler must not force a Prepare-stage response.
     client1.sendToServer(
       state,
       session1.sessionId,
-      new PacketWriter(ClientOpcode.UserMarketMyListings324)
+      new PacketWriter(ClientOpcode.RoomAux98).writeU8(0)
     );
-    const p274 = client1.popByOpcode(ServerOpcode.UserMarketMyListings)!;
-    expect(p274).toBeDefined();
-    expect(p274.readU8()).toBe(1); // res = 1
-    expect(p274.readU8()).toBe(0); // count = 0
+    expect(client1.receivedPackets).toHaveLength(receivedPacketCountBefore321);
+    expect(session1.stageId).toBe(StageId.UserMarket);
 
+    // CUserMarketStage::sub_5722B3 writes [u8 localIdx]; inspect the Client-compatible
+    // widths for the local reconstruction's initial snapshot, including S->C 272's count.
     client1.sendToServer(
       state,
       session1.sessionId,
-      new PacketWriter(ClientOpcode.UserMarketLeave326).writeU8(1)
+      new PacketWriter(ClientOpcode.UserMarketStageSync324).writeU8(0)
     );
-    expect(client1.popByOpcode(ServerOpcode.ShopLeaveReturnStage)?.readU16()).toBe(StageId.Lobby);
-    expect(session1.stageId).toBe(StageId.Lobby);
+    const p270 = client1.popByOpcode(ServerOpcode.UserMarketMaxLucci)!;
+    expect(p270.readU32()).toBe(2_000_000); // reconstruction fixture only
+    expect(p270.remaining).toBe(0);
+    const p271 = client1.popByOpcode(ServerOpcode.UserMarketBalance)!;
+    expect(p271.readU32()).toBeGreaterThanOrEqual(0);
+    expect(p271.remaining).toBe(0);
+    const p280 = client1.popByOpcode(ServerOpcode.UserMarketTradeableItems)!;
+    const tradeableCount = p280.readI32();
+    expect(tradeableCount).toBeGreaterThanOrEqual(0);
+    for (let i = 0; i < tradeableCount; i++) p280.readU32();
+    expect(p280.remaining).toBe(0);
+    const p272 = client1.popByOpcode(ServerOpcode.UserMarketList)!;
+    expect(p272.readU16()).toBe(0); // no local demo listings exist yet
+    expect(p272.remaining).toBe(0);
 
     // 18. Real CShopDlg (`269..285`), CGachaponDlg (`307`), CBasketDlg (`313..314`),
     //     CUserMarketStage (`324..330`), CSmsDlg (`297..300`), CCouple (`304..306`), and CExchangeStage (`100..101`)
@@ -1525,15 +1600,30 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     client1.sendToServer(
       state,
       session1.sessionId,
-      new PacketWriter(ClientOpcode.UserMarketLeave326).writeU32(2005).writeU32(1000)
+      new PacketWriter(ClientOpcode.UserMarketRegisterListing326).writeU32(2005).writeU32(1000)
     );
     const p273 = client1.popByOpcode(ServerOpcode.UserMarketRegisterResult)!;
     expect(p273).toBeDefined();
-    expect(p273.readU16()).toBe(0); // 0 = RegistrationComplete (`sub_50F8CA`)
+    expect(p273.readU16()).toBe(0); // local reconstruction result value
+    expect(p273.readU32()).toBe(2005); // selected item field echoed by the local fixture
+    expect(p273.remaining).toBe(0);
 
     const listings = state.db.getActiveMarketListings();
     expect(listings.length).toBeGreaterThanOrEqual(1);
     const listingId = listings[0]!.id;
+
+    // S->C 272 and S->C 275 both start with one u16 count, then client-decoded
+    // [u32, u32, str, u32, u16] rows. Field meanings are local fixture mappings.
+    for (const opcode of [ServerOpcode.UserMarketList, ServerOpcode.UserMarketMySalesList]) {
+      const marketRows = client1.popByOpcode(opcode)!;
+      expect(marketRows.readU16()).toBe(1);
+      expect(marketRows.readU32()).toBe(listingId);
+      expect(marketRows.readU32()).toBe(2005);
+      expect(marketRows.readString()).toBe("bazzi_tw");
+      expect(marketRows.readU32()).toBe(1000);
+      expect(marketRows.readU16()).toBe(24);
+      expect(marketRows.remaining).toBe(0);
+    }
 
     // Player 2 buys the listing (`C->S 330` -> `S->C 277`)
     client2.sendToServer(
@@ -1546,15 +1636,25 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(p277.readU16()).toBe(0); // 0 = PurchaseComplete (`sub_50FE88`)
     expect(p277.readU32()).toBe(2005); // stockId
 
-    // Player 1 transfers Market Lucci -> Game Lucci (`C->S 329` -> `S->C 276`)
+    // The observed C->S 329 writer sends [localIdx, amount], with no direction field.
+    // This local reconstruction models the dialog path as Market Lucci -> Game Lucci.
+    const beforeTransfer = state.db.getUserById(loggedInUser.id)!;
     client1.sendToServer(
       state,
       session1.sessionId,
-      new PacketWriter(ClientOpcode.UserMarketTransferLucci).writeU8(1).writeU32(500)
+      new PacketWriter(ClientOpcode.UserMarketTransferLucci).writeU8(0).writeU32(500)
     );
     const p276 = client1.popByOpcode(ServerOpcode.UserMarketTransferResult)!;
     expect(p276).toBeDefined();
-    expect(p276.readU16()).toBe(0); // 0 = MoveComplete (`sub_50FD30`)
+    expect(p276.readU16()).toBe(0); // local reconstruction success result
+    const afterTransfer = state.db.getUserById(loggedInUser.id)!;
+    expect(p276.readU32()).toBe(afterTransfer.lucci);
+    const afterMarketLucci = afterTransfer.marketLucci ?? afterTransfer.lucci;
+    const beforeMarketLucci = beforeTransfer.marketLucci ?? beforeTransfer.lucci;
+    expect(p276.readU32()).toBe(afterMarketLucci);
+    expect(p276.remaining).toBe(0);
+    expect(afterTransfer.lucci).toBe(beforeTransfer.lucci + 500);
+    expect(afterMarketLucci).toBe(beforeMarketLucci - 500);
 
     // 18c. SMS Mailbox (`CSmsDlg` `297..300` -> `S->C 242..246`)
     client1.sendToServer(

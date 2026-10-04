@@ -685,7 +685,8 @@ export function handlePrepareRoomPacket(
     }
 
     case ClientOpcode.RoomAux98: {
-      // `CShopConnectionMan::sub_52A04E` / `sub_52A129`: `[u8 inShopFlag]`
+      // Shared Client writer `sub_4B8E1D` sends one u8; the UserMarket `sub_5723F6` path also sends 0.
+      // This room handler applies it as inShopFlag only after the no-room guard above.
       const inShopFlag = reader.remaining >= 1 ? reader.readU8() : 0;
       const slotIdx = session.roomSlotIndices[0] ?? 0;
       const slot = room.slots[slotIdx];

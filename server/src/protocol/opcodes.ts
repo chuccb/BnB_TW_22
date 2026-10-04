@@ -19,11 +19,10 @@ export const StageId = {
   Prepare: 12, // CPrepareStage (0x004DCF07)
   Game: 13, // CGameStage (0x004F672F)
   Shop: 14, // CShopStageNew (0x0053C550)
-  Exit: 16, // CExitStage (0x004DFBF3)
   Chatting: 17, // CChattingStage (0x004B6418)
   Exchange: 18, // CExchangeStage (0x0055C714)
   Practice: 19, // CPrepareStagePractice (0x004D0793)
-  UserMarket: 20, // CUserMarketStage (0x00574380)
+  UserMarket: 20, // CMainWnd::sub_5AEF3F case 20, only when Taiwan feature 28 is enabled
 } as const satisfies Record<string, number>;
 
 export type StageIdValue = (typeof StageId)[keyof typeof StageId];
@@ -104,7 +103,7 @@ export const ClientOpcode = {
   EquipQuickSlotOrEmotion: 95, // sub_4D2716 (5B quick-slot) -> S->C 115 or emotion
   PracticeHandicap: 96, // sub_4D0627 -> S->C 108
   TeamChat: 97, // CChatStage::sub_4AD598 -> S->C 114
-  RoomAux98: 98, // CShopConnectionMan::sub_52A04E / sub_52A129: [u8 inShopFlag] -> S->C 104 + S->C 16 / S->C 99
+  RoomAux98: 98, // shared sub_4B8E1D writer: [u8 value], called from shop-connection and UserMarket sub_5723F6 paths
   RoomAvatarSync: 99, // sub_4B24F6: room avatar/accessory sync
   ExchangeAction: 100, // CExchangeStage::sub_558142: [u8 state, (if state==3: u32 lucci, u8 count, count*(u32 stockId, 16B SYSTEMTIME))]
   ExchangePassCheck: 101, // CExchangeStage::sub_55B5B0: [str pass] -> S->C 130 + S->C 126
@@ -176,7 +175,7 @@ export const ClientOpcode = {
   InventoryUpdateText: 275,
   RequestFxStockIni: 276, // sub_594353: request fxstock.ini SmartStream -> S->C 193 (sub_4B95B0)
   ShopBillingCheck: 277, // sub_589D78 -> S->C 201 (sub_58C8EA)
-  RequestStringTableOrBalance: 278, // sub_59449A: request stringtable.ini SmartStream -> S->C 200 (sub_4B95F7)
+  RequestStringTableIni: 278, // sub_59449A: request stringtable.ini SmartStream -> S->C 200 (sub_4B95F7); distinct from S->C UserMarket notifications 278/279
   ShopSendGift: 279, // sub_52C5A2: [u32 packageId, str receiver, str title, str msg, u8 flag] -> S->C 199 + S->C 203
   ShopBuy280: 280, // CShopCouponDlg::sub_492CD9 / sub_492E5C: [str couponCode, str targetUser] -> S->C 204
   ShopRedeemCoupon: 280,
@@ -217,24 +216,18 @@ export const ClientOpcode = {
   BasketThrowAway: 315, // sub_5BF4F8: [u32 id, u8 playerIdx]
   RequestShopConnectionAlt: 316, // CShopConnectionMan::sub_529AFB
   ShopActionNotify: 317, // sub_529A40: [u8 action]
-  RequestUserMarketConnection: 318, // CShopConnectionMan::sub_529A69 -> S->C 262
-  UserMarketSearch320: 320, // CShopConnectionMan::sub_529A9A -> S->C 269 + S->C 99 (20)
-  UserMarketEnter: 320,
-  UserMarketDetail321: 321, // CUserMarketStage::sub_573B0A -> S->C 99 (11)
-  UserMarketLeave: 321,
-  UserMarketBuy322: 322,
-  EnterShopFromLobby: 323, // sub_4BAC7B -> S->C 16 + S->C 9
-  UserMarketMyListings324: 324, // CMarketSlotWnd::sub_5707D8: [u8 playerIdx] -> S->C 270 + 271 + 280 + 272
-  UserMarketInit: 324,
-  UserMarketCancel325: 325, // CMarketSlotWnd::sub_570BD3: [u8 type, str query] -> S->C 272
-  UserMarketSearch: 325,
-  UserMarketLeave326: 326, // CRegisterItemDlg::sub_5767AD: [u32 stockId, u32 price] -> S->C 273
-  UserMarketRegister: 326,
-  UserMarketCancelListing: 327, // CMarketSlotWnd::sub_5716AB: [u32 listingId] -> S->C 274
-  ShopBalanceQuery328: 328, // CMarketSlotWnd::sub_570D80 -> S->C 275
-  UserMarketMySales: 328,
-  UserMarketTransferLucci: 329, // CChangeLucciDlg::sub_575DF9: [u8 dir, u32 amount] -> S->C 276
-  UserMarketBuyListing: 330, // CUserMarketBuyDlg::sub_577E71: [u32 listingId] -> S->C 277
+  RequestUserMarketConnection: 318, // CShopConnectionMan::sub_529D8E: empty after its connection/auth path
+  UserMarketFeeInfoReply320: 320, // CStage::sub_4BB408: [u32 feeRate, str notice, u32 minPrice]
+  UserMarketStageEntry321: 321, // sub_5723F6: [u8 fieldA, u8 localIdx]; CSendPacket vtable 0x007BF714 slot +0x40 -> sub_695FE0; then C->S 98
+  NexonClubDialogSubmit322: 322, // CChatStage::sub_4B0A63 after CNexonClubDlg result: [str fieldA, str dialogField]
+  StageAction323: 323, // sub_4BAC7B: two u8 fields after local user/allowed-stage gates; action meanings unresolved
+  UserMarketStageSync324: 324, // CUserMarketStage::sub_5722B3: [u8 localIdx], when this+1982 != 0; CSendPacket vtable 0x007BF714 slot +0x40 -> sub_695FE0 (1 byte)
+  UserMarketFilterState325: 325, // CMarketSlotWnd::sub_570B4D: [u8, u8, u16, u8]; field meanings are not fully resolved
+  UserMarketRegisterListing326: 326, // CRegisterItemDlg::sub_5753E3: [u32 selectedItemField, u32 priceField]
+  UserMarketCancelListing: 327, // sub_56EE29: [u32 selected market field] after stop-selling confirmation
+  UserMarketSearchText328: 328, // sub_56EF5B: [str, u16, u8 localIdx]
+  UserMarketTransferLucci: 329, // sub_573F64: [u8 localIdx, u32 amount]; no direction byte in this writer
+  UserMarketBuyListing: 330, // sub_577C7E: [u32 listingId] -> S->C 277
   SecurityHashReply1: 332, // sub_4B8F3F: [u32 hash] (reply to S->C 281)
   SecurityHashReply2: 333, // sub_4BAE58: [u32 hash] (reply to S->C 284)
   ClientAuditLog: 337, // sub_476AD6 / CChatStage::sub_4AEE8E / sub_53809C: [str tag, str detail]
@@ -400,28 +393,21 @@ export const ServerOpcode = {
   BasketInfo: 259, // CBasketDlg::sub_5C0289 / sub_5C261E
   BasketCouponCounts: 260, // CBasketDlg::sub_5C0289
   ShopConnectionPermission: 261, // CShopConnectionMan::sub_52A129 / CUserMarketStage::sub_57224C
-  UserMarketPermission: 262, // CShopConnectionMan::sub_52A1D2 -> StageId.UserMarket (20)
-  UserMarketFeeInfo: 265, // CStage::sub_4BB408: [u32 feeRate, str notice, u32 minPrice] -> triggers C->S 320
+  UserMarketPermission: 262, // CShopConnectionMan::sub_52A129 reads the one-byte connection permission
+  UserMarketFeeInfo: 265, // CStage::sub_4BB408: [u32 feeRate, str notice, u32 minPrice] -> C->S 320
   InventoryExpansionSlots: 268, // CStage::sub_4B9E20 -> sub_5832DB
-  UserMarketEnterResult: 269, // CStage::sub_4BC642: [u8 result=1] -> transitions to Stage 20
-  UserMarketListingPage: 270, // CUserMarketStage::sub_5725C0: [u32 maxLucci]
-  UserMarketMaxLucci: 270,
-  UserMarketListingDetail: 271, // CUserMarketStage::sub_5725A4: [u32 marketLucci]
-  UserMarketBalance: 271,
-  UserMarketBuyResult: 272, // CMarketSlotWnd::sub_57282A: [u16 total, u16 pageCount, listings...]
-  UserMarketList: 272,
-  UserMarketRegisterResult: 273, // CMarketSlotWnd::sub_56EE29: [u16 res, u32 stockId]
-  UserMarketMyListings: 274, // CMarketSlotWnd::sub_56F04F: [u16 res, u32 stockId] (CancelResult)
-  UserMarketCancelResult274: 274,
-  UserMarketCancelResult: 275, // CMarketSlotWnd::sub_572AC5: [u16 count, listings...] (MySalesList)
-  UserMarketMySalesList: 275,
-  UserMarketTransferResult: 276, // CMarketSlotWnd::sub_56F8C4: [u16 res, u32 userLucci, u32 marketLucci]
-  UserMarketPurchaseResult: 277, // CMarketSlotWnd::sub_56FB09: [u16 res, u32 stockId, u32 remainLucci, 8B f64 LE vtime]
-  ShopCashBalance: 278, // CShopStageNew::sub_539A17: expired market returns
-  MarketExpiredReturns: 278,
-  ShopLucciBalance: 279, // CShopStageNew::sub_539C8B: sold market notifications
-  MarketSoldNotifications: 279,
-  UserMarketTradeableItems: 280, // CMarketSlotWnd::sub_571A0A: [i32 count, count * u32 stockId]
+  UserMarketEnterResult: 269, // CStage::sub_4BC642: [u8 result] -> transitions to Stage 20 on success
+  UserMarketMaxLucci: 270, // CUserMarketStage::sub_574380 -> sub_5725C0: [u32]
+  UserMarketBalance: 271, // CUserMarketStage::sub_574380 -> sub_5725A4: [u32]
+  UserMarketList: 272, // CUserMarketStage::sub_574380 -> sub_57226C -> sub_570D2A: [u16 count, count * entry]
+  UserMarketRegisterResult: 273, // CUserMarketStage::sub_574380 -> sub_5734F0: [u16 result, u32 item field]
+  UserMarketCancelResult274: 274, // CUserMarketStage::sub_574380 -> sub_5736F5: [u16 result, u32 item field]
+  UserMarketMySalesList: 275, // CUserMarketStage::sub_574380 -> sub_57175A -> sub_570E5B: [u16 count, count * entry]
+  UserMarketTransferResult: 276, // CUserMarketStage::sub_574380 -> sub_57388F: [u16 result, u32, u32]
+  UserMarketPurchaseResult: 277, // CUserMarketStage::sub_574380 -> sub_573991: [u16 result, u32, u32, 8B f64 LE]
+  MarketExpiredReturns: 278, // CUserMarketStage::sub_574380 -> CShopStageNew::sub_539A17
+  MarketSoldNotifications: 279, // CUserMarketStage::sub_574380 -> CShopStageNew::sub_539C8B
+  UserMarketTradeableItems: 280, // CUserMarketStage::sub_574380 -> sub_572277: [i32 count, count * u32]
   SecurityChallenge1: 281, // CStage::sub_4BDBF5 -> sub_4B8F3F (sends C->S 332)
   SecurityChallenge2: 282, // CStage::sub_4BDBF5 -> sub_4BAD83
   SecurityChallenge3: 283, // CStage::sub_4BDBF5 -> sub_4BDA18

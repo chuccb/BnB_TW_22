@@ -474,6 +474,41 @@ export function handleCommonPacket(
       break;
     }
 
+    case ClientOpcode.NexonClubDialogSubmit322: {
+      // C->S 322 is emitted by CChatStage::sub_4B0A63 from the CNexonClubDlg
+      // result branch. The client serializes two strings; their meanings are not
+      // fully resolved, so consume them without persisting or logging their values.
+      const firstFieldStart = reader.offset;
+      reader.readString();
+      const firstFieldWireBytes = reader.offset - firstFieldStart;
+      const secondFieldStart = reader.offset;
+      reader.readString();
+      const secondFieldWireBytes = reader.offset - secondFieldStart;
+      const trailingPayloadBytes = reader.remaining;
+      if (trailingPayloadBytes > 0) {
+        logger.warn("NexonClub", "Decoded C->S 322 with unexpected trailing bytes", {
+          sessionId: session.sessionId,
+          connectionKind: session.connectionKind,
+          stageId: formatStageId(session.stageId),
+          firstFieldWireBytes,
+          secondFieldWireBytes,
+          trailingPayloadBytes,
+        });
+        reader.offset = reader.plain.length;
+      } else {
+        logger.info("NexonClub", "Decoded C->S 322 NexonClub dialog fields", {
+          sessionId: session.sessionId,
+          connectionKind: session.connectionKind,
+          stageId: formatStageId(session.stageId),
+          firstFieldWireBytes,
+          secondFieldWireBytes,
+          trailingPayloadBytes,
+          responseSent: false,
+        });
+      }
+      break;
+    }
+
     case ClientOpcode.UploadCrashReport:
     case ClientOpcode.ClientReportOrLobbyEnter:
     case ClientOpcode.UpdateUserOptions:
