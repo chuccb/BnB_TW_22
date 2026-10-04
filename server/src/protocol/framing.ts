@@ -120,7 +120,10 @@ export interface PacketLogContext {
   sessionId?: number;
   connectionKind?: string;
   stageId?: number;
-  /** Expected client-resource hashes used only to emit boolean pre-login diagnostics. */
+  /**
+   * Server-known checksum candidates used only for boolean diagnostics.
+   * Synthesized entries do not prove the client's local files; zero is a valid sentinel.
+   */
   preLoginSsdChecksumExpectations?: PreLoginSsdChecksumExpectations;
 }
 
@@ -130,11 +133,13 @@ function diagnosePreLoginSsdChecksumFields(
 ):
   | {
       comparedFieldCount: number;
+      zeroSentinelCount: number;
       trailingBytes: number;
       fields: Array<{
         name: PreLoginSsdChecksumFieldName;
         present: boolean;
         fieldResourceAvailable: boolean;
+        zeroSentinel: boolean | null;
         matchesFieldResource: boolean | null;
         matchesAnyKnownResource: boolean | null;
       }>;
@@ -160,6 +165,7 @@ function diagnosePreLoginSsdChecksumFields(
     name: PreLoginSsdChecksumFieldName;
     present: boolean;
     fieldResourceAvailable: boolean;
+    zeroSentinel: boolean | null;
     matchesFieldResource: boolean | null;
     matchesAnyKnownResource: boolean | null;
   }> = [];
@@ -173,29 +179,34 @@ function diagnosePreLoginSsdChecksumFields(
         name,
         present: false,
         fieldResourceAvailable,
+        zeroSentinel: null,
         matchesFieldResource: null,
         matchesAnyKnownResource: null,
       });
       continue;
     }
 
-    const clientChecksum = reader.readU32();
+    const clientValue = reader.readU32();
+    const zeroSentinel = clientValue === 0;
     fieldResults.push({
       name,
       present: true,
       fieldResourceAvailable,
-      matchesFieldResource: fieldResourceAvailable
-        ? clientChecksum === 0 || expectedVariants!.includes(clientChecksum)
-        : null,
-      matchesAnyKnownResource:
-        clientChecksum === 0 || expectations.knownResourceVariants.includes(clientChecksum),
+      zeroSentinel,
+      // Zero is an accepted sentinel, not evidence that a client-side file hash matched.
+      matchesFieldResource:
+        fieldResourceAvailable && !zeroSentinel ? expectedVariants!.includes(clientValue) : null,
+      matchesAnyKnownResource: zeroSentinel
+        ? null
+        : expectations.knownResourceVariants.includes(clientValue),
     });
   }
 
   return {
     comparedFieldCount: fieldResults.filter(
-      (field) => field.present && field.fieldResourceAvailable
+      (field) => field.present && !field.zeroSentinel && field.fieldResourceAvailable
     ).length,
+    zeroSentinelCount: fieldResults.filter((field) => field.zeroSentinel).length,
     trailingBytes: reader.remaining,
     fields: fieldResults,
   };

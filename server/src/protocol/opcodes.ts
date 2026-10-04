@@ -30,7 +30,7 @@ export type StageIdValue = (typeof StageId)[keyof typeof StageId];
 
 export const ClientOpcode = {
   // Pre-Login & Authentication (CFxApp / CLoginStage / COnePageIDStage / CNCPasswordDlg / CEKeyDlg)
-  PreLoginSsdCheck: 0, // sub_5A1E40: [u32 fxdynimginfo, u32 csysstr, u32 multisvr, u32 filterstr, (opt u32 multisvrn)]
+  PreLoginSsdCheck: 0, // sub_5A1E40: [u32 dynamic-img context, u32 csysstr, u32 multisvr, u32 filterstr, (opt u32 multisvrn)]
   LoginCredentials: 2, // sub_5D8BD8: 1P/2P keyed username (0x11223344) + password (0x44332211)
   SelectChannelLegacy: 3, // Legacy channel select alias
   CreateOrUpdateAccount: 4, // sub_496D15 / sub_4985CD: account creation / update form

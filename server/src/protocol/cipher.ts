@@ -11,6 +11,9 @@ import { fileURLToPath } from "url";
 
 const BYTE_924D10_OFFSET = 0x00524d10;
 const BYTE_924D10_SIZE = 16 * 256;
+// CA.exe's sub ecx immediate at 0x00695B46 and 0x00695BE7 (sub_695B00/sub_695BA0).
+// The decompilation spells this as decimal 1674226915; the PE machine code confirms 0x63CAACE3.
+const CIPHER_WORD_STEP = 0x63caace3;
 const SERVER_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const DEFAULT_CLIENT_RESOURCE_ROOT = existsSync(resolve(SERVER_ROOT, "CA.exe"))
   ? SERVER_ROOT
@@ -104,7 +107,7 @@ export function encryptPayload(counter: number, plain: Uint8Array): Uint8Array {
     let prevSrc = src0;
 
     for (let i = 1; i < wordCount; i++) {
-      k = (k - 0x63ca6283) >>> 0;
+      k = (k - CIPHER_WORD_STEP) >>> 0;
       const curSrc = plainView.getUint32(i * 4, true);
       const encWord = (k ^ curSrc ^ prevSrc) >>> 0;
       cipherView.setUint32(i * 4, encWord, true);
@@ -145,7 +148,7 @@ export function decryptPayload(counter: number, cipher: Uint8Array): Uint8Array 
     plainView.setUint32(0, prevPlain, true);
 
     for (let i = 1; i < wordCount; i++) {
-      k = (k - 0x63ca6283) >>> 0;
+      k = (k - CIPHER_WORD_STEP) >>> 0;
       const encWord = cipherView.getUint32(i * 4, true);
       const curPlain = (k ^ encWord ^ prevPlain) >>> 0;
       plainView.setUint32(i * 4, curPlain, true);

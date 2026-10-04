@@ -197,13 +197,15 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(client1.helloReceived).toBe(true);
     expect(client1.socketState.degree).toBe(3);
 
-    // 1. Pre-login SSD Check (`C->S 0` `sub_5A1E40`: `[fxdynimginfo, csysstr, multisvr, filterstr, multisvrn]`)
-    //    First test when checksums match disk files -> `hasStream = 0`
+    // 1. Pre-login SSD Check (`C->S 0`, `sub_5A1E40`). The first field is the
+    //    dynamic-image cache context (zero after this flow's `extraFlag=0` ConnectHello),
+    //    followed by simulated matching values for csysstr, multisvr, filterstr and multisvrn.
+    //    Matching values -> `hasStream = 0`.
     client1.sendToServer(
       state,
       session1.sessionId,
       new PacketWriter(ClientOpcode.PreLoginSsdCheck)
-        .writeU32(0x084341a5) // fxdynimginfo.ssd
+        .writeU32(0) // dword_92AAF8[2], fresh dynamic-image context sentinel
         .writeU32(0xe734d04f) // csysstr.ssd
         .writeU32(state.resources.ssdFiles.multisvr.adler32Zero) // multisvr.ssd
         .writeU32(0x000e496d) // filterstr.ssd

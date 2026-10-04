@@ -73,6 +73,56 @@ describe("Protocol Layer — CRC, Cipher, Primitives, SmartStream & Framing", ()
     }
   });
 
+  test("CPacketCipher reproduces the 09:50 C->S PreLoginSsdCheck vector from CA.exe", () => {
+    // CA.exe decompiles the word-step subtraction as 1674226915; machine code at
+    // 0x695B46/0x695BE7 confirms 0x63CAACE3. The 09:50 trace shows the first 16
+    // ciphertext bytes and CRC trailer; the two-byte tail below is predicted by CA's code.
+    const serverSock = new PacketSocketState("server");
+    const clientSock = new PacketSocketState("client");
+    const hello = serverSock.encodeConnectHello({
+      flag: 0,
+      minVersion: 22,
+      currentVersion: 22,
+      sessionKey: 0x12340001,
+      noticeUrl: "http://tw.beanfun.com/bnb/",
+      extraFlag: 0,
+    });
+    clientSock.decodeConnectHello(hello);
+
+    // Field 0 is the dynamic-image context's zero sentinel. Field 2 is also zero
+    // in this capture; CMultiServer initializes +108 to zero unless a local
+    // multisvr.ssd checksum is loaded. The other two values match checked-in .ssd files.
+    const writer = new PacketWriter(ClientOpcode.PreLoginSsdCheck, 2)
+      .writeU32(0)
+      .writeU32(0xe734d04f)
+      .writeU32(0)
+      .writeU32(0x000e496d);
+    expect(Array.from(writer.toPayload())).toEqual([
+      0xa5, 0x69, 0x96, 0xca, 0x53, 0x95, 0x71, 0xfe, 0x83,
+      0xda, 0x96, 0xca, 0x53, 0x95, 0x96, 0xc4, 0x1a, 0xf8,
+    ]);
+
+    const frame = clientSock.encodePacket(writer, 0xe2);
+    expect(Array.from(frame)).toEqual([
+      0x00, 0xe2, 0xa5, 0x7b,
+      0x11, 0x74, 0xa3, 0x99, 0x27, 0x8c, 0x8d, 0xdb,
+      0x3e, 0x8c, 0x78, 0xbf, 0xdb, 0x58, 0xd5, 0x29,
+      0x49, 0x6d, 0xc0,
+    ]);
+    expect(Array.from(frame.subarray(4, 20))).toEqual([
+      0x11, 0x74, 0xa3, 0x99, 0x27, 0x8c, 0x8d, 0xdb,
+      0x3e, 0x8c, 0x78, 0xbf, 0xdb, 0x58, 0xd5, 0x29,
+    ]);
+
+    const [received] = serverSock.feed(frame);
+    expect(received?.opcode).toBe(ClientOpcode.PreLoginSsdCheck);
+    expect(received?.readU32()).toBe(0);
+    expect(received?.readU32()).toBe(0xe734d04f);
+    expect(received?.readU32()).toBe(0);
+    expect(received?.readU32()).toBe(0x000e496d);
+    expect(received?.remaining).toBe(0);
+  });
+
   test("Connect Hello substitution table (byte_924D10) from CA.exe round-trips first byte", () => {
     const table = getConnectHelloTable();
     expect(table.length).toBe(16 * 256);
@@ -366,7 +416,7 @@ describe("Protocol Layer — CRC, Cipher, Primitives, SmartStream & Framing", ()
     }
   });
 
-  test("CRC-failed pre-login packets compare resource hashes without logging their values", () => {
+  test("CRC-failed pre-login packets compare cache values without logging their values", () => {
     const previousLevel = getLogLevel();
     setLogLevel("silent");
     clearRecentLogs();
@@ -384,17 +434,19 @@ describe("Protocol Layer — CRC, Cipher, Primitives, SmartStream & Framing", ()
       client.decodeConnectHello(hello);
 
       const checksums = {
-        fxdynimginfo: 0x084341a5,
+        // Fresh ConnectHello uses extraFlag=0; the client's dynamic-image context field is 0,
+        // not the checked-in file's Adler-32 checksum.
+        fxdynimginfo: 0,
         csysstr: 0xe734d04f,
-        multisvr: 0x11111111,
+        multisvr: 0,
         filterstr: 0x000e496d,
       };
       const frame = client.encodePacket(
         new PacketWriter(ClientOpcode.PreLoginSsdCheck, 2)
           .writeU32(checksums.fxdynimginfo)
           .writeU32(checksums.csysstr)
+          .writeU32(checksums.multisvr)
           .writeU32(0x22222222)
-          .writeU32(checksums.filterstr)
       );
       frame[frame.length - 1] ^= 0x01;
 
@@ -415,36 +467,120 @@ describe("Protocol Layer — CRC, Cipher, Primitives, SmartStream & Framing", ()
       const analysis = mismatch?.data?.preLoginSsdChecksumFields as
         | {
             comparedFieldCount: number;
+            zeroSentinelCount: number;
             trailingBytes: number;
             fields: Array<{
               name: string;
               present: boolean;
+              zeroSentinel: boolean | null;
               matchesFieldResource: boolean | null;
               matchesAnyKnownResource: boolean | null;
             }>;
           }
         | undefined;
-      expect(analysis?.comparedFieldCount).toBe(4);
+      expect(analysis?.comparedFieldCount).toBe(2);
+      expect(analysis?.zeroSentinelCount).toBe(2);
       expect(analysis?.trailingBytes).toBe(0);
       expect(
-        analysis?.fields.map(({ name, present, matchesFieldResource, matchesAnyKnownResource }) => [
+        analysis?.fields.map(({
           name,
           present,
+          zeroSentinel,
           matchesFieldResource,
           matchesAnyKnownResource,
-        ])
+        }) => [name, present, zeroSentinel, matchesFieldResource, matchesAnyKnownResource])
       ).toEqual([
-        ["fxdynimginfo", true, true, true],
-        ["csysstr", true, true, true],
-        ["multisvr", true, false, false],
-        ["filterstr", true, true, true],
-        ["multisvrn", false, null, null],
+        ["fxdynimginfo", true, true, null, null],
+        ["csysstr", true, false, true, true],
+        ["multisvr", true, true, null, null],
+        ["filterstr", true, false, false, false],
+        ["multisvrn", false, null, null, null],
       ]);
       const serializedLog = JSON.stringify(mismatch);
       expect(serializedLog).not.toContain("084341A5");
       expect(serializedLog).not.toContain("E734D04F");
       expect(serializedLog).not.toContain("22222222");
       expect(serializedLog).not.toContain("000E496D");
+    } finally {
+      setLogLevel(previousLevel);
+    }
+  });
+
+  test("CRC-failed trace vector diagnostics distinguish zero sentinels from local cache hashes", () => {
+    const previousLevel = getLogLevel();
+    setLogLevel("silent");
+    clearRecentLogs();
+    try {
+      const server = new PacketSocketState("server");
+      const client = new PacketSocketState("client");
+      const hello = server.encodeConnectHello({
+        flag: 0,
+        minVersion: 22,
+        currentVersion: 22,
+        sessionKey: 0x12340001,
+        noticeUrl: "http://tw.beanfun.com/bnb/",
+        extraFlag: 0,
+      });
+      client.decodeConnectHello(hello);
+
+      const frame = client.encodePacket(
+        new PacketWriter(ClientOpcode.PreLoginSsdCheck, 2)
+          .writeU32(0)
+          .writeU32(0xe734d04f)
+          .writeU32(0)
+          .writeU32(0x000e496d),
+        0xe2
+      );
+      frame[frame.length - 1] ^= 0x01;
+
+      expect(() => server.feed(frame, {
+        preLoginSsdChecksumExpectations: {
+          fieldVariants: {
+            fxdynimginfo: [0x084341a5],
+            csysstr: [0xe734d04f],
+            multisvr: [0xfc711697],
+            filterstr: [0x000e496d],
+          },
+          knownResourceVariants: [0, 0x084341a5, 0xe734d04f, 0xfc711697, 0x000e496d],
+        },
+      })).toThrow("C->S CRC8 mismatch");
+
+      const mismatch = getRecentLogs().find((entry) =>
+        entry.message.includes("C->S CRC8 mismatch")
+      );
+      const analysis = mismatch?.data?.preLoginSsdChecksumFields as
+        | {
+            comparedFieldCount: number;
+            zeroSentinelCount: number;
+            fields: Array<{
+              name: string;
+              zeroSentinel: boolean | null;
+              matchesFieldResource: boolean | null;
+              matchesAnyKnownResource: boolean | null;
+            }>;
+          }
+        | undefined;
+      expect(analysis?.comparedFieldCount).toBe(2);
+      expect(analysis?.zeroSentinelCount).toBe(2);
+      expect(
+        analysis?.fields.map(({
+          name,
+          zeroSentinel,
+          matchesFieldResource,
+          matchesAnyKnownResource,
+        }) => [name, zeroSentinel, matchesFieldResource, matchesAnyKnownResource])
+      ).toEqual([
+        ["fxdynimginfo", true, null, null],
+        ["csysstr", false, true, true],
+        ["multisvr", true, null, null],
+        ["filterstr", false, true, true],
+        ["multisvrn", null, null, null],
+      ]);
+
+      const serializedLog = JSON.stringify(mismatch);
+      for (const rawValue of ["084341A5", "E734D04F", "FC711697", "000E496D"]) {
+        expect(serializedLog).not.toContain(rawValue);
+      }
     } finally {
       setLogLevel(previousLevel);
     }

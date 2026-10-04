@@ -13,7 +13,7 @@ The Taiwan login path uses a bootstrap connection, a LoginServer connection, and
      ├── S->C Connect Hello (deg 0, N+3 bytes)
      │   CPacketSocket::sub_699D60 increments S->C counter once: 40 -> 43
      │   CClientSocket::sub_5D86DD installs sessionKey, S->C deg=3 / C->S deg=2
-     ├── C->S 0: fxdynimginfo, csysstr, multisvr, filterstr, optional multisvrn checksums
+     ├── C->S 0: dynamic-image cache context, csysstr/multisvr/filterstr cache values, optional multisvrn cache value
      ├── S->C 189, 2, 1, 53: ordered cache sync; client closes the bootstrap socket
      ▼
 [LoginServer TCP 3838, new CPacketSocket]

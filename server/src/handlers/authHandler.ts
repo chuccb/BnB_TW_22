@@ -10,29 +10,29 @@ import {
 import type { ClientSession, WorldState } from "../state/worldState.ts";
 import { sendChannelListAndLoads } from "./channelHandler.ts";
 
-function isKnownValidSsdChecksum(
+function isKnownSsdCacheValue(
   state: WorldState,
   ssd: SsdCacheEntry | undefined,
-  clientCrc: number
+  clientValue: number
 ): boolean {
-  if (clientCrc === 0 || !ssd) {
+  if (clientValue === 0 || !ssd) {
     return true;
   }
   if (
-    clientCrc === ssd.adler32Zero ||
-    clientCrc === ssd.diskAdler32Zero ||
-    clientCrc === ssd.crc32 ||
-    clientCrc === ssd.rawCrc32 ||
-    clientCrc === ssd.uncompressedCrc32
+    clientValue === ssd.adler32Zero ||
+    clientValue === ssd.diskAdler32Zero ||
+    clientValue === ssd.crc32 ||
+    clientValue === ssd.rawCrc32 ||
+    clientValue === ssd.uncompressedCrc32
   ) {
     return true;
   }
   // Also accept any valid disk .ssd checksum when legacy callers pass 5-tuple in alternate order
   for (const entry of state.resources.ssdFiles.values()) {
     if (
-      clientCrc === entry.adler32Zero ||
-      clientCrc === entry.diskAdler32Zero ||
-      clientCrc === entry.crc32
+      clientValue === entry.adler32Zero ||
+      clientValue === entry.diskAdler32Zero ||
+      clientValue === entry.crc32
     ) {
       return true;
     }
@@ -72,13 +72,16 @@ export function buildMultiServerSsdPacket(
 }
 
 /**
- * Handles Pre-login SSD Hash Verification (`C->S 0`, `CFxApp::sub_5A1E40` at `0x005A1E40`):
- * Client sends:
- *   1. `u32 crcFxdynimginfo` (`dword_92AAF8[2]` = `0x084341A5` on disk)
- *   2. `u32 crcCsysstr`      (`*(_DWORD *)(dword_929D68 + 88)` = `0xE734D04F` on disk)
- *   3. `u32 crcMultisvr`     (`*(_DWORD *)(dword_92D9EC + 108)`)
- *   4. `u32 crcFilterstr`    (`sub_5C8224(dword_974D94)` = `0x000E496D` on disk)
- *   5. (if `sub_5CDBF2(4) != 0`) `u32 crcMultisvrn` (`*(_DWORD *)(dword_92D9EC + 112)`)
+ * Handles pre-login cache verification (`C->S 0`, `CFxApp::sub_5A1E40` at `0x005A1E40`):
+ * Client sends the fields written at sub_5A1E40 (in this order):
+ *   1. `u32` dynamic-image cache context (`dword_92AAF8[2]`); CDynamicImgContext's
+ *      constructor initializes it to 0. The server's default ConnectHello has
+ *      `extraFlag=0`, so this flow sends the zero sentinel, not the disk Adler-32.
+ *   2. `u32` system-string cache value (`*(_DWORD *)(dword_929D68 + 88)`)
+ *   3. `u32` multisvr cache value (`*(_DWORD *)(dword_92D9EC + 108)`; zero unless
+ *      a local `multisvr.ssd` is loaded, otherwise its Adler-32)
+ *   4. `u32` filter-string cache value (`sub_5C8224(dword_974D94)`)
+ *   5. (if `sub_5CDBF2(4) != 0`) `u32` multisvrn cache Adler-32 (`*(_DWORD *)(dword_92D9EC + 112)`)
  *
  * Server replies (`CLoginStage::sub_567400` at `0x00567400`):
  *   - `S->C 189` (`sub_49E093` at `0x0049E093`): `u8 hasStream` + `[CISmartStream fxdynimginfo.ssd]` (`sub_49DF97`)
@@ -92,7 +95,7 @@ export function handlePreLoginSsdCheck(
   session: ClientSession,
   reader: PacketReader
 ): void {
-  const crcFxdynimginfo = reader.remaining >= 4 ? reader.readU32() : 0;
+  const dynamicImgContextValue = reader.remaining >= 4 ? reader.readU32() : 0;
   const crcCsysstr = reader.remaining >= 4 ? reader.readU32() : 0;
   const crcMultisvr = reader.remaining >= 4 ? reader.readU32() : 0;
   const crcFilterstr = reader.remaining >= 4 ? reader.readU32() : 0;
@@ -102,8 +105,8 @@ export function handlePreLoginSsdCheck(
     sessionId: session.sessionId,
     remoteAddress: session.remoteAddress,
     remotePort: session.remotePort,
-    checksums: {
-      fxdynimginfo: formatU32Hex(crcFxdynimginfo),
+    cacheFields: {
+      dynamicImageContext: formatU32Hex(dynamicImgContextValue),
       csysstr: formatU32Hex(crcCsysstr),
       multisvr: formatU32Hex(crcMultisvr),
       filterstr: formatU32Hex(crcFilterstr),
@@ -112,10 +115,10 @@ export function handlePreLoginSsdCheck(
     unreadBytes: reader.remaining,
   });
 
-  const sendSsdReply = (opcode: number, filename: string, clientCrc: number): void => {
+  const sendSsdReply = (opcode: number, filename: string, clientCacheValue: number): void => {
     const ssd = state.resources.ssdFiles.get(filename);
-    const hasMatchingChecksum = isKnownValidSsdChecksum(state, ssd, clientCrc);
-    const hasStream = ssd !== undefined && !hasMatchingChecksum;
+    const cacheValueIsKnown = isKnownSsdCacheValue(state, ssd, clientCacheValue);
+    const hasStream = ssd !== undefined && !cacheValueIsKnown;
     const writer = new PacketWriter(opcode);
     writer.writeU8(hasStream ? 1 : 0);
     if (hasStream && ssd) {
@@ -125,7 +128,7 @@ export function handlePreLoginSsdCheck(
     }
     logger.info("AuthSync", `${formatServerOpcode(opcode)} ${filename} sync decision`, {
       sessionId: session.sessionId,
-      clientChecksum: formatU32Hex(clientCrc),
+      clientCacheValue: formatU32Hex(clientCacheValue),
       serverChecksum: ssd ? formatU32Hex(ssd.adler32Zero) : "missing",
       hasStream,
       uncompressedBytes: hasStream ? ssd?.decompressed.length : 0,
@@ -134,7 +137,7 @@ export function handlePreLoginSsdCheck(
   };
 
   // 1. S->C 189: fxdynimginfo.ssd (`sub_49E093`)
-  sendSsdReply(ServerOpcode.DynamicImgInfoSsd, "fxdynimginfo.ssd", crcFxdynimginfo);
+  sendSsdReply(ServerOpcode.DynamicImgInfoSsd, "fxdynimginfo.ssd", dynamicImgContextValue);
 
   // 2. S->C 2: csysstr.ssd (`sub_5D00B9`)
   sendSsdReply(ServerOpcode.SystemStringSsd, "csysstr.ssd", crcCsysstr);
@@ -142,18 +145,18 @@ export function handlePreLoginSsdCheck(
   // 3. S->C 1: multisvr.ssd / multisvrn.ssd (`sub_5D7E8E`)
   const multisvrEntry = state.resources.ssdFiles.get("multisvr.ssd");
   const multisvrnEntry = state.resources.ssdFiles.get("multisvrn.ssd");
-  const multisvrChecksumKnown = isKnownValidSsdChecksum(state, multisvrEntry, crcMultisvr);
-  // A custom, non-sentinel CRC means the client has a locally edited multisvr.ssd (usually
-  // to point at the test server). Preserve it instead of replacing it with our generated list.
+  const multisvrCacheValueKnown = isKnownSsdCacheValue(state, multisvrEntry, crcMultisvr);
+  // A custom, non-sentinel cache value means the client has a locally edited multisvr.ssd
+  // (usually to point at the test server). Preserve it instead of replacing it with our generated list.
   const preserveClientMultisvr =
-    !multisvrChecksumKnown && crcMultisvr > 0xffff && crcMultisvr !== 0xffffffff;
-  const needMultiSvr = !multisvrChecksumKnown && !preserveClientMultisvr;
+    !multisvrCacheValueKnown && crcMultisvr > 0xffff && crcMultisvr !== 0xffffffff;
+  const needMultiSvr = !multisvrCacheValueKnown && !preserveClientMultisvr;
   const needMultiSvrN =
-    crcMultisvrn !== 0 && !isKnownValidSsdChecksum(state, multisvrnEntry, crcMultisvrn);
+    crcMultisvrn !== 0 && !isKnownSsdCacheValue(state, multisvrnEntry, crcMultisvrn);
   logger.info("AuthSync", "Prepared CMultiServer SSD response", {
     sessionId: session.sessionId,
-    clientMultisvrCrc: formatU32Hex(crcMultisvr),
-    knownServerChecksum: multisvrChecksumKnown,
+    clientMultisvrCacheValue: formatU32Hex(crcMultisvr),
+    knownServerCacheValue: multisvrCacheValueKnown,
     preserveClientMultisvr,
     sendMultisvr: needMultiSvr,
     sendMultisvrn: needMultiSvrN,

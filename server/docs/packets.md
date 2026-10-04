@@ -48,7 +48,7 @@ Upon `connect()`, `CPacketSocket` initializes with:
   - If `words > 0`:
     - `dstU32LE[0] = (k ^ srcU32LE[0]) >>> 0`
     - For `i = 1 .. words - 1`:
-      - `k = (k - 0x63CA6283) >>> 0`
+      - `k = (k - 0x63CAACE3) >>> 0` (decompilation: decimal `1674226915`; CA.exe immediate at `0x00695B46` / `0x00695BE7`)
       - `dstU32LE[i] = (k ^ srcU32LE[i] ^ srcU32LE[i - 1]) >>> 0`
     - `tailKey = srcU32LE[words - 1]`
   - Else (`words == 0`):
@@ -87,7 +87,7 @@ Upon `connect()`, `CPacketSocket` initializes with:
 | Opcode | Dir | Handler | Exact Payload Schema (After Opcode) | Effects & Notes |
 |---|---|---|---|---|
 | *(Connect Hello)* | S->C | `CClientSocket::sub_5D86DD` (`0x005D86DD`) | *(Deg 0, no opcode)* `u8` flag(`0`), `i16` minVer(`22`), `i16` curVer(`22`), `u32` sessionKey, `str` noticeUrl, `u8` extraFlag(`0`) | `payload[0]` encoded via `byte_924D10[256 * initKey + plain[0]]`. Upgrades socket to `deg = 3` (Rx) / `deg = 2` (Tx) with `key = sessionKey`. |
-| `0` (`0x0000`) | C->S | `CFxApp::sub_5A1E40` (`0x005A1E40`) | `u32` crcFxDynImg (`0x084341A5`, `sub_49E2A8`), `u32` crcCsysstr (`0xE734D04F`, `sub_5CFFF3`), `u32` crcMultiSvr (`sub_5D7EA0`), `u32` crcFilterstr (`0x000E496D`, `sub_5C8B1D`), `[u32 crcMultiSvrn]` (`sub_5D7D47`) | Sent once per client launch (`dword_92CB98 == 0`) using `CSmartStream::sub_6984B0`. |
+| `0` (`0x0000`) | C->S | `CFxApp::sub_5A1E40` (`0x005A1E40`) | `u32` dynamic-image cache context (`dword_92AAF8[2]`; constructor `sub_49DDAB` initializes it to `0`), `u32` system-string cache value (`dword_929D68 + 88`), `u32` multisvr cache value (`dword_92D9EC + 108`; zero unless a local `multisvr.ssd` is loaded, otherwise its Adler-32), `u32` filter-string cache value (`sub_5C8224(dword_974D94)`), optional `u32` multisvrn cache Adler-32 (`dword_92D9EC + 112`) when `sub_5CDBF2(4)` is true | In this server flow, ConnectHello `extraFlag=0` leaves the first context value at its zero sentinel; `0x084341A5` is the repository file's on-disk `fxdynimginfo.ssd` Adler-32, not the first field's unconditional value. The repository has no standalone client `multisvr.ssd`, so its server-synthesized checksum is not evidence of the user's installed client checksum. |
 | `189` (`0x00BD`) | S->C | `CFxApp::sub_5A11A6` -> `sub_49E093` (`0x0049E093`) | `u8` hasStream (`0` = valid; `1` = `stream` of `fxdynimginfo.ssd` parsed by `sub_49DF97`) | Step 1 of pre-login `.ssd` sync (`fxdynimginfo.ssd`). |
 | `2` (`0x0002`) | S->C | `CFxApp::sub_5A1328` -> `sub_5D00B9` (`0x005D00B9`) | `u8` hasStream (`0` = valid; `1` = `stream` of `csysstr.ssd` parsed by `sub_5CFE6C`) | Step 2 of pre-login `.ssd` sync (`csysstr.ssd`). |
 | `1` (`0x0001`) | S->C | `CFxApp::sub_5A14B1` -> `sub_5D7E8E` (`0x005D7E8E`) | `u8` hasMultiSvr (`0` or `1`+`stream` of `multisvr.ssd` parsed by `sub_5D782C`), *(if region requires it)* `u8` hasMultiSvrn (`0` or `1`+`stream` of `multisvrn.ssd` parsed by `sub_5D79AE`) | Step 3 of pre-login `.ssd` sync. The server preserves a client-edited `multisvr.ssd` when its CRC is a non-sentinel custom value (`> 0xFFFF`, not `0xFFFFFFFF`), rather than overwriting the address the user intentionally configured. |
