@@ -312,7 +312,7 @@ export class PacketSocketState {
       sessionKeyPresent: this.hasKey === 1,
       minVersion: info.minVersion,
       currentVersion: info.currentVersion,
-      noticeUrl: info.noticeUrl,
+      noticeUrlPresent: info.noticeUrl.length > 0,
       frameBytes: frame.length,
       framePreview: "<omitted; ConnectHello contains sessionKey>",
     });

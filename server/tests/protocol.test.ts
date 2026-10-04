@@ -314,6 +314,8 @@ describe("Protocol Layer — CRC, Cipher, Primitives, SmartStream & Framing", ()
       );
       expect(connectHelloLog?.data?.sessionId).toBe(77);
       expect(connectHelloLog?.data?.connectionKind).toBe("game");
+      expect(connectHelloLog?.data?.noticeUrlPresent).toBe(true);
+      expect(connectHelloLog?.data?.noticeUrl).toBeUndefined();
 
       const outboundPacketLog = getRecentLogs().find(
         (entry) => entry.data?.direction === "S->C" && entry.data?.opcode === ServerOpcode.QuestConfigSync
