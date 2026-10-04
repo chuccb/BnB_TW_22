@@ -18,10 +18,10 @@ import { decodeClientText, encodeClientText } from "./textEncoding.ts";
  * - u32 / i32: u32 LE (`sub_698BC0` / `sub_699670`)
  * - str: u32 LE length + raw bytes (`sub_699090` / `sub_6997B0`)
  *
- * `CSmartStream::sub_6984B0(this)` (`0x006984B0`) computes `sub_658610(0, *(this + 1), *(this + 2))`
- * (Adler-32 with initial seed 0 over the `bodySize` bytes starting at `byte[5]`).
- * `"ssi1"` files (`sub_699410` at `0x00699410`) prepend `["ssi1" (4B)][u32 LE adler32Zero]` before
- * the `[0x18][u32 LE bodySize][...]` container.
+ * `CISmartStream::sub_6984B0(this)` (`0x006984B0`) computes `sub_658610(0, body, bodySize)`
+ * (Adler-32 seed 0 over `container[5..5+bodySize]`). Separately, `sub_699410` validates an `"ssi1"`
+ * file-header checksum over the entire COSmartStream container. Its layout is
+ * `["ssi1" (4B)][u32 LE adler32Zero(container)][[0x18][u32 LE bodySize][...]]`.
  */
 
 export class SmartStreamWriter {
@@ -146,7 +146,7 @@ export class SmartStreamWriter {
 }
 
 /**
- * `CSmartStream::sub_6984B0(this)` (`0x006984B0`):
+ * `CISmartStream::sub_6984B0(this)` (`0x006984B0`):
  * Computes `sub_658610(0, body, bodySize)` over the `bodySize` bytes starting at `container[5]`.
  */
 export function computeSmartStreamBodyChecksum(container: Uint8Array): number {
@@ -155,10 +155,13 @@ export function computeSmartStreamBodyChecksum(container: Uint8Array): number {
   }
   const dv = new DataView(container.buffer, container.byteOffset, container.byteLength);
   const bodySize = dv.getUint32(1, true);
-  if (container.length < 5 + bodySize) {
-    throw new Error(`Truncated COSmartStream container: expected ${5 + bodySize}, got ${container.length}`);
+  const expectedLength = 5 + bodySize;
+  if (container.length !== expectedLength) {
+    throw new Error(
+      `Invalid COSmartStream container length: expected ${expectedLength}, got ${container.length}`
+    );
   }
-  return computeAdler32Zero(container.subarray(5, 5 + bodySize), 0);
+  return computeAdler32Zero(container.subarray(5, expectedLength), 0);
 }
 
 export class SmartStreamReader {
@@ -184,16 +187,26 @@ export class SmartStreamReader {
     }
     const dv = new DataView(container.buffer, container.byteOffset, container.byteLength);
     const bodySize = dv.getUint32(1, true);
-    if (container.length < 5 + bodySize) {
-      throw new Error(`Truncated COSmartStream container: expected ${5 + bodySize}, got ${container.length}`);
+    const expectedLength = 5 + bodySize;
+    if (container.length !== expectedLength) {
+      throw new Error(
+        `Invalid COSmartStream container length: expected ${expectedLength}, got ${container.length}`
+      );
     }
+    if (bodySize < 1) {
+      throw new Error(`Invalid COSmartStream body size: ${bodySize} does not include a mode byte`);
+    }
+
     const mode = container[5]!;
     if (mode === 0) {
-      const raw = container.subarray(6, 5 + bodySize);
+      const raw = container.subarray(6, expectedLength);
       return new SmartStreamReader(raw);
     } else if (mode === 1) {
+      if (bodySize < 5) {
+        throw new Error(`Invalid compressed COSmartStream body size: expected at least 5, got ${bodySize}`);
+      }
       const uncompLen = dv.getUint32(6, true);
-      const zData = container.subarray(10, 5 + bodySize);
+      const zData = container.subarray(10, expectedLength);
       const inflated = new Uint8Array(inflateSync(zData));
       if (inflated.length !== uncompLen) {
         throw new Error(`COSmartStream uncompressed length mismatch: expected ${uncompLen}, got ${inflated.length}`);
@@ -205,8 +218,8 @@ export class SmartStreamReader {
   }
 
   /**
-   * Parse an `"ssi1"` buffer (`sub_699410` at `0x00699410`), verifying the 4-byte `sub_658610(0, ...)`
-   * checksum before decompressing the embedded `COSmartStream`.
+   * Parse an `"ssi1"` buffer (`sub_699410` at `0x00699410`), validating its checksum over the complete
+   * embedded `COSmartStream`, then return the separate `sub_6984B0` body checksum.
    */
   static fromSsi1Buffer(buf: Uint8Array): { reader: SmartStreamReader; checksum: number } {
     if (
@@ -221,15 +234,15 @@ export class SmartStreamReader {
     const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
     const expectedChecksum = dv.getUint32(4, true);
     const container = buf.subarray(8);
-    // sub_699410 (`0x00699410`) computes sub_658610(0, buf + 8, fileSize - 8) over the entire container
+    // sub_699410 (`0x00699410`) compares the ssi1 header with sub_658610(0, container, container.length).
     const actualContainerChecksum = computeAdler32Zero(container, 0);
-    // CSmartStream::sub_6984B0 (`0x006984B0`) computes sub_658610(0, body, bodySize) over container[5..5+bodySize]
-    const bodyChecksum = computeSmartStreamBodyChecksum(container);
-    if (actualContainerChecksum !== expectedChecksum && bodyChecksum !== expectedChecksum) {
+    if (actualContainerChecksum !== expectedChecksum) {
       throw new Error(
-        `ssi1 checksum mismatch: header=0x${expectedChecksum.toString(16)}, container=0x${actualContainerChecksum.toString(16)}, body=0x${bodyChecksum.toString(16)}`
+        `ssi1 checksum mismatch: header=0x${expectedChecksum.toString(16)}, container=0x${actualContainerChecksum.toString(16)}`
       );
     }
+    // CSmartStream::sub_6984B0 (`0x006984B0`) separately computes the checksum over container[5..5+bodySize].
+    const bodyChecksum = computeSmartStreamBodyChecksum(container);
     return {
       reader: SmartStreamReader.fromSmartStreamBuffer(container),
       checksum: bodyChecksum,
@@ -240,43 +253,62 @@ export class SmartStreamReader {
     return this.raw.length - this.offset;
   }
 
+  private ensureAvailable(length: number): void {
+    if (!Number.isSafeInteger(length) || length < 0) {
+      throw new RangeError(`Invalid SmartStream read length ${length} at offset ${this.offset}`);
+    }
+    if (this.offset < 0 || this.offset > this.raw.length || length > this.raw.length - this.offset) {
+      const remaining = Math.max(0, this.raw.length - this.offset);
+      throw new RangeError(
+        `SmartStreamReader out of bounds at offset ${this.offset}: requested ${length} byte(s), ${remaining} remain`
+      );
+    }
+  }
+
   readU8(): number {
+    this.ensureAvailable(1);
     const val = this.view.getUint8(this.offset);
     this.offset += 1;
     return val;
   }
 
   readI8(): number {
+    this.ensureAvailable(1);
     const val = this.view.getInt8(this.offset);
     this.offset += 1;
     return val;
   }
 
   readU16(): number {
+    this.ensureAvailable(2);
     const val = this.view.getUint16(this.offset, true);
     this.offset += 2;
     return val;
   }
 
   readI16(): number {
+    this.ensureAvailable(2);
     const val = this.view.getInt16(this.offset, true);
     this.offset += 2;
     return val;
   }
 
   readU32(): number {
+    this.ensureAvailable(4);
     const val = this.view.getUint32(this.offset, true);
     this.offset += 4;
     return val;
   }
 
   readI32(): number {
+    this.ensureAvailable(4);
     const val = this.view.getInt32(this.offset, true);
     this.offset += 4;
     return val;
   }
 
   readBytes(len: number): Uint8Array {
+    this.ensureAvailable(len);
     const slice = this.raw.subarray(this.offset, this.offset + len);
     this.offset += len;
     return slice;

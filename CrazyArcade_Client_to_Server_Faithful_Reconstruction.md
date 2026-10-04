@@ -784,6 +784,30 @@ SPECIAL_ITEM_ID = 1234
 → enum-like patterns
 ```
 
+### `.ssd` / `.ini` SmartStream caches: keep checksum and schema layers separate
+
+A resource cache has three distinct layers that must not be conflated:
+
+```text
+SSI1 outer file checksum: Adler-32 over the entire COSmartStream container
+SmartStream body checksum: Adler-32 over the serialized SmartStream body (starting at container offset 5)
+Application payload: decompressed bytes consumed by the resource-specific schema parser
+```
+
+For `fxdynmapinfo.ssd`, the successful Client path is supported by `CA.exe` / `CA.exe.c` and the matching assembly:
+
+```text
+S->C 205 -> CISmartStream parses/decompresses -> sub_4DFE20 accepts v22 schema/checksum
+-> sub_4E0131 constructs COSmartStream at 0x00698790
+-> constructor copies only the decompressed payload and zeros encoded-container state
+-> sub_6989C0 calls sub_6985C0 to serialize (compressing when beneficial)
+-> sub_6989C0 writes "ssi1" + Adler-32(full newly generated container) + container
+```
+
+After decode, the `CISmartStream` used on this path carries the decompressed buffer (`+8`), its length (`+12`), read cursor (`+16`), and serialized SmartStream-body checksum (`+20`); `sub_6991E0` / `sub_6984C0` do not retain the original encoded-container bytes as a reusable buffer. `sub_698800` is a separate COSmartStream-to-COSmartStream copy path that can clone a marked-valid encoded container; `sub_4E0131` does **not** use it. `sub_593FF6` writes `fxstock.ini` after S->C 193 through the same `CISmartStream`-to-`COSmartStream` constructor and file writer. Do not describe either cache-write path as preserving the received compressed bytes. The decoded v22 application payload remains v22 even though the output container is newly generated.
+
+The tracked `fxdynmapinfo.ssd` and `fxstock.ini` snapshots use pre-v22 schemas (16-byte and 32-byte record tails respectively); successful Client cache writes use v22 schemas (18-byte and 33-byte tails). Startup loading must validate exact schema consumption, preserve already-v22 payloads, upgrade only validated pre-v22 inputs, and reject malformed checksum/schema data with useful context. Regression fixtures model the Client's `ssi1` format and checksum semantics, but are not byte-for-byte output from an official Client; the user's actual Windows cache file is not in the repository. See `server/docs/evidence.md`, `server/docs/packets.md`, and `server/docs/unknowns.md` for the function-level anchors, uncertainty, and tests.
+
 ---
 
 # 16. Binary / executable 的用途與邊界

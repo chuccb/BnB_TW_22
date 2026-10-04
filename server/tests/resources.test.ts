@@ -1,5 +1,6 @@
-import { closeSync, openSync, readSync } from "fs";
-import { dirname, resolve } from "path";
+import { closeSync, mkdtempSync, openSync, readFileSync, readSync, rmSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 import { describe, expect, test } from "bun:test";
 
@@ -8,10 +9,22 @@ import {
   buildMultiSvrSmartStream,
   decryptIddEntry,
   loadClientResources,
+  loadSsdEntry,
+  transcodeDynamicMapInfoToV22,
   verifySmartStreamSchema,
 } from "../src/resources/archive.ts";
-import { SmartStreamReader } from "../src/protocol/stream.ts";
+import { computeAdler32Zero } from "../src/protocol/crc.ts";
+import { SmartStreamReader, SmartStreamWriter } from "../src/protocol/stream.ts";
 import { TW_ENABLED_FEATURES, isFeatureEnabledTW } from "../src/config/index.ts";
+
+function makeClientFormatSsi1(streamContainer: Uint8Array): Uint8Array {
+  // Build a format-valid SSI1 wrapper: magic, Adler-32 of the full container, then container bytes.
+  const output = new Uint8Array(8 + streamContainer.length);
+  output.set([0x73, 0x73, 0x69, 0x31], 0);
+  new DataView(output.buffer).setUint32(4, computeAdler32Zero(streamContainer, 0), true);
+  output.set(streamContainer, 8);
+  return output;
+}
 
 describe("Client Resource Archives — Fx.idx, .i16 Tables, Maps & All 12 .ssd/.ini Streams", () => {
   test("Taiwan feature IDs match the region-8 branch in sub_5CEE8E", () => {
@@ -92,13 +105,13 @@ describe("Client Resource Archives — Fx.idx, .i16 Tables, Maps & All 12 .ssd/.
     // CItemAttrMan::sub_4EF2BD loads items from Attr/ItemAttr
     expect(resources.items.length).toBeGreaterThan(20);
 
-    // Original disk "ssi1" Adler-32 seed 0 checksums (sub_6984B0)
+    // Original disk SmartStream body checksums (sub_6984B0), not outer ssi1 file-header checksums.
     expect(resources.ssdFiles.get("csysstr.ssd")?.diskAdler32Zero).toBe(0xe734d04f);
     expect(resources.ssdFiles.get("filterstr.ssd")?.diskAdler32Zero).toBe(0x000e496d);
     expect(resources.ssdFiles.get("esfn.ssd")?.diskAdler32Zero).toBe(0x491e0722);
     expect(resources.ssdFiles.get("fxdynimginfo.ssd")?.diskAdler32Zero).toBe(0x084341a5);
     const dynamicMap = resources.ssdFiles.get("fxdynmapinfo.ssd")!;
-    expect(dynamicMap.diskAdler32Zero).toBe(0x39ac6777); // original on-disk stream
+    expect(dynamicMap.diskAdler32Zero).toBe(0x39ac6777); // original disk-body checksum
     expect(dynamicMap.adler32Zero).toBe(0x79476a94); // transcoded v22 SmartStream body
     expect(dynamicMap.rawBytes).toHaveLength(11_593);
     expect(dynamicMap.streamContainer).toHaveLength(11_697);
@@ -152,6 +165,76 @@ describe("Client Resource Archives — Fx.idx, .i16 Tables, Maps & All 12 .ssd/.
     expect(loadingChannelInfo).toBe("頻道連線中請稍候…");
     expect(connectingToSvr).toBe("登入頻道中，請稍候！");
     expect(systemStrings.remaining()).toBe(0);
+  });
+
+  test("reloads v22 ssi1 caches in the Client's disk format without widening them a second time", () => {
+    const resources = loadClientResources();
+    const tempRoot = mkdtempSync(join(tmpdir(), "bnb-client-cache-v22-"));
+    const cases = [
+      { filename: "fxdynmapinfo.ssd", entry: resources.ssdFiles.fxdynmapinfo },
+      { filename: "fxstock.ini", entry: resources.ssdFiles.fxstock },
+    ] as const;
+
+    try {
+      for (const { filename, entry } of cases) {
+        const formatFixture = makeClientFormatSsi1(entry.streamContainer);
+        const filePath = join(tempRoot, filename);
+        writeFileSync(filePath, formatFixture);
+
+        const loaded = loadSsdEntry(tempRoot, filename);
+        expect(loaded.decompressed).toEqual(entry.decompressed);
+        expect(loaded.streamContainer).toEqual(entry.streamContainer);
+        expect(loaded.entryCount).toBe(entry.entryCount);
+        expect(loaded.adler32Zero).toBe(entry.adler32Zero);
+        expect(loaded.diskAdler32Zero).toBe(entry.adler32Zero);
+        expect(verifySmartStreamSchema(filename, loaded.decompressed).remaining).toBe(0);
+      }
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps legacy dynamic-map upgrade and rejects malformed cache data with format context", () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "bnb-client-cache-validation-"));
+    const legacyPath = join(tempRoot, "fxdynmapinfo.ssd");
+    const legacyRawFile = new Uint8Array(readFileSync(resolve(CLIENT_RESOURCE_ROOT, "fxdynmapinfo.ssd")));
+    const canonical = loadClientResources().ssdFiles.fxdynmapinfo;
+
+    try {
+      writeFileSync(legacyPath, legacyRawFile);
+      const upgraded = loadSsdEntry(tempRoot, "fxdynmapinfo.ssd");
+      expect(upgraded.diskAdler32Zero).toBe(0x39ac6777);
+      expect(upgraded.adler32Zero).toBe(0x79476a94);
+      expect(upgraded.decompressed).toEqual(canonical.decompressed);
+      expect(upgraded.entryCount).toBe(871);
+      expect(() => transcodeDynamicMapInfoToV22(canonical.decompressed)).toThrow();
+
+      const truncatedBody = canonical.decompressed.subarray(0, canonical.decompressed.length - 1);
+      const malformedContainer = new SmartStreamWriter().writeRaw(truncatedBody).toSmartStreamBuffer(true);
+      const malformedPath = join(tempRoot, "malformed-v22.ssi1");
+      writeFileSync(malformedPath, makeClientFormatSsi1(malformedContainer));
+      const malformedRoot = mkdtempSync(join(tmpdir(), "bnb-client-cache-malformed-"));
+      try {
+        writeFileSync(join(malformedRoot, "fxdynmapinfo.ssd"), readFileSync(malformedPath));
+        expect(() => loadSsdEntry(malformedRoot, "fxdynmapinfo.ssd")).toThrow(
+          /Invalid fxdynmapinfo\.ssd payload: matches neither the CA\.exe v22 layout.*pre-v22 layout/
+        );
+      } finally {
+        rmSync(malformedRoot, { recursive: true, force: true });
+      }
+
+      const badChecksum = makeClientFormatSsi1(canonical.streamContainer);
+      badChecksum[4] = badChecksum[4]! ^ 0x01;
+      writeFileSync(legacyPath, badChecksum);
+      expect(() => loadSsdEntry(tempRoot, "fxdynmapinfo.ssd")).toThrow(/ssi1 checksum mismatch/);
+
+      writeFileSync(legacyPath, new Uint8Array());
+      expect(() => loadSsdEntry(tempRoot, "fxdynmapinfo.ssd")).toThrow(/is missing or empty/);
+      writeFileSync(join(tempRoot, "fxstock.ini"), new Uint8Array());
+      expect(() => loadSsdEntry(tempRoot, "fxstock.ini")).toThrow(/is missing or empty/);
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
   });
 
   test("CMultiServer reads the LE in_addr value as network-order IPv4 and CP950 labels", () => {

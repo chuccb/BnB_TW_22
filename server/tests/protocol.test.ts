@@ -6,7 +6,7 @@ import {
   decryptPayload,
   getConnectHelloTable,
 } from "../src/protocol/cipher.ts";
-import { computeCRC8, computeCRC32 } from "../src/protocol/crc.ts";
+import { computeAdler32Zero, computeCRC8, computeCRC32 } from "../src/protocol/crc.ts";
 import {
   MTUDPPeer,
   PacketSocketState,
@@ -23,7 +23,11 @@ import {
   unscrambleBlock,
   variantTimeToUnixMs,
 } from "../src/protocol/primitives.ts";
-import { SmartStreamReader, SmartStreamWriter } from "../src/protocol/stream.ts";
+import {
+  SmartStreamReader,
+  SmartStreamWriter,
+  computeSmartStreamBodyChecksum,
+} from "../src/protocol/stream.ts";
 import {
   DEFAULT_C_CHANNELS,
   findCChannelByCategoryOrdinal,
@@ -231,6 +235,28 @@ describe("Protocol Layer — CRC, Cipher, Primitives, SmartStream & Framing", ()
     expect(r1.readU16()).toBe(1024);
     expect(r1.readU32()).toBe(999999);
     expect(r1.readString()).toBe("Hello SmartStream");
+  });
+
+  test("ssi1 validates the full-container checksum separately from SmartStream body checksums", () => {
+    const writer = new SmartStreamWriter().writeU8(7).writeU32(0x12345678);
+    const file = writer.toSsi1Buffer(true);
+    const parsed = SmartStreamReader.fromSsi1Buffer(file);
+    const container = file.subarray(8);
+
+    const fileChecksum = new DataView(file.buffer, file.byteOffset, file.byteLength).getUint32(4, true);
+    expect(fileChecksum).toBe(computeAdler32Zero(container, 0));
+    expect(parsed.checksum).toBe(computeSmartStreamBodyChecksum(container));
+    expect(fileChecksum).not.toBe(parsed.checksum);
+    expect(parsed.reader.readU8()).toBe(7);
+    expect(parsed.reader.readU32()).toBe(0x12345678);
+    expect(parsed.reader.remaining()).toBe(0);
+
+    const badChecksum = file.slice();
+    badChecksum[4] = badChecksum[4]! ^ 0x01;
+    expect(() => SmartStreamReader.fromSsi1Buffer(badChecksum)).toThrow(/ssi1 checksum mismatch/);
+    expect(() => new SmartStreamReader(Uint8Array.of(1, 2, 3)).readU32()).toThrow(
+      /requested 4 byte\(s\), 3 remain/
+    );
   });
 
   test("PacketSocketState Connect Hello + Degree 2 C->S and Degree 3 S->C framing with fragmentation", () => {

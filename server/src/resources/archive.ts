@@ -1,8 +1,7 @@
 import { closeSync, existsSync, openSync, readFileSync, readSync } from "fs";
 import { dirname, resolve } from "path";
 import { fileURLToPath } from "url";
-import { inflateSync } from "zlib";
-import { computeAdler32Zero, computeCRC32, computeCRC8 } from "../protocol/crc.ts";
+import { computeCRC32, computeCRC8 } from "../protocol/crc.ts";
 import { ipv4ToInAddrLittleEndian } from "../protocol/primitives.ts";
 import {
   DEFAULT_C_CHANNELS,
@@ -107,8 +106,8 @@ export interface SsdCacheEntry {
   streamContainer: Uint8Array;
   uncompressedBytes: Uint8Array;
   decompressed: Uint8Array;
-  adler32Zero: number; // sub_6984B0 / sub_658610(0, body, bodySize) of v22 streamContainer
-  diskAdler32Zero: number; // sub_6984B0 checksum of original disk file before v22 transcoding
+  adler32Zero: number; // sub_6984B0 body checksum of the current streamContainer, after any schema upgrade.
+  diskAdler32Zero: number; // Original stream-body checksum before v22 normalization; not the outer ssi1 checksum.
   rawCrc32: number;
   uncompressedCrc32: number;
   crc32: number;
@@ -501,6 +500,107 @@ export function parseTileInfoListBuffer(plain: Uint8Array): TileInfoEntry[] {
   return tiles;
 }
 
+type SsdLayoutVersion = "pre-v22" | "v22";
+
+function readLengthPrefixedBytes(
+  reader: SmartStreamReader,
+  filename: string,
+  version: SsdLayoutVersion
+): void {
+  const length = reader.readU32();
+  if (length > reader.remaining()) {
+    throw new RangeError(
+      `${filename} ${version} string length ${length} exceeds ${reader.remaining()} remaining byte(s)`
+    );
+  }
+  reader.readBytes(length);
+}
+
+function finishSsdLayout(
+  reader: SmartStreamReader,
+  filename: string,
+  version: SsdLayoutVersion,
+  entryCount: number
+): { entryCount: number; remaining: number } {
+  const remaining = reader.remaining();
+  if (remaining !== 0) {
+    throw new Error(`${filename} ${version} payload has ${remaining} trailing byte(s)`);
+  }
+  return { entryCount, remaining };
+}
+
+function verifyDynamicMapInfoLayout(
+  rawBody: Uint8Array,
+  version: SsdLayoutVersion
+): { entryCount: number; remaining: number } {
+  const reader = new SmartStreamReader(rawBody);
+  const count = reader.readU16();
+
+  for (let i = 0; i < count; i++) {
+    reader.readU32(); // v20
+    reader.readU8(); // v21
+    readLengthPrefixedBytes(reader, "fxdynmapinfo.ssd", version); // v15
+    readLengthPrefixedBytes(reader, "fxdynmapinfo.ssd", version); // v12
+    reader.readU8(); // v24
+    reader.readU8(); // v25
+    readLengthPrefixedBytes(reader, "fxdynmapinfo.ssd", version); // v13
+    readLengthPrefixedBytes(reader, "fxdynmapinfo.ssd", version); // v14
+    reader.readU8(); // v28
+    reader.readU8(); // v29
+    reader.readU32(); // n0xFF
+    reader.readU8(); // v31
+    reader.readU8(); // v32
+    reader.readU8(); // v33
+    reader.readU32(); // v34
+    reader.readU8(); // v35
+    if (version === "pre-v22") {
+      reader.readU16(); // v36 before widening
+    } else {
+      reader.readU32(); // v36 in CA.exe v22
+    }
+  }
+
+  return finishSsdLayout(reader, "fxdynmapinfo.ssd", version, count);
+}
+
+function verifyFxStockLayout(
+  rawBody: Uint8Array,
+  version: SsdLayoutVersion
+): { entryCount: number; remaining: number } {
+  const reader = new SmartStreamReader(rawBody);
+  const count = reader.readU16();
+
+  for (let i = 0; i < count; i++) {
+    reader.readU32(); // +8
+    reader.readU8(); // +20
+    readLengthPrefixedBytes(reader, "fxstock.ini", version); // +32 string
+    reader.readU16(); // +80
+    reader.readU16(); // +92
+    reader.readU32(); // +104
+    reader.readU32(); // +116
+    readLengthPrefixedBytes(reader, "fxstock.ini", version); // +128 string
+    reader.readU32(); // +152
+    reader.readU32(); // +164
+    reader.readU16(); // +176
+    reader.readU8(); // +188
+    reader.readU16(); // +200
+    reader.readU16(); // +212
+    reader.readU16(); // +224
+    reader.readU32(); // +236
+    reader.readU8(); // +248
+    reader.readU8(); // +260
+    reader.readU32(); // +272
+    if (version === "pre-v22") {
+      reader.readU8(); // +284 before widening
+    } else {
+      reader.readU16(); // +284 in CA.exe v22
+    }
+    reader.readU32(); // +296
+  }
+
+  return finishSsdLayout(reader, "fxstock.ini", version, count);
+}
+
 /**
  * Upgrades pre-v22 disk `fxstock.ini` (where field +284 at `tail[27]` was `u8`, 32B tail)
  * to `CA.exe` v22 (`sub_588ED2` at `0x0058909D`, where field +284 is `u16`, 33B tail).
@@ -509,8 +609,9 @@ export function transcodeFxStockToV22(rawBody: Uint8Array): {
   writer: SmartStreamWriter;
   entryCount: number;
 } {
+  const { entryCount: count } = verifyFxStockLayout(rawBody, "pre-v22");
   const r = new SmartStreamReader(rawBody);
-  const count = r.readU16();
+  r.readU16();
   const w = new SmartStreamWriter();
   w.writeU16(count);
 
@@ -536,6 +637,8 @@ export function transcodeFxStockToV22(rawBody: Uint8Array): {
     w.writeBytes(tail32.subarray(28, 32));
   }
 
+  const upgradedPayload = w.toRawPayload();
+  verifyFxStockLayout(upgradedPayload, "v22");
   return { writer: w, entryCount: count };
 }
 
@@ -547,8 +650,9 @@ export function transcodeDynamicMapInfoToV22(rawBody: Uint8Array): {
   writer: SmartStreamWriter;
   entryCount: number;
 } {
+  const { entryCount: count } = verifyDynamicMapInfoLayout(rawBody, "pre-v22");
   const r = new SmartStreamReader(rawBody);
-  const count = r.readU16();
+  r.readU16();
   const w = new SmartStreamWriter();
   w.writeU16(count);
 
@@ -575,6 +679,8 @@ export function transcodeDynamicMapInfoToV22(rawBody: Uint8Array): {
     w.writeU32(v36);
   }
 
+  const upgradedPayload = w.toRawPayload();
+  verifyDynamicMapInfoLayout(upgradedPayload, "v22");
   return { writer: w, entryCount: count };
 }
 
@@ -805,28 +911,8 @@ export function verifySmartStreamSchema(
       return { entryCount: count, remaining: s.remaining() };
     }
     case "fxdynmapinfo.ssd": {
-      // sub_4DFE20 (0x004DFE20)
-      const count = s.readU16();
-      for (let i = 0; i < count; i++) {
-        s.readU32(); // v20
-        s.readU8(); // v21
-        skipStr(); // v15
-        skipStr(); // v12
-        s.readU8(); // v24
-        s.readU8(); // v25
-        skipStr(); // v13
-        skipStr(); // v14
-        s.readU8(); // v28
-        s.readU8(); // v29
-        s.readU32(); // n0xFF
-        s.readU8(); // v31
-        s.readU8(); // v32
-        s.readU8(); // v33
-        s.readU32(); // v34
-        s.readU8(); // v35
-        s.readU32(); // v36
-      }
-      return { entryCount: count, remaining: s.remaining() };
+      // sub_4DFE20 (0x004DFE20), CA.exe v22 field v36 is u32.
+      return verifyDynamicMapInfoLayout(uncompressedPayload, "v22");
     }
     case "esfn.ssd": {
       // sub_5CA523 (0x005CA523)
@@ -866,32 +952,8 @@ export function verifySmartStreamSchema(
       return { entryCount: count, remaining: s.remaining() };
     }
     case "fxstock.ini": {
-      // sub_593FF6 + sub_588ED2 (0x00588ED2)
-      const count = s.readU16();
-      for (let i = 0; i < count; i++) {
-        s.readU32(); // +8
-        s.readU8(); // +20
-        skipStr(); // +32
-        s.readU16(); // +80
-        s.readU16(); // +92
-        s.readU32(); // +104
-        s.readU32(); // +116
-        skipStr(); // +128
-        s.readU32(); // +152
-        s.readU32(); // +164
-        s.readU16(); // +176
-        s.readU8(); // +188
-        s.readU16(); // +200
-        s.readU16(); // +212
-        s.readU16(); // +224
-        s.readU32(); // +236
-        s.readU8(); // +248
-        s.readU8(); // +260
-        s.readU32(); // +272
-        s.readU16(); // +284
-        s.readU32(); // +296
-      }
-      return { entryCount: count, remaining: s.remaining() };
+      // sub_593FF6 + sub_588ED2 (0x00588ED2), CA.exe v22 field +284 is u16.
+      return verifyFxStockLayout(uncompressedPayload, "v22");
     }
     case "qmarksfn.ssd": {
       // sub_5B9743 (0x005B9743)
@@ -913,6 +975,69 @@ export function verifySmartStreamSchema(
     default:
       return { entryCount: 0, remaining: 0 };
   }
+}
+
+interface VersionedPayloadResult {
+  uncompressedBytes: Uint8Array;
+  entryCount: number;
+  transcodedWriter?: SmartStreamWriter;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function normalizeV22Payload(
+  filename: string,
+  rawBody: Uint8Array,
+  verifyV22: (payload: Uint8Array) => { entryCount: number; remaining: number },
+  verifyPreV22: (payload: Uint8Array) => { entryCount: number; remaining: number },
+  transcode: (payload: Uint8Array) => { writer: SmartStreamWriter; entryCount: number }
+): VersionedPayloadResult {
+  let v22: { entryCount: number; remaining: number } | undefined;
+  let preV22: { entryCount: number; remaining: number } | undefined;
+  let v22Error = "unknown validation error";
+  let preV22Error = "unknown validation error";
+
+  try {
+    v22 = verifyV22(rawBody);
+  } catch (error) {
+    v22Error = errorMessage(error);
+  }
+
+  try {
+    preV22 = verifyPreV22(rawBody);
+  } catch (error) {
+    preV22Error = errorMessage(error);
+  }
+
+  if (v22 && preV22) {
+    if (v22.entryCount === 0 && preV22.entryCount === 0) {
+      // With zero records the two layouts are byte-for-byte identical; no widening is needed.
+      return { uncompressedBytes: rawBody, entryCount: 0 };
+    }
+    throw new Error(`${filename} payload is ambiguous: it validates as both v22 and pre-v22`);
+  }
+
+  if (v22) {
+    return { uncompressedBytes: rawBody, entryCount: v22.entryCount };
+  }
+
+  if (preV22) {
+    const { writer, entryCount } = transcode(rawBody);
+    const upgraded = writer.toRawPayload();
+    const verifiedUpgrade = verifyV22(upgraded);
+    if (verifiedUpgrade.entryCount !== entryCount) {
+      throw new Error(
+        `${filename} transcode entry-count mismatch: wrote ${entryCount}, validated ${verifiedUpgrade.entryCount}`
+      );
+    }
+    return { uncompressedBytes: upgraded, entryCount, transcodedWriter: writer };
+  }
+
+  throw new Error(
+    `Invalid ${filename} payload: matches neither the CA.exe v22 layout (${v22Error}) nor the pre-v22 layout (${preV22Error})`
+  );
 }
 
 function buildSynthesizedSsdEntry(
@@ -947,59 +1072,116 @@ function buildSynthesizedSsdEntry(
   };
 }
 
-function loadSsdEntry(repoRoot: string, filename: string): SsdCacheEntry {
+export function loadSsdEntry(repoRoot: string, filename: string): SsdCacheEntry {
   const fullPath = resolve(repoRoot, filename);
   const rawBytes: Uint8Array = existsSync(fullPath)
     ? new Uint8Array(readFileSync(fullPath))
     : new Uint8Array(0);
+  if (
+    rawBytes.length === 0 &&
+    (filename === "fxdynmapinfo.ssd" || filename === "fxstock.ini")
+  ) {
+    throw new Error(`${filename} is missing or empty; expected a versioned resource payload`);
+  }
+
   let streamContainer: Uint8Array = rawBytes;
   let uncompressedBytes: Uint8Array = rawBytes;
   let diskAdler32Zero = 0;
+  let hasSmartStreamContainer = false;
 
-  if (
-    rawBytes.length >= 14 &&
+  const hasSsi1Magic =
+    rawBytes.length >= 4 &&
     rawBytes[0] === 0x73 &&
     rawBytes[1] === 0x73 &&
     rawBytes[2] === 0x69 &&
-    rawBytes[3] === 0x31
-  ) {
+    rawBytes[3] === 0x31;
+
+  if (hasSsi1Magic) {
     const parsed = SmartStreamReader.fromSsi1Buffer(rawBytes);
     streamContainer = rawBytes.subarray(8);
     uncompressedBytes = new Uint8Array(parsed.reader.raw);
     diskAdler32Zero = parsed.checksum;
-  } else if (rawBytes.length >= 10 && rawBytes[0] === 0x18 && rawBytes[5] === 1) {
-    try {
-      uncompressedBytes = new Uint8Array(inflateSync(rawBytes.subarray(10)));
-      diskAdler32Zero = computeAdler32Zero(rawBytes.subarray(5), 0);
-    } catch {
-      uncompressedBytes = rawBytes;
-    }
+    hasSmartStreamContainer = true;
+  } else if (
+    rawBytes.length >= 6 &&
+    rawBytes[0] === 0x18 &&
+    (rawBytes[5] === 0 || rawBytes[5] === 1)
+  ) {
+    // Parse the complete declared COSmartStream container; do not hide malformed compression errors.
+    const parsed = SmartStreamReader.fromSmartStreamBuffer(rawBytes);
+    streamContainer = rawBytes;
+    uncompressedBytes = new Uint8Array(parsed.raw);
+    diskAdler32Zero = computeSmartStreamBodyChecksum(streamContainer);
+    hasSmartStreamContainer = true;
   }
 
   let adler32Zero = diskAdler32Zero;
   let entryCount = 0;
 
-  // Automatically upgrade pre-v22 disk files to exact CA.exe v22 binary layout
-  if (filename === "fxstock.ini" && uncompressedBytes.length > 0) {
-    const transcoded = transcodeFxStockToV22(uncompressedBytes);
-    uncompressedBytes = transcoded.writer.toRawPayload();
-    streamContainer = transcoded.writer.toSmartStreamBuffer(true);
+  if (uncompressedBytes.length > 0 && filename === "fxdynmapinfo.ssd") {
+    const normalized = normalizeV22Payload(
+      filename,
+      uncompressedBytes,
+      (payload) => verifyDynamicMapInfoLayout(payload, "v22"),
+      (payload) => verifyDynamicMapInfoLayout(payload, "pre-v22"),
+      transcodeDynamicMapInfoToV22
+    );
+    uncompressedBytes = normalized.uncompressedBytes;
+    entryCount = normalized.entryCount;
+    if (normalized.transcodedWriter) {
+      streamContainer = normalized.transcodedWriter.toSmartStreamBuffer(true);
+      hasSmartStreamContainer = true;
+    } else if (!hasSmartStreamContainer) {
+      const writer = new SmartStreamWriter().writeRaw(uncompressedBytes);
+      streamContainer = writer.toSmartStreamBuffer(true);
+      hasSmartStreamContainer = true;
+    }
     adler32Zero = computeSmartStreamBodyChecksum(streamContainer);
-    entryCount = transcoded.entryCount;
-  } else if (filename === "fxdynmapinfo.ssd" && uncompressedBytes.length > 0) {
-    const transcoded = transcodeDynamicMapInfoToV22(uncompressedBytes);
-    uncompressedBytes = transcoded.writer.toRawPayload();
-    streamContainer = transcoded.writer.toSmartStreamBuffer(true);
+  } else if (uncompressedBytes.length > 0 && filename === "fxstock.ini") {
+    const normalized = normalizeV22Payload(
+      filename,
+      uncompressedBytes,
+      (payload) => verifyFxStockLayout(payload, "v22"),
+      (payload) => verifyFxStockLayout(payload, "pre-v22"),
+      transcodeFxStockToV22
+    );
+    uncompressedBytes = normalized.uncompressedBytes;
+    entryCount = normalized.entryCount;
+    if (normalized.transcodedWriter) {
+      streamContainer = normalized.transcodedWriter.toSmartStreamBuffer(true);
+      hasSmartStreamContainer = true;
+    } else if (!hasSmartStreamContainer) {
+      const writer = new SmartStreamWriter().writeRaw(uncompressedBytes);
+      streamContainer = writer.toSmartStreamBuffer(true);
+      hasSmartStreamContainer = true;
+    }
     adler32Zero = computeSmartStreamBodyChecksum(streamContainer);
-    entryCount = transcoded.entryCount;
-  } else if (filename === "esfn.ssd" && uncompressedBytes.length === 25) {
+  } else if (
+    uncompressedBytes.length > 0 &&
+    filename === "esfn.ssd" &&
+    uncompressedBytes.length === 25
+  ) {
     const transcoded = transcodeEsfnToV22(uncompressedBytes);
     uncompressedBytes = transcoded.writer.toRawPayload();
+    const verified = verifySmartStreamSchema(filename, uncompressedBytes);
+    if (verified.remaining !== 0 || verified.entryCount !== transcoded.entryCount) {
+      throw new Error(`Invalid esfn.ssd pre-v22 transcode: ${verified.remaining} trailing byte(s)`);
+    }
     streamContainer = transcoded.writer.toSmartStreamBuffer(true);
+    hasSmartStreamContainer = true;
     adler32Zero = computeSmartStreamBodyChecksum(streamContainer);
     entryCount = transcoded.entryCount;
   } else if (uncompressedBytes.length > 0) {
-    entryCount = verifySmartStreamSchema(filename, uncompressedBytes).entryCount;
+    const verified = verifySmartStreamSchema(filename, uncompressedBytes);
+    entryCount = verified.entryCount;
+    if (verified.remaining !== 0) {
+      throw new Error(`${filename} payload has ${verified.remaining} trailing byte(s)`);
+    }
+    if (!hasSmartStreamContainer) {
+      const writer = new SmartStreamWriter().writeRaw(uncompressedBytes);
+      streamContainer = writer.toSmartStreamBuffer(true);
+      adler32Zero = computeSmartStreamBodyChecksum(streamContainer);
+    }
   }
 
   const rawCrc32 = computeCRC32(rawBytes.length, rawBytes, rawBytes.length);
