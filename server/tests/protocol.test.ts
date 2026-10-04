@@ -264,8 +264,10 @@ describe("Protocol Layer — CRC, Cipher, Primitives, SmartStream & Framing", ()
       const handshakeLog = getRecentLogs().find(
         (entry) => entry.category === "Framing" && entry.message.includes("ConnectHello")
       );
+      expect(handshakeLog?.data?.direction).toBe("S->C");
       expect(handshakeLog?.data?.counterBefore).toBe(40);
       expect(handshakeLog?.data?.counterAfter).toBe(43);
+      expect(handshakeLog?.data?.clientToServerCounterUnchanged).toBe(40);
     } finally {
       setLogLevel(previousLevel);
     }
@@ -298,16 +300,67 @@ describe("Protocol Layer — CRC, Cipher, Primitives, SmartStream & Framing", ()
       );
       frame[0] = 0;
 
-      expect(() => server.feed(frame)).toThrow("C->S CRC8 mismatch");
+      expect(() => server.feed(frame, {
+        sessionId: 77,
+        connectionKind: "login",
+        stageId: 1,
+      })).toThrow("C->S CRC8 mismatch");
       const mismatch = getRecentLogs().find((entry) =>
         entry.message.includes("C->S CRC8 mismatch")
       );
+      expect(mismatch?.data?.sessionId).toBe(77);
+      expect(mismatch?.data?.connectionKind).toBe("login");
+      expect(mismatch?.data?.stageId).toBe(1);
+      expect(mismatch?.data?.incomingChunkBytes).toBe(frame.length);
+      expect(mismatch?.data?.bufferedBytesBeforeChunk).toBe(0);
       expect(mismatch?.data?.sequenceValidated).toBe(true);
+      expect(mismatch?.data?.expectedSequenceByte).toBe("0x00");
+      expect(mismatch?.data?.payloadOffset).toBe(4);
       expect(mismatch?.data?.counter).toBe(40);
       expect(mismatch?.data?.counterCrcMatches).toContain(3);
       expect(mismatch?.data?.diagnosticOnly).toBe(true);
       expect(JSON.stringify(mismatch)).not.toContain("plaintextPreview");
       expect(JSON.stringify(mismatch)).not.toContain("12345678");
+    } finally {
+      setLogLevel(previousLevel);
+    }
+  });
+
+  test("C->S CRC diagnostics also probe the sequence-byte cycle at 256 packets", () => {
+    const previousLevel = getLogLevel();
+    setLogLevel("silent");
+    clearRecentLogs();
+    try {
+      const server = new PacketSocketState("server");
+      const client = new PacketSocketState("client");
+      const hello = server.encodeConnectHello({
+        flag: 0,
+        minVersion: 22,
+        currentVersion: 22,
+        sessionKey: 0x12340001,
+        noticeUrl: "http://tw.beanfun.com/bnb/",
+        extraFlag: 0,
+      });
+      client.decodeConnectHello(hello);
+
+      // After 256 sends, the +3 counter wraps back to the same sequence byte:
+      // 40 + (256 * 3) = 808, which is indistinguishable by the 8-bit sequence alone.
+      client.clientToServerCounter = 808;
+      const frame = client.encodePacket(
+        new PacketWriter(ClientOpcode.PreLoginSsdCheck, 2).writeU32(0x10203040)
+      );
+      expect(frame[0]).toBe(0);
+
+      expect(() => server.feed(frame)).toThrow("C->S CRC8 mismatch");
+      const mismatch = getRecentLogs().find((entry) =>
+        entry.message.includes("C->S CRC8 mismatch")
+      );
+      expect(mismatch?.data?.sequenceValidated).toBe(true);
+      expect(mismatch?.data?.sequenceCyclePacketPeriod).toBe(256);
+      expect(mismatch?.data?.counterCrcMatches).toContain(768);
+      expect(mismatch?.data?.sequenceCycleProbeDeltas).toContain(768);
+      expect(mismatch?.data?.diagnosticOnly).toBe(true);
+      expect(JSON.stringify(mismatch)).not.toContain("10203040");
     } finally {
       setLogLevel(previousLevel);
     }
@@ -339,6 +392,12 @@ describe("Protocol Layer — CRC, Cipher, Primitives, SmartStream & Framing", ()
         entry.message.includes("C->S CRC8 mismatch")
       );
       expect(mismatch?.data?.untrustedOpcode).toBe("<redacted sensitive client opcode>");
+      expect(mismatch?.data?.crcAlgorithm).toContain("poly 0x07");
+      expect(mismatch?.data?.crcSeedScanCompleted).toBe(true);
+      expect(mismatch?.data?.matchingCrcSeedsForCurrentPlain).toHaveLength(1);
+      expect(mismatch?.data?.matchingCrcSeedsForCurrentPlain).not.toContain("0x28");
+      expect(mismatch?.data?.crcXorDelta).toBe("0x01");
+      expect(JSON.stringify(mismatch)).toContain("decryptedPayloadWithoutOpcode");
       expect(JSON.stringify(mismatch)).not.toContain("private-login-payload");
     } finally {
       setLogLevel(previousLevel);

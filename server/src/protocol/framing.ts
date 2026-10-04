@@ -45,10 +45,12 @@ const REDACTED_SERVER_PAYLOAD_OPCODES = new Set<number>([
   ServerOpcode.ShopServerEndpoint,
 ]);
 const MAX_TCP_PAYLOAD_BYTES = 16 * 1024 * 1024;
-// CPacketSocket advances packet counters by three only after successful frames. Probe a
-// small neighborhood on CRC failure to reveal likely one- or two-packet desynchronization;
-// these candidates are diagnostic only and are never accepted as packets.
-const CRC_COUNTER_PROBE_DELTAS = [-6, -3, 3, 6] as const;
+// CPacketSocket advances packet counters by three only after successful frames. Probe
+// nearby values and two sequence-byte cycle values on CRC failure; candidates never make
+// a failed frame acceptable. With a counter step of 3, the sequence repeats after 256 packets
+// (768 counter units), since lcm(256, 3) = 768.
+const CRC_COUNTER_PROBE_DELTAS = [-6, -3, 3, 6, 768, 1536] as const;
+const MAX_CRC_SEED_SCAN_PAYLOAD_BYTES = 4096;
 
 function findClientOpcodeDiagnostic(plain: Uint8Array): string {
   if (plain.length < 2) return "<unavailable: payload shorter than opcode>";
@@ -77,9 +79,30 @@ function findCounterCrcMatches(
 }
 
 function findCrcSeedMatches(counter: number, plain: Uint8Array, actualCrc: number): number[] {
-  return CRC_COUNTER_PROBE_DELTAS.filter(
+  return [-6, -3, 3, 6].filter(
     (delta) => computeCRC8((counter + delta) & 0xff, plain) === actualCrc
   );
+}
+
+function findCrcSeedsForTrailer(
+  plain: Uint8Array,
+  actualCrc: number
+): { scanned: boolean; seeds: string[] } {
+  if (plain.length > MAX_CRC_SEED_SCAN_PAYLOAD_BYTES) {
+    return { scanned: false, seeds: [] };
+  }
+
+  const seeds: string[] = [];
+  for (let seed = 0; seed <= 0xff; seed++) {
+    if (computeCRC8(seed, plain) === actualCrc) seeds.push(formatU8Hex(seed));
+  }
+  return { scanned: true, seeds };
+}
+
+export interface PacketLogContext {
+  sessionId?: number;
+  connectionKind?: string;
+  stageId?: number;
 }
 
 export interface ConnectHelloInfo {
@@ -161,8 +184,11 @@ export class PacketSocketState {
     this.key = info.sessionKey >>> 0;
 
     logger.debug("Framing", "Encoded ConnectHello (S->C CReceivedPacketConnect)", {
+      direction: "S->C",
+      counterDirection: "S->C",
       counterBefore: prevCounter,
       counterAfter: this.serverToClientCounter,
+      clientToServerCounterUnchanged: this.clientToServerCounter,
       step: this.step,
       seqByte: formatU8Hex(seqByte),
       initKey,
@@ -313,7 +339,8 @@ export class PacketSocketState {
    * - If role === "server": decodes C->S deg=2 frames (N + 5 bytes)
    * - If role === "client": decodes S->C deg=3 frames (N + 7 bytes)
    */
-  public feed(chunk: Uint8Array): PacketReader[] {
+  public feed(chunk: Uint8Array, logContext: PacketLogContext = {}): PacketReader[] {
+    const bufferedBytesBeforeChunk = this.rxBuffer.length;
     if (this.rxBuffer.length + chunk.length > MAX_TCP_PAYLOAD_BYTES * 2) {
       logger.error("Framing", "TCP receive buffer exceeded the safety limit", {
         role: this.role,
@@ -384,25 +411,61 @@ export class PacketSocketState {
           // CRC outcomes under nearby counters, without accepting any candidate.
           const counterCrcMatches = findCounterCrcMatches(counter, cipher, actualCrc, N);
           const crcSeedMatches = findCrcSeedMatches(counter, plain, actualCrc);
+          const crcSeedsForTrailer = findCrcSeedsForTrailer(plain, actualCrc);
+          const crcScopeProbes = [
+            { scope: "decryptedPayloadFull", bytes: plain },
+            { scope: "decryptedPayloadWithoutOpcode", bytes: plain.subarray(Math.min(2, N)) },
+            { scope: "decryptedPayloadMinusLastByte", bytes: plain.subarray(0, Math.max(0, N - 1)) },
+            { scope: "ciphertextPayload", bytes: cipher },
+            { scope: "frameHeaderAndCiphertext", bytes: frame.subarray(0, 4 + N) },
+          ].map(({ scope, bytes }) => {
+            const crc = computeCRC8(counter & 0xff, bytes);
+            return {
+              scope,
+              byteCount: bytes.length,
+              crc8: formatU8Hex(crc),
+              matchesTrailer: crc === actualCrc,
+            };
+          });
           logger.error("Framing", "C->S CRC8 mismatch (CReceivedPacketBase::sub_6963B0 error 7)", {
-            expectedCrc: formatU8Hex(expectedCrc),
-            actualCrc: formatU8Hex(actualCrc),
+            sessionId: logContext.sessionId,
+            connectionKind: logContext.connectionKind,
+            stageId: logContext.stageId,
+            incomingChunkBytes: chunk.length,
+            bufferedBytesBeforeChunk,
             direction: "C->S",
             degree: 2,
             sequenceValidated: true,
-            sequenceByte: formatU8Hex(frame[0]!),
+            expectedSequenceByte: formatU8Hex(expectedSeq),
+            actualSequenceByte: formatU8Hex(frame[0]!),
             padByte: formatU8Hex(frame[1]!),
             encodedPayloadLength: `0x${((frame[2]! << 8) | frame[3]!).toString(16).toUpperCase().padStart(4, "0")}`,
             frameBytes: frame.length,
+            bufferedBytesAfterFrame: this.rxBuffer.length,
+            payloadOffset: 4,
             payloadBytes: N,
+            trailerOffset: 4 + N,
             untrustedOpcode: findClientOpcodeDiagnostic(plain),
             counter,
+            cipherCounter: counter,
+            crcSeedByte: formatU8Hex(counter),
             counterStep: this.step,
             counterAfterValidFrame: (counter + this.step) >>> 0,
             keyPresent: this.hasKey === 1,
+            crcAlgorithm: "MSB-first CRC-8 poly 0x07 (CA.exe sub_668F90)",
+            expectedCrc: formatU8Hex(expectedCrc),
+            actualCrc: formatU8Hex(actualCrc),
+            crcXorDelta: formatU8Hex(actualCrc ^ expectedCrc),
+            crcScopeProbes,
+            nearbyCounterProbeDeltas: [-6, -3, 3, 6],
+            sequenceCyclePacketPeriod: 256,
+            sequenceCycleProbeDeltas: [768, 1536],
             counterProbeDeltas: [...CRC_COUNTER_PROBE_DELTAS],
             counterCrcMatches,
             crcSeedMatches,
+            crcSeedScanCompleted: crcSeedsForTrailer.scanned,
+            crcSeedScanMaxPayloadBytes: MAX_CRC_SEED_SCAN_PAYLOAD_BYTES,
+            matchingCrcSeedsForCurrentPlain: crcSeedsForTrailer.seeds,
             diagnosticOnly: true,
           });
           throw new Error(

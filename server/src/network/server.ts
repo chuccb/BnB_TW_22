@@ -150,7 +150,11 @@ export class CrazyArcadeServer implements Disposable, AsyncDisposable {
 
           try {
             // `CPacketSocket::sub_69A000` buffers partial frames and validates sequence + CRC.
-            const packets = session.socketState.feed(incoming);
+            const packets = session.socketState.feed(incoming, {
+              sessionId: session.sessionId,
+              connectionKind: session.connectionKind,
+              stageId: session.stageId,
+            });
             for (const packet of packets) {
               dispatchTcpPacket(world, session, packet);
             }
