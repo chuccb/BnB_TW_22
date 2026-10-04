@@ -175,7 +175,10 @@ export function handlePreLoginSsdCheck(
 
 /**
  * Sends S->C 4 (`CLoginStage::sub_567400` -> `sub_566E08`) login result.
- * Exact field layout verified at `0x00567400` and `0x00566E08`.
+ * Exact field layout verified at `0x00567400` and `0x00566E08`. The u16 after the
+ * post-exp u8 is the value stored by `sub_5ED30E` and returned by `sub_5ED43B` for
+ * channel level checks, so this field carries `user.level`; the neighboring u8's
+ * semantic mapping and any LoginResult location for `rankFlag` remain unconfirmed.
  */
 export function buildLoginSuccessPacket(state: WorldState, session: ClientSession): PacketWriter {
   const w = new PacketWriter(ServerOpcode.LoginResult);
@@ -203,8 +206,8 @@ export function buildLoginSuccessPacket(state: WorldState, session: ClientSessio
     w.writeU32(1); // isRegisteredFlag = 1
     w.writeString(user.nickname || user.username);
     w.writeU32(user.exp);
-    w.writeU8(user.level);
-    w.writeU16(user.rankFlag);
+    w.writeU8(user.level); // Stored separately by `sub_561F62`; semantic mapping is unconfirmed.
+    w.writeU16(user.level); // `sub_5ED43B` returns this value to the channel-level gate.
     w.writeU8(user.equippedChar);
     w.writeU8(0); // flag43F
     w.writeU8(0); // flag459
@@ -292,7 +295,17 @@ export function handleLogin(
   session.sendPacket(buildLoginSuccessPacket(state, session));
   logger.info("Login", "Authentication succeeded", {
     sessionId: session.sessionId,
-    users: session.users.map((user) => ({ userId: user.id, username: user.username })),
+    users: session.users.map((user) => ({
+      userId: user.id,
+      username: user.username,
+      loginResultGateLevel: user.level,
+      channelLevelChecks: state.channels.map((channel) => ({
+        name: channel.name,
+        minLevel: channel.minLevel,
+        maxLevel: channel.maxLevel,
+        eligible: user.level >= channel.minLevel && user.level <= channel.maxLevel,
+      })),
+    })),
     netSlotIds: session.netSlotIds,
     playerCount: session.users.length,
   });

@@ -112,6 +112,18 @@ describe("Client Resource Archives — Fx.idx, .i16 Tables, Maps & All 12 .ssd/.
       expect(verified.entryCount).toBeGreaterThanOrEqual(minEntries);
       expect(verified.remaining).toBe(0);
     }
+
+    // The client uses this csysstr.ssd key when sub_56AF39 rejects a channel level.
+    const systemStrings = new SmartStreamReader(resources.ssdFiles.csysstr.decompressed);
+    const systemStringCount = systemStrings.readU16();
+    let upperLevelOnly: string | undefined;
+    for (let i = 0; i < systemStringCount; i++) {
+      const key = systemStrings.readString();
+      const value = systemStrings.readString();
+      if (key === "UpperLevelOnly") upperLevelOnly = value;
+    }
+    expect(upperLevelOnly).toBe("選擇的頻道只能%d級以上才能進入");
+    expect(systemStrings.remaining()).toBe(0);
   });
 
   test("CMultiServer reads the LE in_addr value as network-order IPv4 and CP950 labels", () => {

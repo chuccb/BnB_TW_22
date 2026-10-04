@@ -327,6 +327,16 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(p4.readU32()).toBe(0); // losses
     const token1 = p4.readU32();
     expect(p4.readString()).toBe("bazzi_tw");
+    const loggedInUser = state.db.getUserByUsername("bazzi_tw")!;
+    expect(p4.readU8()).toBe(loggedInUser.gender);
+    expect(p4.readU32()).toBe(1); // isRegisteredFlag = 1
+    expect(p4.readString()).toBe(loggedInUser.nickname || loggedInUser.username);
+    expect(p4.readU32()).toBe(loggedInUser.exp);
+    p4.readU8(); // separate post-exp field parsed by `sub_561F62`, not the level-gate value
+    const loginResultGateLevel = p4.readU16(); // `sub_5ED30E` -> `sub_5ED43B`
+    expect(loggedInUser.level).toBe(1);
+    expect(loggedInUser.rankFlag).toBe(0);
+    expect(loginResultGateLevel).toBe(loggedInUser.level);
 
     // 4. Post-login Channel List Request (C->S 9 -> S->C 10 `channel2_001.ssd`, 12, 11)
     client1.sendToServer(state, session1.sessionId, new PacketWriter(9).writeU32(0));
@@ -356,6 +366,8 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     });
     expect(channelRecords.map((record) => record.tabIndex)).toEqual([0, 1, 2, 3]);
     expect(channelRecords[0]?.badgeId).toBe(2); // `sub_56CE10` auto-selects Novice for eligible players
+    expect(channelRecords.map((record) => record.minLevel)).toEqual([1, 1, 1, 1]); // Preserve fallback minima; these are not official channel data.
+    expect(loginResultGateLevel).toBeGreaterThanOrEqual(channelRecords[0]!.minLevel);
     expect(chStream.remaining()).toBe(0);
     const p12 = client1.popByOpcode(ServerOpcode.ChannelLoads)!;
     expect(p12.readU16()).toBe(4);
