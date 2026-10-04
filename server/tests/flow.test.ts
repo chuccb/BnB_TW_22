@@ -226,6 +226,55 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(client.receivedPackets).toHaveLength(0);
   });
 
+  test("empty Lobby ignores C->S 80 room-detail prefetch instead of showing NotValidRoomInfo", () => {
+    const config = loadConfig({ dbPath: ":memory:" });
+    using state = new WorldState(config);
+    const client = new SimulatedClient();
+    const session = state.createSession(client.onWireBytes, "127.0.0.1", 51013, "0.0.0.0", 0, "game");
+    session.sendConnectHello(config);
+    session.stageId = StageId.Lobby;
+    session.channelIndex = 1;
+
+    // CLobbyStage::sub_4C99DC constructs the empty room list and calls
+    // sub_4A496F(..., 0) even though there is no room to inspect.
+    client.sendToServer(
+      state,
+      session.sessionId,
+      new PacketWriter(ClientOpcode.RoomListScrollOrDetail).writeU16(0)
+    );
+
+    expect(state.rooms.size).toBe(0);
+    expect(client.receivedPackets).toHaveLength(0);
+    expect(session.stageId).toBe(StageId.Lobby);
+  });
+
+  test("C->S 80 still returns S->C 83 details when the room exists", () => {
+    const config = loadConfig({ dbPath: ":memory:" });
+    using state = new WorldState(config);
+    const client = new SimulatedClient();
+    const session = state.createSession(client.onWireBytes, "127.0.0.1", 51014, "0.0.0.0", 0, "game");
+    session.sendConnectHello(config);
+    session.users = [state.db.createUser("DetailUser", "password")];
+    session.netSlotIds = [state.allocateNetSlotId()];
+    session.stageId = StageId.Lobby;
+    session.channelIndex = 1;
+    const room = state.createRoom(session, "Lobby detail", "", false, 0, 0, [0]);
+    session.stageId = StageId.Lobby;
+
+    client.sendToServer(
+      state,
+      session.sessionId,
+      new PacketWriter(ClientOpcode.RoomListScrollOrDetail).writeU16(room.roomNumber)
+    );
+
+    const detail = client.popByOpcode(ServerOpcode.RoomDetailInfo);
+    expect(detail).toBeDefined();
+    expect(detail!.readU8()).toBe(1); // validFlag
+    expect(detail!.readU8()).toBe(1); // slot 0 is occupied
+    expect(detail!.readU8()).toBe(0); // charId
+    expect(detail!.readString()).toBe("DetailUser");
+  });
+
   test("Lobby normal chat sends S->C 21 only, never the S->C 15 GuildUserOnly modal", () => {
     const config = loadConfig({ dbPath: ":memory:" });
     using state = new WorldState(config);

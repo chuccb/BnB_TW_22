@@ -507,9 +507,45 @@ export function handleLobbyPacket(
     }
 
     case ClientOpcode.RoomListScrollOrDetail: {
-      const roomNumber = reader.remaining >= 2 ? reader.readU16() : 1;
+      if (reader.remaining !== 2) {
+        logger.warn("Lobby", "Ignored malformed C->S 80 room-detail request", {
+          sessionId: session.sessionId,
+          connectionKind: session.connectionKind,
+          stageId: formatStageId(session.stageId),
+          expectedPayloadBytes: 2,
+          receivedPayloadBytes: reader.remaining,
+          responseSent: false,
+        });
+        break;
+      }
+
+      const roomNumber = reader.readU16();
       const room = state.rooms.get(roomNumber);
+      if (!room) {
+        // CLobbyStage::sub_4C99DC creates an empty lobby and unconditionally calls
+        // sub_4A496F(..., 0). Returning S->C 83 with validFlag=0 here opens the client's
+        // NotValidRoomInfo modal during that normal empty-list bootstrap.
+        logger.debug("Lobby", "Ignored room-detail prefetch for a room that is not present", {
+          sessionId: session.sessionId,
+          connectionKind: session.connectionKind,
+          stageId: formatStageId(session.stageId),
+          roomNumber,
+          roomCount: state.rooms.size,
+          responseSent: false,
+          reason: "S->C 83 validFlag=0 displays NotValidRoomInfo in the Taiwan client",
+        });
+        break;
+      }
+
       session.sendPacket(buildRoomDetailInfoPacket(room));
+      logger.debug("Lobby", "Sent room-detail response for an existing room", {
+        sessionId: session.sessionId,
+        connectionKind: session.connectionKind,
+        stageId: formatStageId(session.stageId),
+        roomNumber,
+        responseOpcode: formatServerOpcode(ServerOpcode.RoomDetailInfo),
+        validFlag: 1,
+      });
       break;
     }
 
