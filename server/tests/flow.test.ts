@@ -1610,6 +1610,9 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
         ServerOpcode.InventoryExpansionSlots,
         ServerOpcode.CoupleInfoSync,
       ]);
+      expect(lobbyInitPackets.map((entry) => entry.data?.payloadBytes)).toEqual([
+        7, 10, 31, 51, 7, 6,
+      ]);
       expect(lobbyInitPackets.every((entry) =>
         entry.data?.connectionKind === "game" && entry.data?.stageId === StageId.Lobby
       )).toBe(true);

@@ -342,7 +342,7 @@ export const ServerOpcode = {
   PackageMapCheckAck: 157, // sub_5A1CD8
   NoticeUrlSync: 163, // sub_5A1DF3
   StringTableCheckAck: 179, // sub_5A1B77
-  LucciSync: 186, // sub_4B9DAB
+  LucciSync: 186, // CStage::sub_4BDBF5 -> sub_4B93FD -> sub_5ED36F: [u32 playerIdx, u32 value narrowed to char]; field meaning needs validation
   FxStockCheckAck: 188, // CUserInventoryMan::sub_5953FE (InventoryUpdate) / sub_5A1A03 (legacy)
   InventoryUpdate: 188, // CUserInventoryMan::sub_5953FE
   DynamicImgInfoSsd: 189, // sub_49E093: fxdynimginfo.ssd
