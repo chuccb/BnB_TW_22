@@ -1596,6 +1596,30 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
         )
       ).toBe(false);
 
+      const gameFramingLogs = getRecentLogs().filter(
+        (entry) => entry.category === "Framing" && entry.data?.sessionId === gameSession?.sessionId
+      );
+      const lobbyInitPackets = gameFramingLogs.filter(
+        (entry) => entry.data?.direction === "S->C"
+      );
+      expect(lobbyInitPackets.map((entry) => entry.data?.opcode)).toEqual([
+        ServerOpcode.ExpSync,
+        ServerOpcode.LucciSync,
+        ServerOpcode.InventoryData,
+        ServerOpcode.EquippedAvatarData,
+        ServerOpcode.InventoryExpansionSlots,
+        ServerOpcode.CoupleInfoSync,
+      ]);
+      expect(lobbyInitPackets.every((entry) =>
+        entry.data?.connectionKind === "game" && entry.data?.stageId === StageId.Lobby
+      )).toBe(true);
+      expect(lobbyInitPackets.every((entry) => entry.data?.payloadContent === "<omitted>")).toBe(true);
+      expect(
+        gameFramingLogs.some((entry) =>
+          entry.data?.direction === "C->S" && entry.data?.opcode === ClientOpcode.EnterLobby
+        )
+      ).toBe(true);
+
       // After reconnect the original CStage may repeat C->S 9; it must not replay the login handoff.
       gameClient.send(new PacketWriter(ClientOpcode.RequestChannelList).writeU32(0));
       await Bun.sleep(30);

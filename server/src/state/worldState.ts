@@ -1,6 +1,10 @@
 import type { ServerConfig } from "../config/index.ts";
 import { GameDatabase, type UserRecord } from "../db/database.ts";
-import { PacketSocketState, type ConnectHelloInfo } from "../protocol/framing.ts";
+import {
+  PacketSocketState,
+  type ConnectHelloInfo,
+  type PacketLogContext,
+} from "../protocol/framing.ts";
 import { DEFAULT_C_CHANNELS, type CChannelInfo } from "../protocol/channelCache.ts";
 import type { PacketWriter } from "../protocol/primitives.ts";
 import { loadClientResources, type ClientResources } from "../resources/archive.ts";
@@ -118,6 +122,14 @@ export class ClientSession {
     this.sessionKey = (0x12340000 + (sessionId & 0xffff)) >>> 0;
   }
 
+  private packetLogContext(): PacketLogContext {
+    return {
+      sessionId: this.sessionId,
+      connectionKind: this.connectionKind,
+      stageId: this.stageId,
+    };
+  }
+
   public sendConnectHello(config: ServerConfig): ConnectHelloInfo {
     const info: ConnectHelloInfo = {
       flag: 0,
@@ -127,13 +139,18 @@ export class ClientSession {
       noticeUrl: config.noticeUrl,
       extraFlag: 0,
     };
-    const frame = this.socketState.encodeConnectHello(info, 1, config.repoRoot);
+    const frame = this.socketState.encodeConnectHello(
+      info,
+      1,
+      config.repoRoot,
+      this.packetLogContext()
+    );
     this.sendRaw(frame);
     return info;
   }
 
   public sendPacket(writer: PacketWriter): void {
-    const frame = this.socketState.encodePacket(writer);
+    const frame = this.socketState.encodePacket(writer, 0x00, this.packetLogContext());
     this.sendRaw(frame);
   }
 }

@@ -31,7 +31,7 @@ import {
   normalizeCChannelCategory,
 } from "../src/protocol/channelCache.ts";
 import { decodeClientText, encodeClientText } from "../src/protocol/textEncoding.ts";
-import { ClientOpcode } from "../src/protocol/opcodes.ts";
+import { ClientOpcode, ServerOpcode } from "../src/protocol/opcodes.ts";
 import {
   clearRecentLogs,
   formatClientOpcode,
@@ -284,6 +284,65 @@ describe("Protocol Layer — CRC, Cipher, Primitives, SmartStream & Framing", ()
     expect(receivedByClient[0]!.opcode).toBe(4);
     expect(receivedByClient[0]!.readU8()).toBe(0);
     expect(receivedByClient[0]!.readU16()).toBe(1);
+  });
+
+  test("TCP packet logs correlate both directions by session without logging S->C payload bytes", () => {
+    const previousLevel = getLogLevel();
+    setLogLevel("silent");
+    clearRecentLogs();
+    try {
+      const context = { sessionId: 77, connectionKind: "game", stageId: 11 };
+      const helloInfo = {
+        flag: 0,
+        minVersion: 22,
+        currentVersion: 22,
+        sessionKey: 0x12340005,
+        noticeUrl: "http://tw.beanfun.com/bnb/",
+        extraFlag: 0,
+      };
+
+      const outbound = new PacketSocketState("server");
+      outbound.encodeConnectHello(helloInfo, 1, undefined, context);
+      outbound.encodePacket(
+        new PacketWriter(ServerOpcode.QuestConfigSync).writeU32(0),
+        0,
+        context
+      );
+
+      const connectHelloLog = getRecentLogs().find(
+        (entry) => entry.message.includes("Encoded ConnectHello")
+      );
+      expect(connectHelloLog?.data?.sessionId).toBe(77);
+      expect(connectHelloLog?.data?.connectionKind).toBe("game");
+
+      const outboundPacketLog = getRecentLogs().find(
+        (entry) => entry.data?.direction === "S->C" && entry.data?.opcode === ServerOpcode.QuestConfigSync
+      );
+      expect(outboundPacketLog?.data?.sessionId).toBe(77);
+      expect(outboundPacketLog?.data?.connectionKind).toBe("game");
+      expect(outboundPacketLog?.data?.stageId).toBe(11);
+      expect(outboundPacketLog?.data?.payloadBytes).toBe(6);
+      expect(outboundPacketLog?.data?.payloadContent).toBe("<omitted>");
+      expect(outboundPacketLog?.data?.plainHex).toBeUndefined();
+
+      const inboundServer = new PacketSocketState("server");
+      const inboundClient = new PacketSocketState("client");
+      const hello = inboundServer.encodeConnectHello(helloInfo);
+      inboundClient.decodeConnectHello(hello);
+      const enterLobbyFrame = inboundClient.encodePacket(
+        new PacketWriter(ClientOpcode.EnterLobby, 2)
+      );
+      inboundServer.feed(enterLobbyFrame, context);
+
+      const inboundPacketLog = getRecentLogs().find(
+        (entry) => entry.data?.direction === "C->S" && entry.data?.opcode === ClientOpcode.EnterLobby
+      );
+      expect(inboundPacketLog?.data?.sessionId).toBe(77);
+      expect(inboundPacketLog?.data?.connectionKind).toBe("game");
+      expect(inboundPacketLog?.data?.stageId).toBe(11);
+    } finally {
+      setLogLevel(previousLevel);
+    }
   });
 
   test("Structured logs use reverse symbolic names for client/server opcodes and stages", () => {

@@ -127,6 +127,14 @@ export interface PacketLogContext {
   preLoginSsdChecksumExpectations?: PreLoginSsdChecksumExpectations;
 }
 
+function packetLogContextFields(context: PacketLogContext): Record<string, unknown> {
+  return {
+    ...(context.sessionId !== undefined ? { sessionId: context.sessionId } : {}),
+    ...(context.connectionKind !== undefined ? { connectionKind: context.connectionKind } : {}),
+    ...(context.stageId !== undefined ? { stageId: context.stageId } : {}),
+  };
+}
+
 function diagnosePreLoginSsdChecksumFields(
   plain: Uint8Array,
   expectations?: PreLoginSsdChecksumExpectations
@@ -253,7 +261,8 @@ export class PacketSocketState {
   public encodeConnectHello(
     info: ConnectHelloInfo,
     initialKey: number = 1,
-    repoRoot?: string
+    repoRoot?: string,
+    logContext: PacketLogContext = {}
   ): Uint8Array {
     const initKey = initialKey & 0x0f;
     const writer = new PacketWriter(null, 0);
@@ -291,6 +300,7 @@ export class PacketSocketState {
     this.key = info.sessionKey >>> 0;
 
     logger.debug("Framing", "Encoded ConnectHello (S->C CReceivedPacketConnect)", {
+      ...packetLogContextFields(logContext),
       direction: "S->C",
       counterDirection: "S->C",
       counterBefore: prevCounter,
@@ -384,7 +394,11 @@ export class PacketSocketState {
    * - If role === "server": encodes S->C deg=3 frame (N + 7 bytes)
    * - If role === "client": encodes C->S deg=2 frame (N + 5 bytes)
    */
-  public encodePacket(writer: PacketWriter, padByte: number = 0x00): Uint8Array {
+  public encodePacket(
+    writer: PacketWriter,
+    padByte: number = 0x00,
+    logContext: PacketLogContext = {}
+  ): Uint8Array {
     const plain = writer.toPayload();
     const N = plain.length;
 
@@ -407,6 +421,8 @@ export class PacketSocketState {
       this.serverToClientCounter += this.step;
       if (writer.opcode !== null) {
         logger.debug("Framing", `Encoded S->C packet ${formatServerOpcode(writer.opcode)}`, {
+          ...packetLogContextFields(logContext),
+          direction: "S->C",
           opcode: writer.opcode,
           counter,
           nextCounter: this.serverToClientCounter,
@@ -414,9 +430,7 @@ export class PacketSocketState {
           payloadBytes: N,
           frameBytes: frame.length,
           crc8: formatU8Hex(crc),
-          plainHex: REDACTED_SERVER_PAYLOAD_OPCODES.has(writer.opcode)
-            ? "<redacted>"
-            : formatHexPreview(plain, 24),
+          payloadContent: "<omitted>",
         });
       }
       return frame;
@@ -450,6 +464,8 @@ export class PacketSocketState {
     const bufferedBytesBeforeChunk = this.rxBuffer.length;
     if (this.rxBuffer.length + chunk.length > MAX_TCP_PAYLOAD_BYTES * 2) {
       logger.error("Framing", "TCP receive buffer exceeded the safety limit", {
+        ...packetLogContextFields(logContext),
+        direction: this.role === "server" ? "C->S" : "S->C",
         role: this.role,
         bufferedBytes: this.rxBuffer.length,
         incomingBytes: chunk.length,
@@ -482,6 +498,8 @@ export class PacketSocketState {
         const totalFrameLen = N + 5;
         if (this.rxBuffer.length < totalFrameLen) {
           logger.debug("Framing", "Waiting for more C->S TCP bytes", {
+            ...packetLogContextFields(logContext),
+            direction: "C->S",
             bufferedBytes: this.rxBuffer.length,
             neededBytes: totalFrameLen,
             payloadBytes: N,
@@ -497,6 +515,8 @@ export class PacketSocketState {
           ((((this.key & 0xff) + this.c3) & 0xff) ^ ((this.c2 + (counter & 0xff)) & 0xff)) & 0xff;
         if (frame[0] !== expectedSeq) {
           logger.error("Framing", "C->S sequence byte mismatch (CPacketSocket::sub_699AB0 error 6)", {
+            ...packetLogContextFields(logContext),
+            direction: "C->S",
             expectedSeq: formatU8Hex(expectedSeq),
             actualSeq: formatU8Hex(frame[0]!),
             counter,
@@ -588,11 +608,14 @@ export class PacketSocketState {
         this.clientToServerCounter += this.step;
         const reader = new PacketReader(plain, 2);
         logger.debug("Framing", `Decoded C->S packet ${formatClientOpcode(reader.opcode)}`, {
+          ...packetLogContextFields(logContext),
+          direction: "C->S",
           opcode: reader.opcode,
           counter,
           nextCounter: this.clientToServerCounter,
           seqByte: formatU8Hex(frame[0]!),
           payloadBytes: N,
+          frameBytes: frame.length,
           crc8: formatU8Hex(actualCrc),
           plainHex: REDACTED_CLIENT_PAYLOAD_OPCODES.has(reader.opcode)
             ? "<redacted>"
@@ -667,11 +690,14 @@ export class PacketSocketState {
         this.serverToClientCounter += this.step;
         const reader = new PacketReader(plain, 3);
         logger.debug("Framing", `Decoded S->C packet ${formatServerOpcode(reader.opcode)}`, {
+          ...packetLogContextFields(logContext),
+          direction: "S->C",
           opcode: reader.opcode,
           counter,
           nextCounter: this.serverToClientCounter,
           seqByte: formatU8Hex(frame[0]!),
           payloadBytes: N,
+          frameBytes: frame.length,
           crc8: formatU8Hex(actualCrc),
           plainHex: REDACTED_SERVER_PAYLOAD_OPCODES.has(reader.opcode)
             ? "<redacted>"
