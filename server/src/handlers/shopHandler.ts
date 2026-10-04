@@ -609,7 +609,7 @@ export function handleShopPacket(
       const w9 = new PacketWriter(ServerOpcode.StageTransition);
       w9.writeU32(StageId.Shop);
       session.sendPacket(w9);
-      logger.info("Shop", "Applied local C->S 323 stage-action policy", {
+      logger.debug("Shop", "Applied local C->S 323 stage-action policy", {
         sessionId: session.sessionId,
         stageId: formatStageId(session.stageId),
         fieldA,
@@ -1082,7 +1082,7 @@ export function handleShopPacket(
       const w269 = new PacketWriter(ServerOpcode.UserMarketEnterResult);
       w269.writeU8(1);
       session.sendPacket(w269);
-      logger.info("UserMarket", "Decoded C->S 320 fee-info fields", {
+      logger.debug("UserMarket", "Decoded C->S 320 fee-info fields", {
         sessionId: session.sessionId,
         stageId: formatStageId(session.stageId),
         feeRate,
@@ -1100,7 +1100,7 @@ export function handleShopPacket(
       const fieldA = reader.readU8();
       const localIdx = reader.readU8();
       const trailingPayloadBytes = reader.remaining;
-      logger.info("UserMarket", "Decoded C->S 321 UserMarket stage-entry fields", {
+      logger.debug("UserMarket", "Decoded C->S 321 UserMarket stage-entry fields", {
         sessionId: session.sessionId,
         stageId: formatStageId(session.stageId),
         fieldA,
@@ -1162,7 +1162,7 @@ export function handleShopPacket(
       const field1 = reader.readU8();
       const field2 = reader.readU16();
       const localIdx = reader.readU8();
-      logger.info("UserMarket", "Decoded C->S 325 market filter-state fields", {
+      logger.debug("UserMarket", "Decoded C->S 325 market filter-state fields", {
         sessionId: session.sessionId,
         stageId: formatStageId(session.stageId),
         field0,
@@ -1226,7 +1226,7 @@ export function handleShopPacket(
       const localIdx = reader.readU8();
       const trailingPayloadBytes = reader.remaining;
       if (trailingPayloadBytes > 0) reader.offset = reader.plain.length;
-      logger.info("UserMarket", "Decoded C->S 328 market search-text fields", {
+      logger.debug("UserMarket", "Decoded C->S 328 market search-text fields", {
         sessionId: session.sessionId,
         stageId: formatStageId(session.stageId),
         queryWireBytes,
@@ -1260,7 +1260,7 @@ export function handleShopPacket(
         }
       }
 
-      logger.info("UserMarket", "Handled C->S 329 transfer dialog with local reconstruction direction", {
+      logger.debug("UserMarket", "Handled C->S 329 transfer dialog with local reconstruction direction", {
         sessionId: session.sessionId,
         username: user?.username ?? null,
         localIdx,

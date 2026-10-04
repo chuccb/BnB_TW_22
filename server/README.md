@@ -17,6 +17,20 @@ bun run check
 
 The server uses Bun TCP/UDP sockets, `bun:sqlite`, and CP950 text encoding. It starts a LoginServer and a separate GameServer so the client can perform the verified `LoginServer -> CSelectServerStage -> GameServer` TCP handoff.
 
+## Logs and Shop-click diagnostics
+
+The default `info` level keeps routine cache-sync and request-decoding details quiet. It retains listener/session lifecycle summaries and high-level handoff events. When the server decodes a packet on the statically evidenced Shop connection path, it emits a `ShopTrace` line with the timestamp, session ID, LoginServer/GameServer connection kind, remote endpoint, local port, stage, opcode, and payload length. These are **Shop-flow candidates**, not proof that a UI click reached its callback or caused a send. The TCP close summary includes a bounded per-session packet timeline; `S->C` rows mean socket write calls, not verified Client receipt.
+
+For every decoded packet and framing/byte-preview diagnostics, run:
+
+```sh
+BNB_LOG_LEVEL=debug bun run start
+```
+
+Known login credentials, session-handoff tokens, Shop connection credentials, Nexon Pass/coupon codes, and Nexon Club credential packet previews are redacted. Other debug previews may still contain client data; review before sharing logs. Colors are automatic only on a TTY. Set `BNB_LOG_COLOR=never` to disable them or `BNB_LOG_COLOR=always` to force them. `NO_COLOR=1` disables automatic color.
+
+If a click produces no `ShopTrace` event, that establishes only that no listed candidate reached the server dispatcher in the observed interval. Check every TCP session (including the separate GameServer/redirect connection) and use debug or Client-side socket tracing to look for other packets; server logs cannot prove that the Client did or did not invoke its local packet writer.
+
 ## Official-client mapping
 
 The implementation keeps the observed client names alongside readable TypeScript names:

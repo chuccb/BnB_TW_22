@@ -21,7 +21,7 @@ import {
  * CUDPPeerMan (0x0057BEAE), sub_4ED400 (0x004ED400), and CGameStage::sub_4ECF93 (0x004ECF93).
  */
 
-// Never write plaintext passwords or session tokens to the diagnostic log ring/console.
+// Never write plaintext passwords, session tokens, Shop pass/coupon codes, or Nexon Club credentials to diagnostics.
 const REDACTED_CLIENT_PAYLOAD_OPCODES = new Set<number>([
   ClientOpcode.LoginCredentials,
   ClientOpcode.SessionHandoff,
@@ -38,6 +38,10 @@ const REDACTED_CLIENT_PAYLOAD_OPCODES = new Set<number>([
   ClientOpcode.RequestShopConnection,
   ClientOpcode.AuthenticateShopConnection,
   ClientOpcode.RequestShopConnectionAlt,
+  ClientOpcode.ShopBuy280,
+  ClientOpcode.ShopBuyItemPass,
+  ClientOpcode.NexonClubAuth,
+  ClientOpcode.RedeemCouponCode,
 ]);
 const REDACTED_SERVER_PAYLOAD_OPCODES = new Set<number>([
   ServerOpcode.LoginResult,

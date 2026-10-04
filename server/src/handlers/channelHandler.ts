@@ -96,7 +96,7 @@ export function handleChannelSelect(
     selected = undefined;
   }
 
-  logger.info("ChannelSelect", `Received ${formatClientOpcode(ClientOpcode.SelectChannel)}`, {
+  logger.debug("ChannelSelect", `Received ${formatClientOpcode(ClientOpcode.SelectChannel)}`, {
     sessionId: session.sessionId,
     connectionKind: session.connectionKind,
     stageId: session.stageId,
@@ -163,18 +163,31 @@ export function handleChannelSelect(
   response.writeU16(state.config.gameTcpPort);
   session.sendPacket(response);
 
-  logger.info("ChannelSelect", "Routed client to GameServer", {
-    sessionId: session.sessionId,
-    channelIndex,
-    channelName: channel.name,
-    categoryCode: channel.categoryCode,
-    normalizedCategory,
-    categoryOrdinal,
-    remoteAddress: session.remoteAddress,
-    advertisedAddress: state.config.publicIp,
-    gameTcpPort: state.config.gameTcpPort,
-    responseOpcode: formatServerOpcode(ServerOpcode.ChannelSelectResult),
-  });
+  logger.info(
+    "ChannelSelect",
+    "Routed client to GameServer",
+    {
+      sessionId: session.sessionId,
+      channelIndex,
+      channelName: channel.name,
+      categoryCode: channel.categoryCode,
+      normalizedCategory,
+      categoryOrdinal,
+      remoteAddress: session.remoteAddress,
+      advertisedAddress: state.config.publicIp,
+      gameTcpPort: state.config.gameTcpPort,
+      responseOpcode: formatServerOpcode(ServerOpcode.ChannelSelectResult),
+    },
+    {
+      displayData: {
+        sessionId: session.sessionId,
+        channelName: channel.name,
+        categoryOrdinal,
+        advertisedAddress: state.config.publicIp,
+        gameTcpPort: state.config.gameTcpPort,
+      },
+    }
+  );
 }
 
 /**
@@ -327,7 +340,7 @@ export function handleSessionAuthHandoff(
   const token = tokens[0] ?? 0;
   const savedSession = state.sessionsByToken.get(token);
 
-  logger.info("SessionHandoff", `Received ${formatClientOpcode(ClientOpcode.SessionHandoff)}`, {
+  logger.debug("SessionHandoff", `Received ${formatClientOpcode(ClientOpcode.SessionHandoff)}`, {
     sessionId: session.sessionId,
     linkedLoginSessionId: savedSession?.loginSessionId,
     connectionKind: session.connectionKind,
@@ -447,6 +460,14 @@ export function handleSessionAuthHandoff(
     netSlotIds: session.netSlotIds,
     tokenFound: savedSession !== undefined,
     lobbyEntrySignalObserved: session.lobbyEntryPacketSeen,
+  }, {
+    displayData: {
+      sessionId: session.sessionId,
+      loginSessionId: session.linkedLoginSessionId,
+      previousStage: formatStageId(previousStageId),
+      pendingStage: formatStageId(StageId.Lobby),
+      lobbyEntrySignalObserved: session.lobbyEntryPacketSeen,
+    },
   });
 
   // S->C 13: root-vtable slot 48 -> sub_56A9DA -> sub_4B96B1 -> StageId.Lobby (11).
@@ -483,6 +504,18 @@ export function handleSessionAuthHandoff(
     clientStageLifecyclePath:
       "sub_4B96B1 -> sub_5AAA5C(StageId 11) -> CMainSystem::sub_5AA3F4 -> sub_5AEF3F(CMainWnd*)",
     clientStageLifecycleRuntimeVerified: false,
+  }, {
+    displayData: {
+      sessionId: session.sessionId,
+      loginSessionId: session.linkedLoginSessionId,
+      targetStage: formatStageId(StageId.Lobby),
+      serverOpcodes: [
+        formatServerOpcode(ServerOpcode.LobbyStageTransition),
+        formatServerOpcode(ServerOpcode.QuestConfigSync),
+      ],
+      lobbyEntrySignalObserved: session.lobbyEntryPacketSeen,
+      clientAcceptanceVerified: false,
+    },
   });
 }
 

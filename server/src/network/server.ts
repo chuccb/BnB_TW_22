@@ -80,17 +80,30 @@ export class CrazyArcadeServer implements Disposable, AsyncDisposable {
         gameTcpPort: this.config.gameTcpPort,
         gameUdpPort: this.config.gameUdpPort,
       };
-      logger.info("Network", "LoginServer and GameServer listeners ready", {
-        bindHost: this.config.host,
-        loginServer: {
-          tcpPort: ports.tcpPort,
-          udpPort: ports.udpPort,
+      logger.info(
+        "Network",
+        "LoginServer and GameServer listeners ready",
+        {
+          bindHost: this.config.host,
+          loginServer: {
+            tcpPort: ports.tcpPort,
+            udpPort: ports.udpPort,
+          },
+          gameServer: {
+            tcpPort: ports.gameTcpPort,
+            udpPort: ports.gameUdpPort,
+          },
         },
-        gameServer: {
-          tcpPort: ports.gameTcpPort,
-          udpPort: ports.gameUdpPort,
-        },
-      });
+        {
+          displayData: {
+            bindHost: this.config.host,
+            loginTcpPort: ports.tcpPort,
+            loginUdpPort: ports.udpPort,
+            gameTcpPort: ports.gameTcpPort,
+            gameUdpPort: ports.gameUdpPort,
+          },
+        }
+      );
       return ports;
     } catch (error) {
       this.closeListeners("startup-failure");
@@ -163,13 +176,26 @@ export class CrazyArcadeServer implements Disposable, AsyncDisposable {
           );
           socket.data = { session };
 
-          logger.info("TCP", `${label} accepted client`, {
-            sessionId: session.sessionId,
-            remoteAddress: session.remoteAddress,
-            remotePort: session.remotePort,
-            localAddress: session.localAddress,
-            localPort: session.localPort,
-          });
+          logger.info(
+            "TCP",
+            `${label} accepted client`,
+            {
+              sessionId: session.sessionId,
+              remoteAddress: session.remoteAddress,
+              remotePort: session.remotePort,
+              localAddress: session.localAddress,
+              localPort: session.localPort,
+              connectionKind: session.connectionKind,
+            },
+            {
+              displayData: {
+                sessionId: session.sessionId,
+                remoteAddress: session.remoteAddress,
+                remotePort: session.remotePort,
+                localPort: session.localPort,
+              },
+            }
+          );
 
           // `CPacketSocket::sub_5D8B10` sends ConnectHello on every accepted socket,
           // including the separate GameServer handoff connection.
@@ -235,38 +261,51 @@ export class CrazyArcadeServer implements Disposable, AsyncDisposable {
             session.linkedLoginSessionId === null
               ? `Session #${session.sessionId}`
               : `Session #${session.sessionId} (LoginServer #${session.linkedLoginSessionId} -> GameServer #${session.sessionId})`;
+          const endpointSummary =
+            `${session.remoteAddress}:${session.remotePort} -> ${session.localAddress}:${session.localPort}`;
           const pendingStage =
             session.pendingStageId === null ? null : formatStageId(session.pendingStageId);
           const stageSummary = `Stage: ${formatStageId(session.stageId)}${pendingStage === null ? "" : `; pending ${pendingStage}`}`;
           const lobbySignalSummary =
             `C->S 83 lobby-entry signal observed: ${session.lobbyEntryPacketSeen ? "yes" : "no"}; ` +
             "modal/UI state remains unobservable";
+          const packetCountSummary =
+            `Packets: C->S ${packetTraceSummary.clientToServerDecodedPackets} decoded; ` +
+            `S->C ${packetTraceSummary.serverToClientWriteCalls} socket.write calls; ` +
+            `trace omitted ${packetTraceSummary.omittedTraceEvents}; ` +
+            `pending receive ${packetTraceSummary.pendingReceiveBytes}B`;
           const closeSummary =
             `Duration: ${closedAtMs - session.connectedAtMs}ms; close initiator: ${closeInitiator}` +
             (session.serverCloseReason ? ` (${session.serverCloseReason})` : "");
           const message = [
             `${label} TCP socket closed`,
-            sessionSummary,
+            `${sessionSummary} · ${endpointSummary}`,
             stageSummary,
+            packetCountSummary,
             lobbySignalSummary,
             closeSummary,
             "Packet timeline (S->C entries are socket.write calls, not proof of client receipt):",
             packetFlowLines,
           ].join("\n");
-          logger.info("TCP", message, {
-            sessionId: session.sessionId,
-            linkedLoginSessionId: session.linkedLoginSessionId ?? undefined,
-            remoteAddress: session.remoteAddress,
-            remotePort: session.remotePort,
-            stageId: formatStageId(session.stageId),
-            pendingStageId: pendingStage ?? undefined,
-            lobbyEntryPacketSeen: session.lobbyEntryPacketSeen,
-            connectedForMs: closedAtMs - session.connectedAtMs,
-            closeInitiator,
-            serverCloseReason: session.serverCloseReason ?? undefined,
-            socketError: session.socketErrorMessage ?? undefined,
-            ...packetTraceSummary,
-          });
+          logger.info(
+            "TCP",
+            message,
+            {
+              sessionId: session.sessionId,
+              linkedLoginSessionId: session.linkedLoginSessionId ?? undefined,
+              remoteAddress: session.remoteAddress,
+              remotePort: session.remotePort,
+              stageId: formatStageId(session.stageId),
+              pendingStageId: pendingStage ?? undefined,
+              lobbyEntryPacketSeen: session.lobbyEntryPacketSeen,
+              connectedForMs: closedAtMs - session.connectedAtMs,
+              closeInitiator,
+              serverCloseReason: session.serverCloseReason ?? undefined,
+              socketError: session.socketErrorMessage ?? undefined,
+              ...packetTraceSummary,
+            },
+            { displayData: {} }
+          );
           world.removeSession(session.sessionId);
         },
 

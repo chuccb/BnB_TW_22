@@ -101,7 +101,7 @@ export function handlePreLoginSsdCheck(
   const crcFilterstr = reader.remaining >= 4 ? reader.readU32() : 0;
   const crcMultisvrn = reader.remaining >= 4 ? reader.readU32() : 0;
 
-  logger.info("AuthSync", `Received ${formatClientOpcode(ClientOpcode.PreLoginSsdCheck)}`, {
+  logger.debug("AuthSync", `Received ${formatClientOpcode(ClientOpcode.PreLoginSsdCheck)}`, {
     sessionId: session.sessionId,
     remoteAddress: session.remoteAddress,
     remotePort: session.remotePort,
@@ -126,7 +126,7 @@ export function handlePreLoginSsdCheck(
       stream.writeRaw(ssd.decompressed);
       writer.writeSmartStream(stream, true);
     }
-    logger.info("AuthSync", `${formatServerOpcode(opcode)} ${filename} sync decision`, {
+    logger.debug("AuthSync", `${formatServerOpcode(opcode)} ${filename} sync decision`, {
       sessionId: session.sessionId,
       clientCacheValue: formatU32Hex(clientCacheValue),
       serverChecksum: ssd ? formatU32Hex(ssd.adler32Zero) : "missing",
@@ -153,7 +153,7 @@ export function handlePreLoginSsdCheck(
   const needMultiSvr = !multisvrCacheValueKnown && !preserveClientMultisvr;
   const needMultiSvrN =
     crcMultisvrn !== 0 && !isKnownSsdCacheValue(state, multisvrnEntry, crcMultisvrn);
-  logger.info("AuthSync", "Prepared CMultiServer SSD response", {
+  logger.debug("AuthSync", "Prepared CMultiServer SSD response", {
     sessionId: session.sessionId,
     clientMultisvrCacheValue: formatU32Hex(crcMultisvr),
     knownServerCacheValue: multisvrCacheValueKnown,
@@ -264,7 +264,7 @@ export function handleLogin(
     credentials.push({ username: username || `player${session.sessionId}`, password: "" });
   }
 
-  logger.info("Login", `Received ${formatClientOpcode(opcode)}`, {
+  logger.debug("Login", `Received ${formatClientOpcode(opcode)}`, {
     sessionId: session.sessionId,
     connectionKind: session.connectionKind,
     remoteAddress: session.remoteAddress,
@@ -298,6 +298,10 @@ export function handleLogin(
   session.sendPacket(buildLoginSuccessPacket(state, session));
   logger.info("Login", "Authentication succeeded", {
     sessionId: session.sessionId,
+    playerCount: session.users.length,
+  });
+  logger.debug("Login", "Login identity and channel eligibility details", {
+    sessionId: session.sessionId,
     users: session.users.map((user) => ({
       userId: user.id,
       username: user.username,
@@ -329,7 +333,7 @@ export function handlePostLoginChannelRequest(
   reader: PacketReader
 ): void {
   const clientChannelCrc = reader.remaining >= 4 ? reader.readU32() : 0;
-  logger.info("ChannelCache", `Received ${formatClientOpcode(ClientOpcode.RequestChannelList)}`, {
+  logger.debug("ChannelCache", `Received ${formatClientOpcode(ClientOpcode.RequestChannelList)}`, {
     sessionId: session.sessionId,
     connectionKind: session.connectionKind,
     stageId: session.stageId,

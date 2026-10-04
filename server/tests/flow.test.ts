@@ -16,7 +16,13 @@ import {
 } from "../src/protocol/stream.ts";
 import { verifySmartStreamSchema } from "../src/resources/archive.ts";
 import { WorldState } from "../src/state/worldState.ts";
-import { clearRecentLogs, formatU8Hex, getRecentLogs } from "../src/utils/logger.ts";
+import {
+  clearRecentLogs,
+  formatClientOpcode,
+  formatStageId,
+  formatU8Hex,
+  getRecentLogs,
+} from "../src/utils/logger.ts";
 
 type LiveTcpSocket = {
   write(bytes: Uint8Array): number;
@@ -1293,11 +1299,23 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     // 15. Shop & Inventory flow (`C->S 37 -> S->C 261 + S->C 48`, `C->S 38 -> S->C 16 sub_4BB82A`,
     //     `C->S 276 -> S->C 193 fxstock.ini`, `C->S 278 -> S->C 200 stringtable.ini`,
     //     `C->S 281 -> S->C 210 packagemap.ini`, `C->S 273` buy & equip)
+    const shopRequestStage = session1.stageId;
     client1.sendToServer(
       state,
       session1.sessionId,
       new PacketWriter(ClientOpcode.RequestShopConnection).writeU8(11).writeU32(0)
     );
+    const shopRequestTrace = getRecentLogs().findLast(
+      (entry) =>
+        entry.category === "ShopTrace" &&
+        entry.data?.opcode === formatClientOpcode(ClientOpcode.RequestShopConnection)
+    );
+    expect(shopRequestTrace?.data?.direction).toBe("C->S");
+    expect(shopRequestTrace?.data?.sessionId).toBe(session1.sessionId);
+    expect(shopRequestTrace?.data?.connectionKind).toBe("game");
+    expect(shopRequestTrace?.data?.stageId).toBe(formatStageId(shopRequestStage));
+    expect(shopRequestTrace?.data?.remotePort).toBe(session1.remotePort);
+    expect(shopRequestTrace?.data?.payloadBytes).toBe(5);
     expect(client1.popByOpcode(ServerOpcode.ShopConnectionPermission)?.readU8()).toBe(1);
     expect(client1.popByOpcode(ServerOpcode.ShopServerEndpoint)?.readU8()).toBe(1);
 
@@ -1306,6 +1324,15 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
       session1.sessionId,
       new PacketWriter(ClientOpcode.AuthenticateShopConnection)
     );
+    const shopAuthTrace = getRecentLogs().findLast(
+      (entry) =>
+        entry.category === "ShopTrace" &&
+        entry.data?.opcode === formatClientOpcode(ClientOpcode.AuthenticateShopConnection)
+    );
+    expect(shopAuthTrace?.data?.sessionId).toBe(session1.sessionId);
+    expect(shopAuthTrace?.data?.connectionKind).toBe("game");
+    expect(shopAuthTrace?.data?.payloadBytes).toBe(0);
+    expect(shopAuthTrace?.data?.candidateRole).toBe("conditional follow-up");
     const p16 = client1.popByOpcode(ServerOpcode.ShopInitAndStage14)!;
     expect(p16).toBeDefined();
     expect(p16.readU8()).toBe(0);

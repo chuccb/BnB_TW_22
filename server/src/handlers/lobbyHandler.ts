@@ -391,6 +391,17 @@ export function handleLobbyPacket(
           : null,
         coupleAnniversaryFeature30: state.config.enabledFeatures.has(30),
         existingRoomEntries: state.rooms.size,
+      }, {
+        displayData: {
+          sessionId: session.sessionId,
+          linkedLoginSessionId: session.linkedLoginSessionId,
+          clientRequest: formatClientOpcode(opcode),
+          stageId: formatStageId(session.stageId),
+          playerCount: session.users.length,
+          serverOpcodes: lobbyServerOpcodes.map(formatServerOpcode),
+          feature32Enabled,
+          stageConfig207WriteCall: sendLobbyStageConfig207Fallback,
+        },
       });
       break;
     }

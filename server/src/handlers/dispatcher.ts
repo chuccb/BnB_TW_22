@@ -102,6 +102,21 @@ const SHOP_OPCODES = new Set<number>([
   ClientOpcode.UserMarketBuyListing,
 ]);
 
+// Keep ordinary packet logs quiet at INFO while retaining the statically evidenced packets
+// that can appear on the Shop-connection path. This records packet arrival only; it does not
+// establish that a UI click reached a callback or caused the packet.
+const SHOP_FLOW_CANDIDATE_ROLES: ReadonlyMap<number, string> = new Map([
+  [ClientOpcode.RequestShopConnection, "initial-state candidate"],
+  [ClientOpcode.RequestShopConnectionAlt, "initial-state candidate"],
+  [ClientOpcode.ShopEnter, "initial-state candidate"],
+  [ClientOpcode.AuthenticateShopConnection, "conditional follow-up"],
+  [ClientOpcode.RequestUserMarketConnection, "conditional follow-up"],
+  [ClientOpcode.RoomAux98, "conditional follow-up; opcode 98 is shared"],
+  [ClientOpcode.RequestFxStockIni, "Shop-stage cache request"],
+  [ClientOpcode.RequestStringTableIni, "Shop-stage cache request"],
+  [ClientOpcode.RequestPackageMapIni, "Shop-stage cache request"],
+]);
+
 const LOBBY_OPCODES = new Set<number>([
   ClientOpcode.CreateRoom,
   ClientOpcode.JoinRoom,
@@ -204,6 +219,40 @@ export function dispatchTcpPacket(
     stageId: formatStageId(session.stageId),
     remainingPayloadBytes: reader.remaining,
   });
+
+  const shopFlowRole = SHOP_FLOW_CANDIDATE_ROLES.get(opcode);
+  if (shopFlowRole) {
+    const shopTraceData = {
+      direction: "C->S",
+      opcode: formatClientOpcode(opcode),
+      sessionId: session.sessionId,
+      connectionKind: session.connectionKind,
+      remoteAddress: session.remoteAddress,
+      remotePort: session.remotePort,
+      localPort: session.localPort,
+      stageId: formatStageId(session.stageId),
+      payloadBytes: reader.remaining,
+      candidateRole: shopFlowRole,
+    };
+    logger.info(
+      "ShopTrace",
+      `Observed Shop-flow candidate packet: C->S ${formatClientOpcode(opcode)}`,
+      shopTraceData,
+      {
+        displayData: {
+          sessionId: shopTraceData.sessionId,
+          connectionKind: shopTraceData.connectionKind,
+          remoteAddress: shopTraceData.remoteAddress,
+          remotePort: shopTraceData.remotePort,
+          localPort: shopTraceData.localPort,
+          stageId: shopTraceData.stageId,
+          payloadBytes: shopTraceData.payloadBytes,
+          candidateRole: shopTraceData.candidateRole,
+        },
+      }
+    );
+  }
+
   const logRoute = (handler: string): void => {
     logger.debug("Dispatcher", "Routing client packet", {
       sessionId: session.sessionId,

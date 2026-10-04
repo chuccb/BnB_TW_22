@@ -314,7 +314,7 @@ describe("Protocol Layer — CRC, Cipher, Primitives, SmartStream & Framing", ()
     expect(receivedByClient[0]!.readU16()).toBe(1);
   });
 
-  test("TCP packet logs correlate both directions by session without logging S->C payload bytes", () => {
+  test("TCP packet logs correlate sessions, omit S->C bodies, and redact credential-bearing C->S previews", () => {
     const previousLevel = getLogLevel();
     setLogLevel("silent");
     clearRecentLogs();
@@ -370,6 +370,37 @@ describe("Protocol Layer — CRC, Cipher, Primitives, SmartStream & Framing", ()
       expect(inboundPacketLog?.data?.sessionId).toBe(77);
       expect(inboundPacketLog?.data?.connectionKind).toBe("game");
       expect(inboundPacketLog?.data?.stageId).toBe(11);
+
+      const sensitiveClientPackets = [
+        {
+          writer: new PacketWriter(ClientOpcode.ShopBuyItemPass, 2)
+            .writeString("private-nexon-pass")
+            .writeU32(1001)
+            .writeU32(7),
+          secret: "private-nexon-pass",
+        },
+        {
+          writer: new PacketWriter(ClientOpcode.ShopBuy280, 2)
+            .writeString("private-coupon-code")
+            .writeString("private-recipient"),
+          secret: "private-coupon-code",
+        },
+        {
+          writer: new PacketWriter(ClientOpcode.NexonClubAuth, 2)
+            .writeU8(0)
+            .writeString("club-id")
+            .writeString("private-club-pass"),
+          secret: "private-club-pass",
+        },
+      ];
+      for (const { writer, secret } of sensitiveClientPackets) {
+        inboundServer.feed(inboundClient.encodePacket(writer), context);
+        const sensitivePacketLog = getRecentLogs().findLast(
+          (entry) => entry.data?.direction === "C->S" && entry.data?.opcode === writer.opcode
+        );
+        expect(sensitivePacketLog?.data?.plainHex).toBe("<redacted>");
+        expect(JSON.stringify(sensitivePacketLog)).not.toContain(secret);
+      }
     } finally {
       setLogLevel(previousLevel);
     }
