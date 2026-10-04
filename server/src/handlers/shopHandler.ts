@@ -203,7 +203,7 @@ export function buildLucciBalancePacket190(session: ClientSession): PacketWriter
  * Builds S->C 48 (`CShopConnectionMan::sub_529E8D` at `0x00529E8D`):
  *   u8 ok (`1`)
  *   u8 flag (`0`)
- *   u32 authToken
+ *   u32 opaqueField (this local builder currently writes `session.sessionKey`; the Client reads/discards it)
  *   u32 ipHostLong
  *   u16 portHostShort
  */
@@ -538,7 +538,17 @@ export function handleShopPacket(
       w261.writeU8(1); // 1 = allowed
       session.sendPacket(w261);
 
-      session.sendPacket(buildShopRedirectPacket48(state, session));
+      const redirectPacket = buildShopRedirectPacket48(state, session);
+      logger.info("Shop", "Advertising Client redirect endpoint in S->C 48", {
+        sessionId: session.sessionId,
+        connectionKind: session.connectionKind,
+        requestOpcode: opcode,
+        stageId: formatStageId(session.stageId),
+        targetAddress: state.config.publicIp,
+        targetPort: state.config.tcpPort,
+        targetListener: "LoginServer TCP_PORT",
+      });
+      session.sendPacket(redirectPacket);
       break;
     }
 

@@ -216,7 +216,7 @@ export const ClientOpcode = {
   BasketThrowAway: 315, // sub_5BF4F8: [u32 id, u8 playerIdx]
   RequestShopConnectionAlt: 316, // CShopConnectionMan::sub_529AFB
   ShopActionNotify: 317, // sub_529A40: [u8 action]
-  RequestUserMarketConnection: 318, // CShopConnectionMan::sub_529D8E: empty after its connection/auth path
+  RequestUserMarketConnection: 318, // CShopConnectionMan::sub_529D8E: empty when this+8==2; semantic label is not independently proven
   UserMarketFeeInfoReply320: 320, // CStage::sub_4BB408: [u32 feeRate, str notice, u32 minPrice]
   UserMarketStageEntry321: 321, // sub_5723F6: [u8 fieldA, u8 localIdx]; CSendPacket vtable 0x007BF714 slot +0x40 -> sub_695FE0; then C->S 98
   NexonClubDialogSubmit322: 322, // CChatStage::sub_4B0A63 after CNexonClubDlg result: [str fieldA, str dialogField]
@@ -256,7 +256,7 @@ export const ServerOpcode = {
   SelectServerDynamicI16Data: 33, // CSelectServerStage root dispatch: slot 54 -> CStage::sub_4B8D5F; not the Lobby transition
   GuildOrUserStatus: 34, // CMyInfoDlg::sub_54466F / CExchangeStage::sub_55B6DB
   ShopReturnHandoff: 41, // CShopConnectionMan::sub_52A23C: [u16, u16, u32 key, str, u8=11]
-  ShopServerEndpoint: 48, // CShopConnectionMan::sub_529E8D: [u8 ok, u8 flag, u32 token, u32 ip, u16 port]
+  ShopServerEndpoint: 48, // CShopConnectionMan::sub_529E8D: [u8 ok, if ok: u8 flag, u32 opaque, u32 ipHostLong, u16 portHostShort]
   MacroList: 50, // sub_4A27CB: macro strings
   FilterStringSsd: 53, // sub_5C8BE3: filterstr.ssd
   CheckIdResult: 59,
