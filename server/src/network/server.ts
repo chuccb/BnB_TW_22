@@ -222,16 +222,50 @@ export class CrazyArcadeServer implements Disposable, AsyncDisposable {
           const session = socket.data?.session;
           if (!session) return;
           const closedAtMs = Date.now();
-          logger.info("TCP", `${label} TCP socket closed`, {
+          const {
+            packetFlow,
+            ...packetTraceSummary
+          } = session.getPacketTraceSummary(closedAtMs);
+          const packetFlowLines = packetFlow
+            .split("\n")
+            .map((line) => `  ${line}`)
+            .join("\n");
+          const closeInitiator = session.serverCloseReason ? "server-requested" : "unknown";
+          const sessionSummary =
+            session.linkedLoginSessionId === null
+              ? `Session #${session.sessionId}`
+              : `Session #${session.sessionId} (LoginServer #${session.linkedLoginSessionId} -> GameServer #${session.sessionId})`;
+          const pendingStage =
+            session.pendingStageId === null ? null : formatStageId(session.pendingStageId);
+          const stageSummary = `Stage: ${formatStageId(session.stageId)}${pendingStage === null ? "" : `; pending ${pendingStage}`}`;
+          const lobbySignalSummary =
+            `C->S 83 lobby-entry signal observed: ${session.lobbyEntryPacketSeen ? "yes" : "no"}; ` +
+            "modal/UI state remains unobservable";
+          const closeSummary =
+            `Duration: ${closedAtMs - session.connectedAtMs}ms; close initiator: ${closeInitiator}` +
+            (session.serverCloseReason ? ` (${session.serverCloseReason})` : "");
+          const message = [
+            `${label} TCP socket closed`,
+            sessionSummary,
+            stageSummary,
+            lobbySignalSummary,
+            closeSummary,
+            "Packet timeline (S->C entries are socket.write calls, not proof of client receipt):",
+            packetFlowLines,
+          ].join("\n");
+          logger.info("TCP", message, {
             sessionId: session.sessionId,
+            linkedLoginSessionId: session.linkedLoginSessionId ?? undefined,
             remoteAddress: session.remoteAddress,
             remotePort: session.remotePort,
             stageId: formatStageId(session.stageId),
+            pendingStageId: pendingStage ?? undefined,
+            lobbyEntryPacketSeen: session.lobbyEntryPacketSeen,
             connectedForMs: closedAtMs - session.connectedAtMs,
-            closeInitiator: session.serverCloseReason ? "server-requested" : "unknown",
+            closeInitiator,
             serverCloseReason: session.serverCloseReason ?? undefined,
             socketError: session.socketErrorMessage ?? undefined,
-            ...session.getPacketTraceSummary(closedAtMs),
+            ...packetTraceSummary,
           });
           world.removeSession(session.sessionId);
         },

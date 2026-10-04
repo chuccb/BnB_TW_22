@@ -129,13 +129,19 @@ function writeLog(
   }
 
   const tag = `[${entry.timestamp}] [${level.toUpperCase().padEnd(5)}] [${category}]`;
-  const details = data ? ` ${JSON.stringify(data)}` : "";
+  const messageLines = message.split("\n");
+  const renderedMessage = messageLines
+    .map((line, index) => (index === 0 ? `${tag} ${line}` : `  ${line}`))
+    .join("\n");
+  const details = data
+    ? `${messageLines.length > 1 ? "\n  " : " "}${JSON.stringify(data)}`
+    : "";
   if (level === "error") {
-    console.error(`${tag} ${message}${details}`);
+    console.error(`${renderedMessage}${details}`);
   } else if (level === "warn") {
-    console.warn(`${tag} ${message}${details}`);
+    console.warn(`${renderedMessage}${details}`);
   } else {
-    console.log(`${tag} ${message}${details}`);
+    console.log(`${renderedMessage}${details}`);
   }
 }
 

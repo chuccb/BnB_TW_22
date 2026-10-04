@@ -650,6 +650,7 @@ export function handleCommonPacket(
 
       const previousStageId = session.stageId;
       session.stageId = StageId.SelectServer;
+      session.pendingStageId = null;
       logger.info("Stage", "Client returned from Lobby to channel selection", {
         sessionId: session.sessionId,
         previousStageId,

@@ -7,6 +7,7 @@ import {
 } from "../protocol/framing.ts";
 import { DEFAULT_C_CHANNELS, type CChannelInfo } from "../protocol/channelCache.ts";
 import type { PacketWriter } from "../protocol/primitives.ts";
+import { StageId } from "../protocol/opcodes.ts";
 import { loadClientResources, type ClientResources } from "../resources/archive.ts";
 import {
   formatClientOpcode,
@@ -20,6 +21,8 @@ export interface AuthSessionSnapshot {
   usernames: string[];
   netSlotIds: number[];
   charIds: number[];
+  /** LoginServer TCP session that issued this opaque token; retained only for log correlation. */
+  loginSessionId: number;
   /** Chosen absolute `CChannelCache` record index, set when C->S 5 succeeds. */
   channelIndex: number | null;
 }
@@ -115,7 +118,14 @@ export class ClientSession {
 
   public sessionKey: number;
   public ssdSynced = false;
-  public stageId = 1; // 1 = CLoginStage, 10 = CSelectServerStage, 11 = CLobbyStage, 12 = CPrepareStage, 13 = CGameStage, 14 = CShopStageNew
+  /** Server-side stage model from the connection path and client packets; not client UI/modal state. */
+  public stageId: number;
+  /** Destination requested by the last server transition but not yet observed through its client signal. */
+  public pendingStageId: number | null = null;
+  /** LoginServer TCP session that issued this GameServer handoff token; never a wire field. */
+  public linkedLoginSessionId: number | null = null;
+  /** True after the client emits C->S 83 (`EnterLobby`); does not expose local modal state. */
+  public lobbyEntryPacketSeen = false;
   public channelIndex = 0;
 
   // Up to 2 local players per client (1P / 2P)
@@ -157,6 +167,9 @@ export class ClientSession {
     this.sendRaw = sendRaw;
     this.connectedAtMs = Date.now();
     this.connectionKind = connectionKind;
+    // A fresh GameServer socket is opened from CSelectServerStage; C->S 6 later
+    // authenticates the handoff but does not itself prove Lobby entry.
+    this.stageId = connectionKind === "game" ? StageId.SelectServer : StageId.Login;
     this.remoteAddress = remoteAddress;
     this.remotePort = remotePort;
     this.localAddress = localAddress;
@@ -215,11 +228,16 @@ export class ClientSession {
     const packetFlow = this.packetTrace.length === 0
       ? "<no decoded TCP packets>"
       : this.packetTrace
-          .map((event) => {
+          .map((event, index) => {
             const elapsedMs = Math.max(0, event.atMs - this.connectedAtMs);
-            return `+${elapsedMs}ms ${event.direction} ${event.label} ${event.packetBytes}B @${formatStageId(event.stageId)}`;
+            const sequence = this.omittedPacketTraceEvents + index + 1;
+            const observation = event.direction === "C->S" ? "decoded" : "write-call";
+            return (
+              `#${String(sequence).padStart(2, "0")} +${elapsedMs}ms ${event.direction} ` +
+              `[${observation}] ${event.label} ${event.packetBytes}B @${formatStageId(event.stageId)}`
+            );
           })
-          .join(" | ");
+          .join("\n");
 
     return {
       clientToServerDecodedPackets: this.clientToServerDecodedPackets,
@@ -343,12 +361,18 @@ export class WorldState implements Disposable {
     return this.nextNetSlotId++;
   }
 
-  public allocateAuthToken(usernames: string[], netSlotIds: number[], charIds: number[]): number {
+  public allocateAuthToken(
+    usernames: string[],
+    netSlotIds: number[],
+    charIds: number[],
+    loginSessionId: number
+  ): number {
     const token = this.nextToken++ >>> 0;
     this.sessionsByToken.set(token, {
       usernames: [...usernames],
       netSlotIds: [...netSlotIds],
       charIds: [...charIds],
+      loginSessionId,
       channelIndex: null,
     });
     return token;

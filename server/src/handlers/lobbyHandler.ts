@@ -1,7 +1,13 @@
 import { ClientOpcode, ServerOpcode, StageId } from "../protocol/opcodes.ts";
 import { PacketReader, PacketWriter } from "../protocol/primitives.ts";
 import type { ClientSession, GameRoom, WorldState } from "../state/worldState.ts";
-import { formatServerOpcode, formatStageId, formatU8Hex, logger } from "../utils/logger.ts";
+import {
+  formatClientOpcode,
+  formatServerOpcode,
+  formatStageId,
+  formatU8Hex,
+  logger,
+} from "../utils/logger.ts";
 import { sendChannelListAndLoads } from "./channelHandler.ts";
 import { buildCoupleInfoSyncPacket250 } from "./commonHandler.ts";
 import {
@@ -301,7 +307,12 @@ export function handleLobbyPacket(
   switch (opcode) {
     case ClientOpcode.ClientReportOrLobbyEnter:
     case ClientOpcode.EnterLobby: {
+      const previousStageId = session.stageId;
       session.stageId = StageId.Lobby;
+      if (opcode === ClientOpcode.EnterLobby) {
+        session.pendingStageId = null;
+        session.lobbyEntryPacketSeen = true;
+      }
       // Send S->C 89 (Exp sync) and S->C 186 (Lucci sync) for logged-in user
       const user = session.users[0];
       if (user) {
@@ -329,7 +340,12 @@ export function handleLobbyPacket(
 
       logger.info("LobbyInit", "Queued initial Lobby sync frames", {
         sessionId: session.sessionId,
+        linkedLoginSessionId: session.linkedLoginSessionId,
+        clientRequest: formatClientOpcode(opcode),
+        previousServerStage: formatStageId(previousStageId),
         stageId: formatStageId(session.stageId),
+        lobbyEntrySignalObserved: session.lobbyEntryPacketSeen,
+        clientUiModalStateObservable: false,
         playerCount: session.users.length,
         serverOpcodes: user
           ? [

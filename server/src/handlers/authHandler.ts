@@ -192,7 +192,8 @@ export function buildLoginSuccessPacket(state: WorldState, session: ClientSessio
   const token = state.allocateAuthToken(
     session.users.map((u) => u.username),
     session.netSlotIds,
-    session.equippedCharIds
+    session.equippedCharIds,
+    session.sessionId
   );
 
   for (let i = 0; i < count; i++) {

@@ -431,7 +431,7 @@ describe("Protocol Layer — CRC, Cipher, Primitives, SmartStream & Framing", ()
       "S->C",
       ServerOpcode.LobbyStageTransition,
       3,
-      StageId.Lobby,
+      StageId.SelectServer,
       undefined,
       startedAt + 102
     );
@@ -443,9 +443,9 @@ describe("Protocol Layer — CRC, Cipher, Primitives, SmartStream & Framing", ()
     expect(summary.lastServerWriteAgoMs).toBe(1);
     expect(summary.pendingReceiveBytes).toBe(0);
     expect(summary.packetFlow).toBe(
-      "+4ms S->C ConnectHello 48B @1 (Login) | " +
-        "+101ms C->S 6 (SessionHandoff) 29B @10 (SelectServer) | " +
-        "+102ms S->C 13 (LobbyStageTransition) 3B @11 (Lobby)"
+      "#01 +4ms S->C [write-call] ConnectHello 48B @1 (Login)\n" +
+        "#02 +101ms C->S [decoded] 6 (SessionHandoff) 29B @10 (SelectServer)\n" +
+        "#03 +102ms S->C [write-call] 13 (LobbyStageTransition) 3B @10 (SelectServer)"
     );
     expect(summary.packetFlow).not.toContain("sessionKey");
   });
@@ -476,9 +476,9 @@ describe("Protocol Layer — CRC, Cipher, Primitives, SmartStream & Framing", ()
     const summary = session.getPacketTraceSummary(startedAt + 51);
     expect(summary.clientToServerDecodedPackets).toBe(50);
     expect(summary.omittedTraceEvents).toBe(2);
-    expect(summary.packetFlow.split(" | ")).toHaveLength(48);
-    expect(summary.packetFlow).not.toContain("+0ms");
-    expect(summary.packetFlow).toContain("+2ms C->S 9 (RequestChannelList)");
+    expect(summary.packetFlow.split("\n")).toHaveLength(48);
+    expect(summary.packetFlow).not.toContain("#01 +0ms");
+    expect(summary.packetFlow).toContain("#03 +2ms C->S [decoded] 9 (RequestChannelList)");
   });
 
   test("ConnectHello advances the S->C counter exactly once and logs the 40 -> 43 handshake", () => {

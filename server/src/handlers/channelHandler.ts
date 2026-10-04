@@ -133,7 +133,8 @@ export function handleChannelSelect(
     const token = state.allocateAuthToken(
       session.users.map((user) => user.username),
       session.netSlotIds,
-      session.equippedCharIds
+      session.equippedCharIds,
+      session.sessionId
     );
     session.authTokens = session.users.map(() => token);
   }
@@ -328,6 +329,7 @@ export function handleSessionAuthHandoff(
 
   logger.info("SessionHandoff", `Received ${formatClientOpcode(ClientOpcode.SessionHandoff)}`, {
     sessionId: session.sessionId,
+    linkedLoginSessionId: savedSession?.loginSessionId,
     connectionKind: session.connectionKind,
     remoteAddress: session.remoteAddress,
     remotePort: session.remotePort,
@@ -427,17 +429,24 @@ export function handleSessionAuthHandoff(
   session.equippedCharIds = [...savedSession.charIds];
 
   const previousStageId = session.stageId;
-  session.stageId = StageId.Lobby;
-  logger.info("SessionHandoff", "Restored authenticated players on the GameServer session", {
+  session.stageId = StageId.SelectServer;
+  session.linkedLoginSessionId = savedSession.loginSessionId;
+  session.pendingStageId = StageId.Lobby;
+  logger.info("SessionHandoff", "Authenticated GameServer handoff; Lobby transition pending", {
     sessionId: session.sessionId,
+    gameSessionId: session.sessionId,
+    loginSessionId: session.linkedLoginSessionId,
     previousStageId,
     previousStage: formatStageId(previousStageId),
-    targetStageId: StageId.Lobby,
-    targetStage: formatStageId(StageId.Lobby),
+    currentStageId: session.stageId,
+    currentStage: formatStageId(session.stageId),
+    pendingStageId: session.pendingStageId,
+    pendingStage: formatStageId(StageId.Lobby),
     channelIndex: session.channelIndex,
     users: session.users.map((user) => user.username),
     netSlotIds: session.netSlotIds,
     tokenFound: savedSession !== undefined,
+    lobbyEntrySignalObserved: session.lobbyEntryPacketSeen,
   });
 
   // S->C 13: root-vtable slot 48 -> sub_56A9DA -> sub_4B96B1 -> StageId.Lobby (11).
@@ -456,6 +465,11 @@ export function handleSessionAuthHandoff(
 
   logger.info("SessionHandoff", "Sent GameServer Lobby transition sequence", {
     sessionId: session.sessionId,
+    gameSessionId: session.sessionId,
+    loginSessionId: session.linkedLoginSessionId,
+    currentStageId: session.stageId,
+    currentStage: formatStageId(session.stageId),
+    pendingStageId: session.pendingStageId,
     targetStageId: StageId.Lobby,
     targetStage: formatStageId(StageId.Lobby),
     serverOpcodes: [
@@ -464,6 +478,7 @@ export function handleSessionAuthHandoff(
     ],
     feature22Enabled: state.config.enabledFeatures.has(22),
     opcode13PayloadBytes: state.config.enabledFeatures.has(22) ? 1 : 0,
+    lobbyEntrySignalObserved: session.lobbyEntryPacketSeen,
     clientAcceptanceVerified: false,
     clientStageLifecyclePath:
       "sub_4B96B1 -> sub_5AAA5C(StageId 11) -> CMainSystem::sub_5AA3F4 -> sub_5AEF3F(CMainWnd*)",

@@ -501,6 +501,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     // Model the actual separate TCP reconnect: keep the token snapshot, remove the closed
     // LoginServer session, and begin a new GameServer socket with fresh packet state.
     const loginSession1 = session1;
+    expect(state.sessionsByToken.get(token1)?.loginSessionId).toBe(loginSession1.sessionId);
     state.removeSession(loginSession1.sessionId);
     client1 = new SimulatedClient();
     session1 = state.createSession(
@@ -532,7 +533,9 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(client1.popByOpcode(ServerOpcode.StageTransition)).toBeUndefined();
     expect(client1.popByOpcode(ServerOpcode.SelectServerDynamicI16Data)).toBeUndefined();
     expect(client1.popByOpcode(ServerOpcode.QuestConfigSync)?.readU32()).toBe(0);
-    expect(session1.stageId).toBe(StageId.Lobby);
+    expect(session1.stageId).toBe(StageId.SelectServer);
+    expect(session1.pendingStageId).toBe(StageId.Lobby);
+    expect(session1.lobbyEntryPacketSeen).toBe(false);
 
     const handoffReceiveLog = getRecentLogs().findLast(
       (entry) => entry.category === "SessionHandoff" && entry.message === "Received 6 (SessionHandoff)"
@@ -540,11 +543,15 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(handoffReceiveLog?.data?.wireLayout).toBe("sub_5D893D");
     expect(handoffReceiveLog?.data?.networkObjectByte).toBe("14 (0x0E)");
     expect(handoffReceiveLog?.data?.tokenFound).toBe(true);
+    expect(handoffReceiveLog?.data?.linkedLoginSessionId).toBe(loginSession1.sessionId);
     expect(JSON.stringify(handoffReceiveLog?.data)).not.toContain(String(token1));
     const handoffSendLog = getRecentLogs().findLast(
       (entry) => entry.category === "SessionHandoff" && entry.message === "Sent GameServer Lobby transition sequence"
     );
     expect(handoffSendLog?.data?.targetStage).toBe("11 (Lobby)");
+    expect(handoffSendLog?.data?.sessionId).toBe(session1.sessionId);
+    expect(handoffSendLog?.data?.loginSessionId).toBe(loginSession1.sessionId);
+    expect(handoffSendLog?.data?.lobbyEntrySignalObserved).toBe(false);
     expect(handoffSendLog?.data?.serverOpcodes).toEqual([
       "13 (LobbyStageTransition)",
       "75 (QuestConfigSync)",
@@ -563,6 +570,13 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(client1.popByOpcode(ServerOpcode.ChannelLoads)).toBeUndefined();
     expect(client1.popByOpcode(ServerOpcode.MessengerHandoff)).toBeUndefined();
 
+    // S->C 75's client handler emits C->S 83 after requesting any conditional
+    // C->S 9 update. This is an observed Lobby-entry signal, not proof of UI dismissal.
+    client1.sendToServer(state, session1.sessionId, new PacketWriter(ClientOpcode.EnterLobby));
+    expect(session1.stageId).toBe(StageId.Lobby);
+    expect(session1.pendingStageId).toBeNull();
+    expect(session1.lobbyEntryPacketSeen).toBe(true);
+
     // 5b. Post-stage-sync C->S 338 -> S->C 207 (`sub_4BCABF`) -> C->S 282 (`sub_4DD5D3`) -> S->C 205 (`sub_4E0131` `fxdynmapinfo.ssd`)
     client1.sendToServer(state, session1.sessionId, new PacketWriter(ClientOpcode.PostStageSync338).writeU8(1));
     const p207 = client1.popByOpcode(ServerOpcode.DynamicMapAndStageConfig)!;
@@ -579,8 +593,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
       remaining: 0,
     });
 
-    // 6. Enter Lobby (C->S 83 -> S->C 89, 186, 194, 196, 268, 250) & User Info Query (C->S 70 -> S->C 70 + S->C 81)
-    client1.sendToServer(state, session1.sessionId, new PacketWriter(83));
+    // 6. Consume the Lobby sync frames queued after the earlier C->S 83, then query User Info.
     expect(client1.popByOpcode(89)).toBeDefined();
     expect(client1.popByOpcode(186)).toBeDefined();
     const p194_init = client1.popByOpcode(ServerOpcode.InventoryData)!;
@@ -593,6 +606,10 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(client1.popByOpcode(ServerOpcode.CoupleInfoSync)).toBeDefined();
 
     const lobbyInitLog = getRecentLogs().findLast((entry) => entry.category === "LobbyInit");
+    expect(lobbyInitLog?.data?.clientRequest).toBe("83 (EnterLobby)");
+    expect(lobbyInitLog?.data?.linkedLoginSessionId).toBe(loginSession1.sessionId);
+    expect(lobbyInitLog?.data?.lobbyEntrySignalObserved).toBe(true);
+    expect(lobbyInitLog?.data?.clientUiModalStateObservable).toBe(false);
     expect(lobbyInitLog?.data?.playerCount).toBe(1);
     expect(lobbyInitLog?.data?.serverOpcodes).toEqual([
       "89 (ExpSync)",
@@ -705,7 +722,20 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     );
     expect(client2.popByOpcode(ServerOpcode.LobbyStageTransition)?.readU8()).toBe(0);
     expect(client2.popByOpcode(ServerOpcode.QuestConfigSync)?.readU32()).toBe(0);
+    expect(session2.stageId).toBe(StageId.SelectServer);
+    expect(session2.pendingStageId).toBe(StageId.Lobby);
+    client2.sendToServer(state, session2.sessionId, new PacketWriter(ClientOpcode.EnterLobby));
     expect(session2.stageId).toBe(StageId.Lobby);
+    for (const opcode of [
+      ServerOpcode.ExpSync,
+      ServerOpcode.LucciSync,
+      ServerOpcode.InventoryData,
+      ServerOpcode.EquippedAvatarData,
+      ServerOpcode.InventoryExpansionSlots,
+      ServerOpcode.CoupleInfoSync,
+    ]) {
+      client2.popByOpcode(opcode);
+    }
 
     client2.sendToServer(
       state,
@@ -1803,7 +1833,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
 
     expect(client.popByOpcode(ServerOpcode.LobbyStageTransition)).toBeUndefined();
     expect(client.popByOpcode(ServerOpcode.QuestConfigSync)).toBeUndefined();
-    expect(session.stageId).toBe(StageId.Login);
+    expect(session.stageId).toBe(StageId.SelectServer);
     expect(session.users).toHaveLength(0);
     expect(state.db.getUserByUsername("untrusted_user")).toBeNull();
     expect(
@@ -1842,13 +1872,15 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
       const closeLog = getRecentLogs().findLast(
         (entry) =>
           entry.category === "TCP" &&
-          entry.message === "LoginServer TCP socket closed" &&
+          entry.message.startsWith("LoginServer TCP socket closed\n") &&
           entry.data?.sessionId === sessionId
       );
       expect(closeLog?.data?.closeInitiator).toBe("server-requested");
       expect(closeLog?.data?.serverCloseReason).toBe("server-shutdown");
       expect(closeLog?.data?.serverToClientWriteCalls).toBe(1);
       expect(closeLog?.data?.clientToServerDecodedPackets).toBe(0);
+      expect(closeLog?.message).toContain("Packet timeline (S->C entries are socket.write calls");
+      expect(closeLog?.message).toContain("S->C [write-call] ConnectHello");
     } finally {
       client?.close();
       if (!stopped) server.stop();
@@ -1905,6 +1937,11 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(p7.readU32()).toBe(0);
     expect(p7.readU32()).toBe(0xcb007107); // advertised PUBLIC_IP, not local 127.0.0.1
     expect(p7.readU16()).toBe(ports.gameTcpPort);
+    const linkedLoginSessionId = [...server.state.sessions.values()].find(
+      (session) => session.connectionKind === "login"
+    )?.sessionId;
+    expect(linkedLoginSessionId).toBeDefined();
+    expect(server.state.sessionsByToken.get(authToken)?.loginSessionId).toBe(linkedLoginSessionId);
 
     // `sub_56C0C8` closes the LoginServer socket before connecting to the advertised GameServer.
     loginClient.close();
@@ -1939,7 +1976,10 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
         (session) => session.connectionKind === "game"
       );
       gameSessionId = gameSession?.sessionId;
-      expect(gameSession?.stageId).toBe(StageId.Lobby);
+      expect(gameSession?.stageId).toBe(StageId.SelectServer);
+      expect(gameSession?.pendingStageId).toBe(StageId.Lobby);
+      expect(gameSession?.lobbyEntryPacketSeen).toBe(false);
+      expect(gameSession?.linkedLoginSessionId).toBe(linkedLoginSessionId);
       expect(gameSession?.channelIndex).toBe(0);
       expect(gameSession?.users[0]?.username).toBe("live_tester");
 
@@ -1959,6 +1999,9 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
       );
       gameClient.send(new PacketWriter(ClientOpcode.EnterLobby));
       expect((await lobbyInit).readU8()).toBe(0);
+      expect(gameSession?.stageId).toBe(StageId.Lobby);
+      expect(gameSession?.pendingStageId).toBeNull();
+      expect(gameSession?.lobbyEntryPacketSeen).toBe(true);
 
       const uploadLogs = getRecentLogs().filter((entry) => entry.category === "CrashDump");
       expect(uploadLogs).toHaveLength(2);
@@ -2018,7 +2061,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     const gameCloseLog = getRecentLogs().findLast(
       (entry) =>
         entry.category === "TCP" &&
-        entry.message === "GameServer TCP socket closed" &&
+        entry.message.startsWith("GameServer TCP socket closed\n") &&
         entry.data?.sessionId === gameSessionId
     );
     expect(gameCloseLog?.data?.closeInitiator).toBe("unknown");
@@ -2026,8 +2069,11 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(gameCloseLog?.data?.clientToServerDecodedPackets).toBe(5);
     expect(gameCloseLog?.data?.serverToClientWriteCalls).toBe(9);
     expect(gameCloseLog?.data?.pendingReceiveBytes).toBe(0);
-    expect(gameCloseLog?.data?.packetFlow).toContain("C->S 83 (EnterLobby)");
-    expect(gameCloseLog?.data?.packetFlow).toContain("S->C 89 (ExpSync)");
-    expect(gameCloseLog?.data?.packetFlow).not.toContain("live_tester");
+    expect(gameCloseLog?.data?.lobbyEntryPacketSeen).toBe(true);
+    expect(gameCloseLog?.data?.linkedLoginSessionId).toBe(linkedLoginSessionId);
+    expect(gameCloseLog?.message).toContain("C->S [decoded] 83 (EnterLobby)");
+    expect(gameCloseLog?.message).toContain("S->C [write-call] 89 (ExpSync)");
+    expect(gameCloseLog?.message).toContain("modal/UI state remains unobservable");
+    expect(gameCloseLog?.message).not.toContain("live_tester");
   });
 });

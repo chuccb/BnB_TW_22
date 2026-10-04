@@ -30,4 +30,4 @@ By default, the Taiwan v22 endpoints are:
 | GameServer | 9339 | 9340 |
 | Messenger handoff | 8339 | — |
 
-Set `PUBLIC_IP` to the IPv4 address that the client can reach. Set `HOST` to the local bind address (normally `0.0.0.0`); these are intentionally different settings. Logs default to concise `info` summaries, including a packet-metadata timeline when a TCP session closes. Set `BNB_LOG_LEVEL=debug` for per-frame framing details; outbound logs do not prove client receipt or parsing.
+Set `PUBLIC_IP` to the IPv4 address that the client can reach. Set `HOST` to the local bind address (normally `0.0.0.0`); these are intentionally different settings. Logs default to concise `info` summaries, including a multi-line TCP packet timeline at close (`C->S [decoded]` vs. `S->C [write-call]`). Handoff logs correlate LoginServer/GameServer session IDs without logging auth tokens; no server log can prove that the client received a write or closed a local modal. Set `BNB_LOG_LEVEL=debug` for per-frame framing details.
