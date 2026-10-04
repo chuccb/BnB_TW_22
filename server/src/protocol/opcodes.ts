@@ -249,7 +249,7 @@ export const ServerOpcode = {
   LobbyGuildUserOnlyNotice: 15, // CLobbyStage::sub_4C86A2 -> sub_4C5DE7; modal + PostQuitMessage
   ShopInitAndStage14: 16, // sub_4BB82A: shop checksums (fxstock, stringtable, packagemap) + qmarksfn.ssd + banners
   PingRequest: 18, // CStage::sub_4BDBF5: [u32 tick, u32 seq]
-  UserDynamicInfoSync: 19, // CStage::sub_4BDBF5 case 19 -> stage vtable +0xDC -> sub_4BA3BA -> sub_5ED779; current server does not send this readiness update
+  UserDynamicInfoSync: 19, // SelectServer/Lobby base fallback +0xDC -> sub_4BA3BA -> sub_5ED779; LoginStage +0xDC is a `ret 4` no-op; current server sends no S->C 19
   NormalChat: 21, // CChatStage::sub_4B070C / CGameStage::sub_4F4D49
   WhisperOrEmotion: 23, // CChatStage::sub_4A8727 / CGameStage::sub_4F4F4B
   WhisperDeliveryStatus: 24, // CChatStage::sub_4AE106
