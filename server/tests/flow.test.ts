@@ -371,8 +371,11 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(client1.popByOpcode(ServerOpcode.MultiServerSsd)?.readU8()).toBe(0);
     const p53 = client1.popByOpcode(ServerOpcode.FilterStringSsd)!;
     expect(p53).toBeDefined();
-    expect(p53.readU8()).toBe(0);
-    expect(p53.readU8()).toBe(0);
+    // Observed S->C 53 has 3 payload bytes (u16 opcode + flag) and 10 frame bytes.
+    // Degree-3 framing adds seven bytes; only the flag remains after the opcode.
+    expect(p53.remaining).toBe(1);
+    expect(p53.readU8()).toBe(0); // sub_5C8BE3 reads only hasFilterStream when no stream is sent.
+    expect(p53.remaining).toBe(0); // No packet-level extraCount follows the flag.
 
     //    Now test when client has stale/missing `.ssd` files (`checksum = 1`) -> server streams all 5 `.ssd` files (`hasStream = 1`)!
     client1.sendToServer(
@@ -416,7 +419,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
       entryCount: 30,
       remaining: 0,
     });
-    expect(p53Stream.readU8()).toBe(0); // extraCount = 0
+    expect(p53Stream.remaining).toBe(0); // No packet-level field follows the SmartStream.
 
     // A non-sentinel custom multisvr CRC indicates the client edited its local server list;
     // the LoginServer must not overwrite that file with its generated localhost entry.
@@ -433,15 +436,23 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(client1.popByOpcode(ServerOpcode.DynamicImgInfoSsd)?.readU8()).toBe(0);
     expect(client1.popByOpcode(ServerOpcode.SystemStringSsd)?.readU8()).toBe(0);
     expect(client1.popByOpcode(ServerOpcode.MultiServerSsd)?.readU8()).toBe(0);
-    expect(client1.popByOpcode(ServerOpcode.FilterStringSsd)?.readU8()).toBe(0);
+    const p53Custom = client1.popByOpcode(ServerOpcode.FilterStringSsd)!;
+    expect(p53Custom.readU8()).toBe(0);
+    expect(p53Custom.remaining).toBe(0);
 
     // Legacy INI checks (C->S 252, 267, 294, 305)
     client1.sendToServer(state, session1.sessionId, new PacketWriter(252).writeU32(0xdcec1a37));
     expect(client1.popByOpcode(157)?.readU8()).toBe(0);
     client1.sendToServer(state, session1.sessionId, new PacketWriter(267));
     expect(client1.popByOpcode(163)?.readString()).toContain("http");
-    client1.sendToServer(state, session1.sessionId, new PacketWriter(294).writeU32(0x6683b836));
-    expect(client1.popByOpcode(179)?.readU8()).toBe(0);
+    client1.sendToServer(
+      state,
+      session1.sessionId,
+      new PacketWriter(ClientOpcode.CheckStringTableLegacy).writeU32(0x6683b836)
+    );
+    const p179 = client1.popByOpcode(ServerOpcode.StringTableCheckAck)!;
+    expect(p179.readU8()).toBe(0);
+    expect(p179.remaining).toBe(0);
     client1.sendToServer(state, session1.sessionId, new PacketWriter(305).writeU32(0xb5c71db3));
     expect(client1.popByOpcode(188)?.readU8()).toBe(0);
 
@@ -805,6 +816,29 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     ]) {
       client2.popByOpcode(opcode);
     }
+
+    // C->S 303 has multiple Client writers: this Lobby/Prepare caller includes a byte,
+    // while CShopStage::sub_5382EA sends only the opcode.
+    const lobbyUser = session2.users[0]!;
+    client2.sendToServer(
+      state,
+      session2.sessionId,
+      new PacketWriter(ClientOpcode.QueryAvatarLucciSync).writeU8(0)
+    );
+    const p186Indexed = client2.popByOpcode(ServerOpcode.LucciSync)!;
+    expect(p186Indexed.readU32()).toBe(0);
+    expect(p186Indexed.readU32()).toBe(lobbyUser.lucci);
+    expect(p186Indexed.remaining).toBe(0);
+
+    client2.sendToServer(
+      state,
+      session2.sessionId,
+      new PacketWriter(ClientOpcode.QueryAvatarLucciSync)
+    );
+    const p186Empty = client2.popByOpcode(ServerOpcode.LucciSync)!;
+    expect(p186Empty.readU32()).toBe(0);
+    expect(p186Empty.readU32()).toBe(lobbyUser.lucci);
+    expect(p186Empty.remaining).toBe(0);
 
     client2.sendToServer(
       state,
@@ -1692,8 +1726,21 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
         .writeString("dao_tw")
         .writeString("GG well played!")
     );
-    expect(client1.popByOpcode(ServerOpcode.SmsSendResult)?.readU8()).toBe(10); // 10 = MessageSuccess
-    expect(client2.popByOpcode(ServerOpcode.SmsNewNotice)?.readU8()).toBe(1); // 1 = new mail popup
+    const p242 = client1.popByOpcode(ServerOpcode.SmsSendResult)!;
+    expect(p242.readU8()).toBe(10); // 10 = MessageSuccess
+    expect(p242.remaining).toBe(0);
+    const p246Notice = client2.popByOpcode(ServerOpcode.SmsNewNotice)!;
+    expect(p246Notice.readU8()).toBe(1); // 1 = new mail popup
+    expect(p246Notice.remaining).toBe(0);
+
+    client2.sendToServer(
+      state,
+      session2.sessionId,
+      new PacketWriter(ClientOpcode.SmsQuery).writeString("dao_tw").writeU8(1)
+    );
+    const p246Unread = client2.popByOpcode(ServerOpcode.SmsNewNotice)!;
+    expect(p246Unread.readU8()).toBe(1); // The received message is unread.
+    expect(p246Unread.remaining).toBe(0);
 
     client2.sendToServer(
       state,
@@ -1707,13 +1754,38 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     const smsId = p243.readU32();
     expect(p243.readString()).toBe("bazzi_tw");
     expect(p243.readString()).toBe("GG well played!");
+    const month = p243.readU16();
+    const day = p243.readU16();
+    const hour = p243.readU16();
+    const minute = p243.readU16();
+    expect(month).toBeGreaterThanOrEqual(1);
+    expect(month).toBeLessThanOrEqual(12);
+    expect(day).toBeGreaterThanOrEqual(1);
+    expect(day).toBeLessThanOrEqual(31);
+    expect(hour).toBeGreaterThanOrEqual(0);
+    expect(hour).toBeLessThan(24);
+    expect(minute).toBeGreaterThanOrEqual(0);
+    expect(minute).toBeLessThan(60);
+    expect(p243.readU8()).toBe(0); // newly received / unread
+    expect(p243.remaining).toBe(0);
 
     client2.sendToServer(
       state,
       session2.sessionId,
       new PacketWriter(ClientOpcode.SmsDelete).writeString("dao_tw").writeU32(smsId)
     );
-    expect(client2.popByOpcode(ServerOpcode.SmsDeleteResult)?.readU8()).toBe(1);
+    const p244 = client2.popByOpcode(ServerOpcode.SmsDeleteResult)!;
+    expect(p244.readU8()).toBe(1);
+    expect(p244.remaining).toBe(0);
+
+    client2.sendToServer(
+      state,
+      session2.sessionId,
+      new PacketWriter(ClientOpcode.SmsDeleteAll).writeString("dao_tw")
+    );
+    const p245 = client2.popByOpcode(ServerOpcode.SmsDeleteAllResult)!;
+    expect(p245.readU8()).toBe(1);
+    expect(p245.remaining).toBe(0);
 
     // 18d. Couple Ring (`CCouple` `304..306` -> `S->C 251..254`)
     client1.sendToServer(
@@ -1808,7 +1880,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     );
     const p50 = client1.popByOpcode(ServerOpcode.MacroList)!;
     expect(p50).toBeDefined();
-    expect(p50.remaining).toBe(0);
+    expect(p50.remaining).toBe(0); // Empty body means zero 19-byte records; macro persistence is unsupported.
 
     // Shop Coupon Code (`C->S 286` -> `S->C 204`, `CCouponDlg::sub_5B6215`) & NexonClub (`C->S 284` -> `S->C 232`, `CStage::sub_4BC337`)
     client1.sendToServer(

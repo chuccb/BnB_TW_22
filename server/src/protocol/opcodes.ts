@@ -200,7 +200,7 @@ export const ClientOpcode = {
   SmsDeleteAll: 300, // CSmsDlg::sub_47F5F7: [str username] -> S->C 245
   LobbyInitQuery: 301, // CLobbyStage::sub_4C99DC: empty
   MyPagePreOpen: 302, // CStage::sub_4BC236: empty
-  QueryAvatarLucciSync: 303, // CStage::sub_4BB107 / sub_55195E / sub_5382EA: [u8 playerIdx] -> S->C 186
+  QueryAvatarLucciSync: 303, // sub_4BB107: [u8 loop index]; sub_55195E: [u8 a2, meaning UNKNOWN]; sub_5382EA: empty -> S->C 186
   CouplePropose: 304, // sub_5BA82D: [u8 playerIdx, str partnerName, str message] -> S->C 251 + S->C 252
   CheckFxStockLegacy: 305, // sub_5B9FD6: [u8 playerIdx, u8 accept] (CoupleRespond) or legacy fxstock check
   CoupleRespond: 305,
@@ -258,7 +258,7 @@ export const ServerOpcode = {
   GuildOrUserStatus: 34, // CMyInfoDlg::sub_54466F / CExchangeStage::sub_55B6DB
   ShopReturnHandoff: 41, // CShopConnectionMan::sub_52A23C: [u16, u16, u32 key, str, u8=11]
   ShopServerEndpoint: 48, // CShopConnectionMan::sub_529E8D: [u8 ok, if ok: u8 flag, u32 opaque, u32 ipHostLong, u16 portHostShort]
-  MacroList: 50, // sub_4A27CB: macro strings
+  MacroList: 50, // sub_4A27CB: repeat to EOF [u32 value, u8[15] fields]; empty body = 0 records
   FilterStringSsd: 53, // sub_5C8BE3: filterstr.ssd
   CheckIdResult: 59,
   MapNameOverrides: 60, // sub_5D9F0B -> sub_5C578E: [i32 count, count*(u32 mapId, str name)]
@@ -336,7 +336,7 @@ export const ServerOpcode = {
   // Config / Shop / Inventory / UserMarket / Couple / SMS Responses
   PackageMapCheckAck: 157, // sub_5A1CD8
   NoticeUrlSync: 163, // sub_5A1DF3
-  StringTableCheckAck: 179, // sub_5A1B77
+  StringTableCheckAck: 179, // reply to C->S 294; reconstruction writes u8(0), Client handler UNKNOWN
   LucciSync: 186, // CStage::sub_4BDBF5 -> sub_4B93FD -> sub_5ED36F: [u32 playerIdx, u32 value narrowed to char]; field meaning needs validation
   FxStockCheckAck: 188, // CUserInventoryMan::sub_5953FE (InventoryUpdate) / sub_5A1A03 (legacy)
   InventoryUpdate: 188, // CUserInventoryMan::sub_5953FE

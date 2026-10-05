@@ -562,7 +562,9 @@ export function handleCommonPacket(
     }
 
     case ClientOpcode.MacroListQuery: {
-      // C->S 40 (`sub_4A29A1`) -> S->C 50 (`sub_4A27CB`)
+      // C->S 40 (`sub_4A29A1`) -> S->C 50 (`sub_4A27CB`), whose Client parser reads
+      // repeated [u32 value, u8[15]] records until EOF. Macro persistence is not implemented,
+      // so this reconstruction currently answers with an empty (zero-record) packet.
       const w50 = new PacketWriter(ServerOpcode.MacroList);
       session.sendPacket(w50);
       break;

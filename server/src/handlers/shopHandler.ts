@@ -1331,11 +1331,13 @@ export function handleShopPacket(
     }
 
     case ClientOpcode.QueryAvatarLucciSync: {
-      const localIdx = reader.remaining >= 1 ? reader.readU8() : 0;
-      const u = session.users[localIdx] ?? session.users[0];
+      // Client emits either one u8 (a loop index in sub_4BB107; sub_55195E's a2
+      // semantics are UNKNOWN) or an empty request (sub_5382EA). Empty defaults to player 0.
+      const requestValue = reader.remaining >= 1 ? reader.readU8() : 0;
+      const u = session.users[requestValue] ?? session.users[0];
       if (u) {
         const w186 = new PacketWriter(ServerOpcode.LucciSync);
-        w186.writeU32(localIdx);
+        w186.writeU32(requestValue);
         w186.writeU32(u.lucci);
         session.sendPacket(w186);
       }
