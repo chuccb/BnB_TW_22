@@ -3,7 +3,31 @@ import { ClientOpcode, ServerOpcode, StageId } from "../protocol/opcodes.ts";
 import { PacketReader, PacketWriter } from "../protocol/primitives.ts";
 import { SmartStreamWriter } from "../protocol/stream.ts";
 import type { ClientSession, WorldState } from "../state/worldState.ts";
-import { formatStageId, logger } from "../utils/logger.ts";
+import { formatClientOpcode, formatStageId, logger } from "../utils/logger.ts";
+
+function observeClientPacketWithoutReply(
+  session: ClientSession,
+  opcode: number,
+  reader: PacketReader,
+  payloadSchema: string,
+  explanation: string
+): void {
+  const payloadBytes = reader.remaining;
+  reader.offset = reader.plain.length;
+  logger.info("PacketAudit", `Observed ${formatClientOpcode(opcode)}; ${explanation}`, {
+    direction: "C->S",
+    wireOpcode: opcode,
+    opcodeName: formatClientOpcode(opcode),
+    sessionId: session.sessionId,
+    connectionKind: session.connectionKind,
+    stageId: formatStageId(session.stageId),
+    payloadBytes,
+    payloadSchema,
+    responseAssociation: "UNKNOWN",
+    responseSent: false,
+    databaseMutation: false,
+  });
+}
 
 /**
  * Writes a single `CRankMan` rank entry matching `sub_4A4FBD` (`0x004A4FBD`):
@@ -695,7 +719,7 @@ export function handleCommonPacket(
       break;
     }
 
-    case ClientOpcode.CheckIdOrNormalChat: {
+    case ClientOpcode.ContextualClientPacket16: {
       const msg = reader.remaining >= 2 ? reader.readString() : "";
       const senderName = session.users[0]?.username ?? `Player${session.sessionId}`;
       broadcastNormalChat(state, session, senderName, msg);
@@ -786,29 +810,6 @@ export function handleCommonPacket(
       break;
     }
 
-    case ClientOpcode.ChatMessageWithType: {
-      let chatType = 0;
-      if (reader.remaining >= 3) {
-        const saved = reader.offset;
-        const candidateType = reader.readU8();
-        const nextLen = reader.readU16();
-        reader.offset = saved;
-        if (nextLen === reader.remaining - 3 || candidateType <= 4) {
-          chatType = reader.readU8();
-        }
-      }
-      const msg = reader.remaining >= 2 ? reader.readString() : "";
-      const targetName = reader.remaining >= 2 ? reader.readString() : "";
-      const senderName = session.users[0]?.username ?? `Player${session.sessionId}`;
-
-      if (chatType === 2 && targetName) {
-        sendWhisperChat(state, session, senderName, targetName, msg);
-      } else {
-        broadcastNormalChat(state, session, senderName, msg);
-      }
-      break;
-    }
-
     case ClientOpcode.RoomEmotion:
     case ClientOpcode.EquipQuickSlotOrEmotion: {
       const slotIdx = reader.remaining >= 1 ? reader.readU8() : (session.roomSlotIndices[0] ?? 0);
@@ -891,46 +892,35 @@ export function handleCommonPacket(
       break;
     }
 
-    case ClientOpcode.UserPagePacket68: {
-      // C->S 68 (`sub_53DEEA`) emits one stored-name string. Its Client response route/schema is
-      // UNKNOWN; the local S->C 34 `u8 + string` below is reconstruction policy, not binary evidence.
-      // The observed Client S->C 34 route is the context-dependent NexonClub status reader.
-      const targetName = reader.remaining >= 2 ? reader.readString() : "";
-      const targetUser =
-        (targetName ? state.db.getUserByUsername(targetName) : null) ?? session.users[0];
-      const w34 = new PacketWriter(ServerOpcode.StatusResult34);
-      w34.writeU8(1);
-      w34.writeString(targetUser?.guildName ?? "");
-      session.sendPacket(w34);
+    case ClientOpcode.UserPagePacket68:
+      observeClientPacketWithoutReply(
+        session,
+        opcode,
+        reader,
+        "one stored-name string in the recovered writer",
+        "no matching response association recovered; do not send the unrelated S->C 34 NexonClub status"
+      );
       break;
-    }
 
-    case ClientOpcode.UserPagePacket290: {
-      // C->S 290 (`sub_53DEEA`: `[str partnerName]`). The Client's response opcode/schema is
-      // UNKNOWN here; sub_544049 is called from the S->C 220 path, not established as 290's reply.
-      // The following S->C 242 fields are local reconstruction policy, not a verified Client contract.
-      const partnerName = reader.remaining >= 2 ? reader.readString() : "";
-      const partner = partnerName ? state.db.getUserByUsername(partnerName) : null;
-      const w242 = new PacketWriter(ServerOpcode.SmsSendResult);
-      w242.writeU8(partner ? 1 : 0);
-      w242.writeString(partner?.username ?? partnerName);
-      session.sendPacket(w242);
+    case ClientOpcode.UserPagePacket290:
+      observeClientPacketWithoutReply(
+        session,
+        opcode,
+        reader,
+        "one stored-name string in the recovered writer",
+        "Client response opcode/schema UNKNOWN; the local S->C 242 association is withdrawn"
+      );
       break;
-    }
 
-    case ClientOpcode.UserPagePacket293: {
-      // `sub_53DEEA` emits one string for C->S 293. The Client's S->C 220 parser is known, but
-      // a 293->220 response association is not proven. Keep the local response empty and valid.
-      if (reader.remaining >= 2) reader.readString();
-      const w220 = new PacketWriter(ServerOpcode.MyPageData220);
-      w220.writeU8(0); // zero entries in the first u8-counted index/value table
-      w220.writeU16(0); // opaque u16 field
-      w220.writeU8(0); // opaque u8 field
-      w220.writeU16(0); // empty first u32 list
-      w220.writeU16(0); // empty second u32 list
-      session.sendPacket(w220);
+    case ClientOpcode.UserPagePacket293:
+      observeClientPacketWithoutReply(
+        session,
+        opcode,
+        reader,
+        "one stored-name string in the recovered writer; caller-gated",
+        "Client response association UNKNOWN; do not infer S->C 220 from its separate parser"
+      );
       break;
-    }
 
     case ClientOpcode.SmsSend: {
       // C->S 297 (`CSmsDlg::sub_4810F3`: `[str senderName, str receiverName, str message]`) -> S->C 242 (`sub_4838E8`)
@@ -1030,19 +1020,22 @@ export function handleCommonPacket(
       const partner = partnerName ? state.db.getUserByUsername(partnerName) : null;
 
       if (!proposer || !partner) {
-        const w252 = new PacketWriter(ServerOpcode.CoupleProposeStatus);
+        const w252 = new PacketWriter(ServerOpcode.CoupleStatus252);
         w252.writeU8(playerIdx);
-        w252.writeU8(3); // 3 = CanNotPropose (`sub_5BAE51`)
+        w252.writeU8(3); // Local demo status; official response policy UNKNOWN.
         w252.writeString(partnerName);
+        w252.writeString(""); // Client S->C 252 parser unconditionally reads a second string; meaning UNKNOWN.
         session.sendPacket(w252);
         break;
       }
 
-      // Send S->C 252 / 253 status=2 (waiting) to proposer (`sub_5BBAA7`)
-      const w252 = new PacketWriter(ServerOpcode.CoupleProposeStatus);
+      // Local couple-flow policy only; the Client S->C 252 parser reads two strings.
+      // The second field's meaning and the official response association are UNKNOWN.
+      const w252 = new PacketWriter(ServerOpcode.CoupleStatus252);
       w252.writeU8(playerIdx);
       w252.writeU8(2);
       w252.writeString(partner.username);
+      w252.writeString("");
       session.sendPacket(w252);
 
       // If partner is online, send S->C 251 incoming proposal (`sub_5BAA90`)
@@ -1070,14 +1063,12 @@ export function handleCommonPacket(
       const partnerName = couple?.partnerName ?? "Partner";
 
       if (accept !== 0) {
-        // Send S->C 253 (`sub_5BBD3E` status=12 couple accepted/congratulate)
+        // Local C->S 305 success response policy; the Client S->C 253 parser reads u8, u8, str.
         const makeW253 = (pName: string) => {
-          const w253 = new PacketWriter(ServerOpcode.CoupleCongratulate);
-          w253.writeU8(0);
-          w253.writeU8(12); // 12 = accepted (`sub_5BBD3E`)
+          const w253 = new PacketWriter(ServerOpcode.CoupleStatus253);
+          w253.writeU8(0); // local playerIdx
+          w253.writeU8(12); // Local status choice; production meaning/association UNKNOWN.
           w253.writeString(pName);
-          w253.writeString(pName);
-          w253.writeU8(1); // coupleGrade = 1
           return w253;
         };
         session.sendPacket(makeW253(partnerName));
@@ -1091,10 +1082,11 @@ export function handleCommonPacket(
         }
         const partnerSession = state.findSessionByUsername(partnerName);
         if (partnerSession && responder) {
-          const w252 = new PacketWriter(ServerOpcode.CoupleProposeStatus);
+          const w252 = new PacketWriter(ServerOpcode.CoupleStatus252);
           w252.writeU8(0);
-          w252.writeU8(14); // 14 = ProposeRejected (`sub_5BAE51`)
+          w252.writeU8(14); // Local status choice; official meaning/policy UNKNOWN.
           w252.writeString(responder.username);
+          w252.writeString(""); // Client S->C 252 parser always consumes a second string.
           partnerSession.sendPacket(w252);
         }
       }
@@ -1102,7 +1094,7 @@ export function handleCommonPacket(
     }
 
     case ClientOpcode.CoupleBreakup: {
-      // C->S 306 (`CCouple::sub_5BA899`: `[u8 playerIdx]`) -> S->C 254 (`sub_5BC155`)
+      // C->S 306 (`CCouple::sub_5BA899`: `[u8 playerIdx]`); local S->C 254 fan-out is reconstruction policy only.
       const playerIdx = reader.remaining >= 1 ? reader.readU8() : 0;
       const user = session.users[playerIdx] ?? session.users[0];
       if (user) {

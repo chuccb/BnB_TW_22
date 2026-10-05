@@ -2,7 +2,7 @@ import { ClientOpcode, ServerOpcode, StageId } from "../protocol/opcodes.ts";
 import { ipv4ToBytes, PacketReader, PacketWriter, unixMsToVariantTime } from "../protocol/primitives.ts";
 import { SmartStreamWriter } from "../protocol/stream.ts";
 import type { ClientSession, WorldState } from "../state/worldState.ts";
-import { formatStageId, logger } from "../utils/logger.ts";
+import { formatClientOpcode, formatStageId, logger } from "../utils/logger.ts";
 
 /**
  * Builds S->C 194 (`CUserInventoryMan::sub_595272` -> `sub_594ECF`) full inventory load
@@ -556,10 +556,8 @@ export function handleShopPacket(
       session.stageId = StageId.Shop;
       session.sendPacket(buildShopInitPacket16(state, session));
 
-      const w9 = new PacketWriter(ServerOpcode.StageTransition);
-      w9.writeU32(StageId.Shop);
-      session.sendPacket(w9);
-
+      // Do not append S->C 9 as a stage transition: the current Client's generic
+      // fallback parses opcode 9 as a Crash_CA.dmp file offset and may prompt C->S 8.
       session.sendPacket(buildUserStockPacket(state, session));
       session.sendPacket(buildInventoryPacket(state, session, ServerOpcode.InventoryData));
       session.sendPacket(buildEquippedAvatarPacket196(state, session));
@@ -567,34 +565,23 @@ export function handleShopPacket(
     }
 
     case ClientOpcode.StageAction323: {
-      const fieldA = reader.readU8();
-      const fieldB = reader.readU8();
-      const trailingPayloadBytes = reader.remaining;
-      if (trailingPayloadBytes > 0) {
-        logger.warn("Shop", "C->S 323 has unexpected trailing bytes", {
-          sessionId: session.sessionId,
-          stageId: formatStageId(session.stageId),
-          fieldA,
-          fieldB,
-          trailingPayloadBytes,
-        });
-        reader.offset = reader.plain.length;
-      }
-
-      // Local reconstruction policy only; the Client writer does not establish this server response.
-      session.stageId = StageId.Shop;
-      session.sendPacket(buildShopInitPacket16(state, session));
-
-      const w9 = new PacketWriter(ServerOpcode.StageTransition);
-      w9.writeU32(StageId.Shop);
-      session.sendPacket(w9);
-      logger.debug("Shop", "Applied local C->S 323 stage-action policy", {
+      // The Client writer is gated and emits two u8 fields, but neither their semantics nor
+      // an S->C response association is established. Observe without changing stage or replying.
+      const payloadBytes = reader.remaining;
+      reader.offset = reader.plain.length;
+      logger.info("PacketAudit", "Observed C->S 323; Client writer is gated and server response policy is UNKNOWN", {
+        direction: "C->S",
+        wireOpcode: ClientOpcode.StageAction323,
+        opcodeName: formatClientOpcode(ClientOpcode.StageAction323),
         sessionId: session.sessionId,
+        connectionKind: session.connectionKind,
         stageId: formatStageId(session.stageId),
-        fieldA,
-        fieldB,
-        trailingPayloadBytes,
-        responsePolicy: "StageId.Shop + S->C 16/9 (local; official server behavior unverified)",
+        payloadBytes,
+        payloadSchema: "two u8 fields in the recovered writer; field meanings UNKNOWN",
+        semanticRole: "UNKNOWN",
+        responseAssociation: "UNKNOWN",
+        responseSent: false,
+        databaseMutation: false,
       });
       break;
     }

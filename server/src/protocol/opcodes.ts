@@ -1,11 +1,11 @@
 /**
- * Strongly-typed protocol opcodes and client stage identifiers extracted from `CA.exe.c`
- * and `.rdata` virtual tables (`0x7B322C`–`0x7C2204`).
+ * Strongly-typed protocol mappings based on current-build `CA.exe` machine code,
+ * `CA.exe.c`, and `.rdata` virtual tables (`0x7B322C`–`0x7C2204`).
  *
- * Uses TypeScript's `as const satisfies` so callers get both literal numeric types
- * and self-documenting symbolic names across all stage handlers.
- *
- * This is a working symbolic inventory, not proof of exhaustive wire coverage.
+ * `ClientOpcode` / `ServerOpcode` are reconstruction-side symbols, not enum metadata
+ * recovered from the Client PE. Each member's comment carries its own evidence limits.
+ * Uses `as const satisfies` for literal numeric types and readable handler names.
+ * This working inventory is not proof of exhaustive wire coverage.
  * Numeric aliases, stage-dependent overloads, incomplete parser associations, and
  * unresolved Client receive paths are tracked in `server/docs/unknowns.md` (RE-12).
  */
@@ -13,8 +13,8 @@
 export const StageId = {
   Login: 1, // CLoginStage (0x00567400)
   Credit: 3, // CCreditStage (0x004BF1FF)
-  Agreement: 8, // CAgreementStage (0x004A6E26)
-  OnePageId: 9, // COnePageIDStage (0x0050EB5A)
+  UnverifiedStage8: 8, // Prior CAgreementStage attribution is unsupported in this build; cited VA 0x004A6E26 is inside sub_4A6D91, and the main stage factory has no case 8.
+  UnverifiedStage9: 9, // Prior COnePageIDStage attribution is unsupported in this build; cited VA 0x0050EB5A is inside sub_50EA21, and the main stage factory has no case 9.
   SelectServer: 10, // CSelectServerStage (0x0056A9DA)
   Lobby: 11, // CLobbyStage (0x004C86A2)
   Prepare: 12, // CPrepareStage (0x004DCF07)
@@ -29,7 +29,7 @@ export const StageId = {
 export type StageIdValue = (typeof StageId)[keyof typeof StageId];
 
 export const ClientOpcode = {
-  // Pre-Login & Authentication (CFxApp / CLoginStage / COnePageIDStage / CNCPasswordDlg / CEKeyDlg)
+  // Login, Registration & Security (CFxApp / CLoginStage / CNewUserDlg / password and E-Key dialogs)
   PreLoginSsdCheck: 0, // sub_5A1E40: [u32 dynamic-img context, u32 csysstr, u32 multisvr, u32 filterstr, (opt u32 multisvrn)]
   LoginCredentials: 2, // sub_5D8BD8: 1P/2P keyed username (0x11223344) + password (0x44332211)
   NewUserIdentifierCheck3: 3, // CNewUserDlgChina::sub_496AA6 [str, u8 selector] or CNewUserDlg::sub_498367 [str]; response UNKNOWN, not channel selection
@@ -44,17 +44,17 @@ export const ClientOpcode = {
   ClientReportOrLobbyEnter: 12, // CStage report or lobby enter alias
   ReturnToChannelSelect: 13, // CLobbyStage::sub_4C1944
   ClientPeriodicStatus: 14, // sub_5AA9CC, emitted by sub_5AB8CB after >5000 ms: [u32 timeGetTime, u32 opaque context]
-  CheckIdOrNormalChat: 16, // COnePageIDStage check ID (stage < 10) or CChatStage::sub_4AD598 normal chat
-  AcceptAgreement: 17, // CAgreementStage accept
-  UnresolvedClientPacket18: 18, // No direct writer recovered in checked CA.exe.c; payload/role UNKNOWN (previous sub_516FA7 attribution withdrawn)
-  ChatMessageWithType: 19, // Typed chat message
+  ContextualClientPacket16: 16, // CChatStage::sub_4AD598 normal chat [str]; sub_4A3E36 also emits 16 after 72. No pre-login ID-check writer recovered in this build.
+  UnresolvedClientPacket17: 17, // No direct writer recovered in the current CA.exe census; former CAgreementStage citation is an interior address, not a writer.
+  UnresolvedClientPacket18: 18, // No direct writer recovered in checked CA.exe.c; former sub_516FA7 attribution withdrawn.
+  UnresolvedClientPacket19: 19, // No direct writer recovered in the current CA.exe census; sub_4AD598 writes 16, 20, and 97, not 19.
   PingReplyOrWhisper: 20, // CPacketDispatcher::sub_5D7CA5 (8B ping) or CChatStage::sub_4AD598 (whisper)
   MessengerInviteUser: 21, // sub_4B4F83 / sub_4DB16C / sub_55AAF0 / sub_5E9F86: [u16 roomNum, u32 key, str targetUser, u8 flag]
   RoomEmotion: 22, // Emotion packet
   RequestDynI16Table: 27, // sub_59A700: [u32 crc, u16 count]
   RequestAvatarI16Table: 28, // sub_59B5A2: [u32 crc, u16 count]
   NexonClubAuthRequest29: 29, // CNexonClubDlg::sub_46BABD: [str id, str password or feature-64 MD5-derived value]; response association UNKNOWN
-  UnresolvedClientPacket30: 30, // no direct Client writer found in CA.exe.c; payload/role UNKNOWN
+  UnresolvedClientPacket30: 30, // Project-side candidate only; no direct numeric writer/caller recovered in bounded CA.exe + CA.exe.c search; origin/compiled status UNKNOWN
   LoginBeanfunToken: 31, // sub_5D8494: Taiwan Beanfun / GASH token login
   EKeyVerify: 32, // CEKeyDlg::sub_55FB0B: PlaySafe / E-Key security token verification
   EKeyChallengeResponse: 33, // CEKeyDlg::sub_561394: E-Key challenge response
@@ -65,8 +65,8 @@ export const ClientOpcode = {
   AuthenticateShopConnection: 38, // CShopConnectionMan::sub_529D8E
   MacroListQuery: 40, // sub_4A29A1: [u8(0)] -> S->C 50
   QuestAction: 44, // CQuestWnd::sub_551AE2 -> S->C 248
-  ChangeAccountPassword: 46, // sub_495C32: [str oldPass, str newPass, str confirmPass] -> S->C 34
-  UnresolvedClientPacket49: 49, // no direct Client writer found in CA.exe.c; payload/role UNKNOWN
+  ChangeAccountPassword: 46, // CNCPasswordDlg::sub_495C32: three strings; response/backend association UNKNOWN
+  UnresolvedClientPacket49: 49, // Project-side candidate only; no direct numeric writer/caller recovered in bounded CA.exe + CA.exe.c search; origin/compiled status UNKNOWN
 
   // User Info, Ranking & Lobby (CLobbyStage / CStage / CRankMan)
   QueryRankingPage: 64, // sub_4A48F2: [u16 startRank] -> S->C 69 / S->C 66
@@ -161,9 +161,9 @@ export const ClientOpcode = {
   UseActiveGameItem: 153, // sub_50E781: [u8 bomberIdx, u8 itemSlot, u8 itemType] -> S->C 153
 
   // Config / Shop / Inventory / UserMarket / Couple / SMS Requests
-  CheckPackageMapLegacy: 252, // -> S->C 157
-  RoomAux266: 266,
-  CheckNoticeUrl: 267, // -> S->C 163
+  UnresolvedClientPacket252: 252, // No current-build Client writer recovered; prior packagemap.ini / S->C 157 association withdrawn.
+  UnresolvedClientPacket266: 266, // Project-side candidate only; no direct numeric writer/caller recovered in bounded census; no RoomAvatarSync alias evidence, origin/compiled status UNKNOWN.
+  UnresolvedClientPacket267: 267, // No current-build Client writer recovered; prior notice-URL request / S->C 163 association withdrawn.
   ShopEnter: 269, // CShopStageNew::sub_536555 / sub_589DB9: [u8 mode] -> S->C 198
   ShopCashQuery: 269, // sub_589DB9: [u8(0)] -> S->C 198
   ShopBuyItem: 270, // sub_58B130: [u32 selected-object +8, u32 opaque caller value] -> S->C 199
@@ -192,7 +192,7 @@ export const ClientOpcode = {
   UserPagePacket290: 290, // CUserPageDialog::sub_53DEEA emits [str stored name]; response opcode/schema UNKNOWN
   UserGuildModify: 292, // sub_5495CD: [u8 playerIdx, str guild]
   UserPagePacket293: 293, // CUserPageDialog::sub_53DEEA emits [str stored name] conditionally; response association UNKNOWN
-  CheckStringTableLegacy: 294, // -> S->C 179
+  LobbyInitializationSignal294: 294, // sub_4C135B sends an empty packet from CLobbyStage::sub_4C99DC; meaning/reply association UNKNOWN (not a stringtable checksum).
   ShopStateSync: 295, // sub_5365B3: [u8 state]
   QueryTop3Rank: 296, // sub_4A49D8: empty -> S->C 240 (sub_4A522B)
   SmsSend: 297, // CSmsDlg::sub_4810F3: [str sender, str receiver, str msg] -> S->C 242 + S->C 246
@@ -202,10 +202,9 @@ export const ClientOpcode = {
   LobbyInitQuery: 301, // CLobbyStage::sub_4C99DC: empty
   MyPagePreOpen: 302, // CStage::sub_4BC236: empty
   QueryAvatarLucciSync: 303, // sub_4BB107: [u8 loop index]; sub_55195E: [u8 a2, meaning UNKNOWN]; sub_5382EA: empty -> S->C 186
-  CouplePropose: 304, // sub_5BA82D: [u8 playerIdx, str partnerName, str message] -> S->C 251 + S->C 252
-  CheckFxStockLegacy: 305, // sub_5B9FD6: [u8 playerIdx, u8 accept] (CoupleRespond) or legacy fxstock check
-  CoupleRespond: 305,
-  CoupleBreakup: 306, // sub_5BA899: [u8 playerIdx] -> S->C 254
+  CouplePropose: 304, // sub_5BA82D writes [u8 playerIdx, str partnerName, str message]; official reply association UNKNOWN
+  CoupleRespond: 305, // CCouple::sub_5B9FD6 writes [u8 playerIdx, u8 accept]; no current-build FxStock-check writer/reply recovered.
+  CoupleBreakup: 306, // sub_5BA899 writes [u8 playerIdx]; official reply/fan-out policy UNKNOWN
   GachaponRoll: 307, // CGachaponDlg::sub_5C3330: [u32 couponStockId] -> S->C 255 / 257
   GachaponClose: 308, // sub_5BF559
   ShopBuyItemPass: 309, // sub_58B871: [str NexonPass, u32 selected-object +8, u32 opaque caller value] -> S->C 199
@@ -241,8 +240,9 @@ export const ServerOpcode = {
   SystemStringSsd: 2, // sub_5D00B9: csysstr.ssd
   LoginResult: 4, // CLoginStage::sub_567400 -> sub_566E08
   ChannelSelectResult: 7, // CSelectServerStage::sub_56C0C8
-  // Stage-specific overload: generic CStage::sub_4BDBF5 routes S->C 9 to a Crash_CA.dmp offset request (-> C->S 8).
-  StageTransition: 9,
+  // Generic CStage::sub_4BDBF5 routes S->C 9 to a Crash_CA.dmp offset request (-> C->S 8);
+  // it is not a generic stage transition in the recovered SelectServer/Shop dispatch paths.
+  CrashDumpChunkRequest: 9,
   ChannelListSsd: 10, // sub_5D42CF -> sub_5D3E91: channel2_%03d%s.ssd
   MessengerHandoff: 11, // CLoginStage::sub_567B0F
   ChannelLoads: 12, // sub_5D4139: [u16 count, u16[count] load]
@@ -256,12 +256,12 @@ export const ServerOpcode = {
   WhisperDeliveryStatus: 24, // CChatStage::sub_4AE106
   DynamicI16Data: 32, // Stage-specific route to CStage::sub_4B8D5F -> sub_59D0D4: [u32 id, u16 version, u32 size, block(size)]
   SelectServerDynamicI16Data: 33, // CSelectServerStage root dispatch: slot 54 -> CStage::sub_4B8D5F; not the Lobby transition
-  StatusResult34: 34, // Observed Client path: CNexonClubDlg::sub_46C2AD -> sub_46BBB1 reads a u8 status; other routes UNKNOWN
+  NexonClubDialogStatus34: 34, // CNexonClubDlg::sub_46C2AD -> sub_46BBB1 reads a u8; no request association confirmed
   ShopReturnHandoff: 41, // CShopConnectionMan::sub_52A23C: [u16, u16, u32 key, str, u8=11]
   ShopServerEndpoint: 48, // CShopConnectionMan::sub_529E8D: [u8 ok, if ok: u8 flag, u32 opaque, u32 ipHostLong, u16 portHostShort]
   MacroList: 50, // sub_4A27CB: repeat to EOF [u32 value, u8[15] fields]; empty body = 0 records
   FilterStringSsd: 53, // sub_5C8BE3: filterstr.ssd
-  CheckIdResult: 59,
+  UnresolvedServerPacket59: 59, // No Client receive route or source-supported C->S ID-check association recovered in this build.
   MapNameOverrides: 60, // sub_5D9F0B -> sub_5C578E: [i32 count, count*(u32 mapId, str name)]
   UnresolvedServerPacket61: 61, // No Client receive route/request association confirmed in checked CA.exe.c
   UserItemsSyncLegacy: 63, // CUserInventoryMan::sub_598BEC -> sub_597611
@@ -335,11 +335,9 @@ export const ServerOpcode = {
   InGameAliveCheck: 182, // CGameStage::sub_4EA141 -> triggers C->S 145
 
   // Config / Shop / Inventory / UserMarket / Couple / SMS Responses
-  PackageMapCheckAck: 157, // reply to C->S 252; reconstruction writes u8(0), Client handler UNKNOWN
-  NoticeUrlSync: 163, // reply to C->S 267; reconstruction writes str noticeUrl, Client handler UNKNOWN
-  StringTableCheckAck: 179, // reply to C->S 294; reconstruction writes u8(0), Client handler UNKNOWN
+  UnresolvedServerPacket163: 163, // No current Client receive route or request association recovered; prior C->S 267 notice-URL guess withdrawn.
+  UnresolvedServerPacket179: 179, // No current Client receive route or request association recovered; prior C->S 294 stringtable-ack guess withdrawn.
   LucciSync: 186, // CStage::sub_4BDBF5 -> sub_4B93FD -> sub_5ED36F: [u32 playerIdx, u32 value narrowed to char]; field meaning needs validation
-  FxStockCheckAck: 188, // legacy reply to C->S 305: reconstruction writes u8(0); distinct flow from InventoryUpdate
   InventoryUpdate: 188, // CUserInventoryMan::sub_5953FE
   DynamicImgInfoSsd: 189, // sub_49E093: fxdynimginfo.ssd
   ShopLucciBalance190: 190, // CShopDlg::sub_546BE3: [u32 lucci]
@@ -384,10 +382,10 @@ export const ServerOpcode = {
   SmsNewNotice: 246, // sub_5E3AC9 -> sub_5E369D: [u8 hasNewMail]
   UserQuestAndSlotInfo248: 248, // CStage::sub_4B9DB6
   CoupleInfoSync: 250, // CCouple::sub_5BBF91
-  CoupleProposeIncoming: 251, // CCouple::sub_5BAA90
-  CoupleProposeStatus: 252, // CCouple::sub_5BBD3E: [str proposer, u32 ringType, str msg, u8 flag]
-  CoupleCongratulate: 253, // CCouple::sub_5BBAA7: [u8 actionType, u8 resultCode, str partnerName, u32 ringType]
-  CoupleBreakupNotice: 254, // CCouple::sub_5BC155
+  CoupleProposeIncoming: 251, // CCouple::sub_5BAA90 reads [u8 playerIdx, str proposer, str message, u8 grade]
+  CoupleStatus252: 252, // CCouple::sub_5BBD3E reads [u8 playerIdx, u8 status, str, str, (if status==12: u8 grade)]; status/request association UNKNOWN
+  CoupleStatus253: 253, // CCouple::sub_5BBAA7 reads [u8 playerIdx, u8 status, str]; status semantics UNKNOWN
+  CoupleBreakupNotice: 254, // CCouple::sub_5BC155 reads one u8 playerIdx
   GachaponResult: 255, // CShopStageNew::sub_53BBD8 / CGachaponDlg::sub_5C23DB
   MyCharacterRank: 256, // sub_4B96F3 -> sub_4A527F: per player [u8 hasRank, (if hasRank: sub_4A4FBD, u32, u8)]
   GachaponResult257: 257, // sub_5C279C -> sub_5C23DB: [u8(0), u8 playerCount, per player items..., u32 lucci, str, str]

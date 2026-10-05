@@ -731,8 +731,7 @@ export function handlePrepareRoomPacket(
       break;
     }
 
-    case ClientOpcode.RoomAvatarSync:
-    case ClientOpcode.RoomAux266: {
+    case ClientOpcode.RoomAvatarSync: {
       // C->S 99 (`sub_4B24F6`: room avatar/accessory sync) -> S->C 129 (`CSlotAccessoryPacket`)
       state.broadcastToRoom(room, () => {
         const w129 = new PacketWriter(ServerOpcode.ExchangeAccessories);

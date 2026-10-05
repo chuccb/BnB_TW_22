@@ -45,7 +45,6 @@ const AUTH_OPCODES = new Set<number>([
   ClientOpcode.LoginCredentials,
   ClientOpcode.UnresolvedClientPacket4,
   ClientOpcode.LoginPassport,
-  ClientOpcode.AcceptAgreement,
   ClientOpcode.NewUserIdentifierCheck3,
   ClientOpcode.LoginBeanfunToken,
   ClientOpcode.EKeyVerify,
@@ -54,10 +53,6 @@ const AUTH_OPCODES = new Set<number>([
   ClientOpcode.UnresolvedClientPacket35,
   ClientOpcode.UnresolvedClientPacket36,
   ClientOpcode.ChangeAccountPassword,
-  ClientOpcode.CheckPackageMapLegacy,
-  ClientOpcode.CheckNoticeUrl,
-  ClientOpcode.CheckStringTableLegacy,
-  ClientOpcode.CheckFxStockLegacy,
 ]);
 
 const CHANNEL_OPCODES = new Set<number>([
@@ -154,7 +149,6 @@ const ROOM_OPCODES = new Set<number>([
   ClientOpcode.RoomAvatarSync,
   ClientOpcode.ExchangeAction,
   ClientOpcode.ExchangePassCheck,
-  ClientOpcode.RoomAux266,
 ]);
 
 const COMMON_OPCODES = new Set<number>([
@@ -166,8 +160,7 @@ const COMMON_OPCODES = new Set<number>([
   ClientOpcode.ClientReportOrLobbyEnter,
   ClientOpcode.ReturnToChannelSelect,
   ClientOpcode.ClientPeriodicStatus,
-  ClientOpcode.CheckIdOrNormalChat,
-  ClientOpcode.ChatMessageWithType,
+  ClientOpcode.ContextualClientPacket16,
   ClientOpcode.PingReplyOrWhisper,
   ClientOpcode.MessengerInviteUser,
   ClientOpcode.RoomEmotion,
@@ -204,7 +197,6 @@ const COMMON_OPCODES = new Set<number>([
   ClientOpcode.LobbyInitQuery,
   ClientOpcode.MyPagePreOpen,
   ClientOpcode.CouplePropose,
-  ClientOpcode.CoupleRespond,
   ClientOpcode.CoupleBreakup,
   ClientOpcode.QueryMyCharacterRank,
   ClientOpcode.SecurityHashReply1,
@@ -213,6 +205,81 @@ const COMMON_OPCODES = new Set<number>([
   ClientOpcode.PostStageSync338,
   ClientOpcode.NexonClubDialogSubmit322,
 ]);
+
+interface UnresolvedClientCandidate {
+  explanation: string;
+  payloadSchema?: string;
+  semanticRole?: string;
+}
+
+const UNRESOLVED_CLIENT_CANDIDATES: ReadonlyMap<number, UnresolvedClientCandidate> = new Map([
+  [
+    ClientOpcode.UnresolvedClientPacket17,
+    {
+      explanation:
+        "No current-build Client writer recovered; the former agreement writer address is inside Practice UI code, and no StageId 8/9 factory path is established",
+    },
+  ],
+  [
+    ClientOpcode.UnresolvedClientPacket18,
+    { explanation: "No direct numeric Client writer recovered in the bounded current-build census" },
+  ],
+  [
+    ClientOpcode.UnresolvedClientPacket19,
+    { explanation: "No current-build writer recovered; CChatStage::sub_4AD598 writes 16, 20, and 97, not 19" },
+  ],
+  [
+    ClientOpcode.UnresolvedClientPacket30,
+    { explanation: "No direct numeric Client writer recovered in the bounded current-build census" },
+  ],
+  [
+    ClientOpcode.UnresolvedClientPacket49,
+    { explanation: "No direct numeric Client writer recovered in the bounded current-build census" },
+  ],
+  [
+    ClientOpcode.UnresolvedClientPacket252,
+    { explanation: "No current-build writer or packagemap.ini request/reply association recovered" },
+  ],
+  [
+    ClientOpcode.UnresolvedClientPacket266,
+    { explanation: "No current-build writer recovered; do not alias this candidate to the distinct C->S 99 writer" },
+  ],
+  [
+    ClientOpcode.UnresolvedClientPacket267,
+    { explanation: "No current-build notice-URL request writer or response association recovered" },
+  ],
+  [
+    ClientOpcode.LobbyInitializationSignal294,
+    {
+      explanation:
+        "The recovered Lobby-setup writer sends an empty packet; its meaning and response association are UNKNOWN, not a stringtable checksum request",
+      payloadSchema: "empty in the recovered writer",
+      semanticRole: "Lobby setup signal; detailed role UNKNOWN",
+    },
+  ],
+]);
+
+function observeUnresolvedClientCandidate(
+  session: ClientSession,
+  opcode: number,
+  reader: PacketReader,
+  candidate: UnresolvedClientCandidate
+): void {
+  logger.info("PacketAudit", `Observed ${formatClientOpcode(opcode)}; ${candidate.explanation}`, {
+    direction: "C->S",
+    wireOpcode: opcode,
+    opcodeName: formatClientOpcode(opcode),
+    sessionId: session.sessionId,
+    connectionKind: session.connectionKind,
+    stageId: formatStageId(session.stageId),
+    payloadBytes: reader.remaining,
+    payloadSchema: candidate.payloadSchema ?? "UNKNOWN",
+    semanticRole: candidate.semanticRole ?? "UNKNOWN",
+    responseAssociation: "UNKNOWN",
+    responseSent: false,
+    databaseMutation: false,
+  });
+}
 
 /**
  * Central TCP packet dispatcher corresponding to `CPacketDispatcher::sub_5D821C` (`0x005D821C`)
@@ -274,38 +341,40 @@ export function dispatchTcpPacket(
     });
   };
 
-  // C->S 18 has no recovered Client writer or stage/role evidence. Keep it out of
-  // the auth route: observe only, without parsing a body or changing session/DB state.
-  if (opcode === ClientOpcode.UnresolvedClientPacket18) {
-    logger.info("PacketAudit", "Observed unresolved C->S packet candidate", {
-      direction: "C->S",
-      sessionId: session.sessionId,
-      connectionKind: session.connectionKind,
-      stageId: formatStageId(session.stageId),
-      wireOpcode: opcode,
-      opcodeName: formatClientOpcode(opcode),
-      payloadBytes: reader.remaining,
-      payloadSchema: "UNKNOWN",
-      semanticRole: "UNKNOWN",
-      responseAssociation: "UNKNOWN",
-      responseSent: false,
-      databaseMutation: false,
+  // C->S 16 has source-backed chat writers in CChatStage, but the former pre-login
+  // COnePageIDStage ID-check attribution is not present in this build. Observe that
+  // pre-login context without sending the guessed S->C 59 response.
+  if (opcode === ClientOpcode.ContextualClientPacket16 && session.stageId < StageId.SelectServer) {
+    observeUnresolvedClientCandidate(session, opcode, reader, {
+      explanation:
+        "C->S 16 is used by recovered chat/speaker writers in CChatStage; no pre-login ID-check writer or S->C 59 association is established",
     });
     return;
   }
 
-  // 0. Opcode 305: `CCouple::sub_5B9FD6` (`[u8 playerIdx, u8 accept]`, 2 bytes) vs `CheckFxStockLegacy` (4 bytes)
-  if (opcode === ClientOpcode.CoupleRespond && reader.remaining === 2) {
-    logRoute("handleCommonPacket (CoupleRespond compact form)");
-    handleCommonPacket(state, session, opcode, reader);
+  const unresolvedCandidate = UNRESOLVED_CLIENT_CANDIDATES.get(opcode);
+  if (unresolvedCandidate) {
+    observeUnresolvedClientCandidate(session, opcode, reader, unresolvedCandidate);
     return;
   }
 
-  // 1. Pre-login, Registration & Authentication opcodes (`CLoginStage`, `COnePageIDStage`, `CAgreementStage`)
-  if (
-    AUTH_OPCODES.has(opcode) ||
-    (opcode === ClientOpcode.CheckIdOrNormalChat && session.stageId < StageId.SelectServer)
-  ) {
+  // The current Client writer for C->S 305 is the 2-byte CCouple response. Do not
+  // reinterpret a different-sized body as the former, unsupported FxStock-check alias.
+  if (opcode === ClientOpcode.CoupleRespond) {
+    if (reader.remaining === 2) {
+      logRoute("handleCommonPacket (C->S 305 CoupleRespond)");
+      handleCommonPacket(state, session, opcode, reader);
+    } else {
+      observeUnresolvedClientCandidate(session, opcode, reader, {
+        explanation:
+          "The recovered C->S 305 CoupleRespond writer is exactly two bytes; no alternate FxStock-check writer is established",
+      });
+    }
+    return;
+  }
+
+  // 1. Pre-login, Registration & Authentication opcodes with current-build writer evidence.
+  if (AUTH_OPCODES.has(opcode)) {
     logRoute("handleAuthPacket");
     handleAuthPacket(state, session, opcode, reader);
     return;

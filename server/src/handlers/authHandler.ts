@@ -411,29 +411,9 @@ function observeUnresolvedClientPacket(
 }
 
 /**
- * Handles the source-supported `C->S 16` ID check and `C->S 17` agreement transition.
- */
-export function handleIdCheckOrAgreement(
-  state: WorldState,
-  session: ClientSession,
-  opcode: number,
-  reader: PacketReader
-): void {
-  if (opcode === ClientOpcode.CheckIdOrNormalChat) {
-    const username = reader.remaining >= 2 ? reader.readString().trim() : "";
-    const existing = username ? state.db.getUserByUsername(username) : null;
-    const w = new PacketWriter(ServerOpcode.CheckIdResult);
-    w.writeU8(existing ? 1 : 0);
-    session.sendPacket(w);
-  } else if (opcode === ClientOpcode.AcceptAgreement) {
-    const w9 = new PacketWriter(ServerOpcode.StageTransition);
-    w9.writeU32(StageId.OnePageId);
-    session.sendPacket(w9);
-  }
-}
-
-/**
- * Unified Auth & Pre-Login handler (`CLoginStage`, `COnePageIDStage`, `CAgreementStage`, `CFxApp`).
+ * Unified Auth & Pre-Login handler for source-supported Login / pre-login paths.
+ * ClientOpcode 16 is handled as stage-contextual chat outside pre-login; no current-build
+ * ID-check writer or C->S 17 agreement writer is established here.
  */
 export function handleAuthPacket(
   state: WorldState,
@@ -463,10 +443,6 @@ export function handleAuthPacket(
     case ClientOpcode.LoginBeanfunToken:
       handleLogin(state, session, opcode, reader);
       break;
-    case ClientOpcode.CheckIdOrNormalChat:
-    case ClientOpcode.AcceptAgreement:
-      handleIdCheckOrAgreement(state, session, opcode, reader);
-      break;
     case ClientOpcode.UnresolvedClientPacket4:
     case ClientOpcode.UnresolvedClientPacket34:
     case ClientOpcode.UnresolvedClientPacket35:
@@ -487,34 +463,15 @@ export function handleAuthPacket(
     case ClientOpcode.EKeyVerify:
     case ClientOpcode.EKeyChallengeResponse:
     case ClientOpcode.ChangeAccountPassword: {
-      // C->S 32 (`sub_55FB0B`), C->S 33 (`sub_561394`), C->S 46 (`sub_495C32`) -> S->C 34 (`sub_46BBB1`)
-      const w34 = new PacketWriter(ServerOpcode.StatusResult34);
-      w34.writeU8(0); // 0 = success (`sub_46BBB1`)
-      session.sendPacket(w34);
-      break;
-    }
-    case ClientOpcode.CheckPackageMapLegacy: {
-      const w157 = new PacketWriter(ServerOpcode.PackageMapCheckAck);
-      w157.writeU8(0);
-      session.sendPacket(w157);
-      break;
-    }
-    case ClientOpcode.CheckNoticeUrl: {
-      const w163 = new PacketWriter(ServerOpcode.NoticeUrlSync);
-      w163.writeString(state.config.noticeUrl);
-      session.sendPacket(w163);
-      break;
-    }
-    case ClientOpcode.CheckStringTableLegacy: {
-      const w179 = new PacketWriter(ServerOpcode.StringTableCheckAck);
-      w179.writeU8(0);
-      session.sendPacket(w179);
-      break;
-    }
-    case ClientOpcode.CheckFxStockLegacy: {
-      const w188 = new PacketWriter(ServerOpcode.FxStockCheckAck);
-      w188.writeU8(0);
-      session.sendPacket(w188);
+      const explanations: Record<number, string> = {
+        [ClientOpcode.EKeyVerify]:
+          "Client E-Key writer is present; no S->C success response or backend association is established",
+        [ClientOpcode.EKeyChallengeResponse]:
+          "Client E-Key challenge writer is present; no S->C response association is established",
+        [ClientOpcode.ChangeAccountPassword]:
+          "CNCPasswordDlg writes three strings; no password-update backend or S->C 34 association is established",
+      };
+      observeUnresolvedClientPacket(session, opcode, reader, explanations[opcode]!);
       break;
     }
   }

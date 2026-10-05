@@ -400,7 +400,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(getRecentLogs().some((entry) => entry.message.includes("Shop-flow candidate packet"))).toBe(false);
   });
 
-  test("unresolved C->S 18, 30, and 49 do not mutate Login state or use generic credentials", () => {
+  test("unresolved Client opcode candidates and unverified legacy replies stay observation-only", () => {
     clearRecentLogs();
     const config = loadConfig({ dbPath: ":memory:" });
     using state = new WorldState(config);
@@ -409,34 +409,85 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     session.sendConnectHello(config);
     session.stageId = StageId.Login;
 
-    // This synthetic test payload is only chosen to catch accidental generic-login parsing;
-    // it does not claim that any unresolved opcode has a string wire schema.
-    for (const opcode of [
+    // These are project-side symbolic candidates with no recovered current-build Client writer;
+    // arbitrary string bodies only catch accidental generic parsing, not establish schemas.
+    // Opcode 294 is different: its recovered Lobby-setup writer has an empty body.
+    const unresolvedOpcodes = [
+      ClientOpcode.ContextualClientPacket16,
+      ClientOpcode.UnresolvedClientPacket17,
       ClientOpcode.UnresolvedClientPacket18,
+      ClientOpcode.UnresolvedClientPacket19,
       ClientOpcode.UnresolvedClientPacket30,
       ClientOpcode.UnresolvedClientPacket49,
-    ]) {
+      ClientOpcode.UnresolvedClientPacket252,
+      ClientOpcode.UnresolvedClientPacket266,
+      ClientOpcode.UnresolvedClientPacket267,
+    ];
+    for (const opcode of unresolvedOpcodes) {
       client.sendToServer(
         state,
         session.sessionId,
         new PacketWriter(opcode).writeString("opaque-unresolved-value")
       );
     }
+    client.sendToServer(
+      state,
+      session.sessionId,
+      new PacketWriter(ClientOpcode.LobbyInitializationSignal294)
+    );
+    // A four-byte C->S 305 body is not the current Client's two-byte CoupleRespond writer.
+    client.sendToServer(
+      state,
+      session.sessionId,
+      new PacketWriter(ClientOpcode.CoupleRespond).writeU32(0x12345678)
+    );
 
     expect(client.receivedPackets).toHaveLength(0);
     expect(session.users).toHaveLength(0);
     expect(state.db.db.query("SELECT COUNT(*) AS count FROM users").get()).toEqual({ count: 0 });
     expect(state.db.getUserByUsername("opaque-unresolved-value")).toBeNull();
     expect(JSON.stringify(getRecentLogs())).not.toContain("opaque-unresolved-value");
-    const packet18Observations = getRecentLogs().filter(
-      (entry) => entry.category === "PacketAudit" && entry.data?.wireOpcode === 18
+    const observations = getRecentLogs().filter(
+      (entry) => entry.category === "PacketAudit" && entry.data?.responseAssociation === "UNKNOWN"
     );
-    expect(packet18Observations).toHaveLength(1);
-    expect(packet18Observations[0]?.data?.payloadSchema).toBe("UNKNOWN");
-    expect(packet18Observations[0]?.data?.semanticRole).toBe("UNKNOWN");
-    expect(packet18Observations[0]?.data?.responseSent).toBe(false);
-    expect(packet18Observations[0]?.data?.databaseMutation).toBe(false);
+    expect(observations).toHaveLength(11);
+    expect(new Set(observations.map((entry) => entry.data?.wireOpcode))).toEqual(
+      new Set([...unresolvedOpcodes, ClientOpcode.LobbyInitializationSignal294, ClientOpcode.CoupleRespond])
+    );
+    expect(observations.every((entry) => entry.data?.responseSent === false)).toBe(true);
+    expect(observations.every((entry) => entry.data?.databaseMutation === false)).toBe(true);
+    const packet18 = observations.find((entry) => entry.data?.wireOpcode === 18);
+    expect(packet18?.data?.payloadSchema).toBe("UNKNOWN");
+    expect(packet18?.data?.semanticRole).toBe("UNKNOWN");
+    const packet294 = observations.find((entry) => entry.data?.wireOpcode === 294);
+    expect(packet294?.data?.payloadSchema).toBe("empty in the recovered writer");
     expect(session.stageId).toBe(StageId.Login);
+  });
+
+  test("C->S 323 writer does not imply an S->C stage transition policy", () => {
+    clearRecentLogs();
+    const config = loadConfig({ dbPath: ":memory:" });
+    using state = new WorldState(config);
+    const client = new SimulatedClient();
+    const session = state.createSession(client.onWireBytes, "127.0.0.1", 51021, "0.0.0.0", 0, "game");
+    session.sendConnectHello(config);
+    session.stageId = StageId.Lobby;
+
+    client.sendToServer(
+      state,
+      session.sessionId,
+      new PacketWriter(ClientOpcode.StageAction323).writeU8(7).writeU8(2)
+    );
+
+    expect(client.receivedPackets).toHaveLength(0);
+    expect(session.stageId).toBe(StageId.Lobby);
+    const observation = getRecentLogs().find(
+      (entry) => entry.category === "PacketAudit" && entry.data?.wireOpcode === 323
+    );
+    expect(observation?.data?.payloadSchema).toBe("two u8 fields in the recovered writer; field meanings UNKNOWN");
+    expect(observation?.data?.responseAssociation).toBe("UNKNOWN");
+    expect(observation?.data?.responseSent).toBe(false);
+    expect(observation?.data?.databaseMutation).toBe(false);
   });
 
   test("C->S 14 periodic status is not misrouted as chat or an S->C 15 Lobby alert", () => {
@@ -525,7 +576,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(session.stageId).toBe(StageId.Prepare);
     expect(session.currentRoomNumber).toBe(room.roomNumber);
     expect(room.slots[0]?.occupied).toBe(true);
-    expect(client.popByOpcode(ServerOpcode.StageTransition)).toBeUndefined();
+    expect(client.popByOpcode(ServerOpcode.CrashDumpChunkRequest)).toBeUndefined();
     expect(client.popByOpcode(ServerOpcode.PlayerLeftSlot)).toBeUndefined();
   });
 
@@ -598,7 +649,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(kickedNotice!.readU8()).toBe(1); // hasSuperChiefItem from the C->S 91 request
     expect(kickedNotice!.remaining).toBe(0);
     expect(kickedClient.popByOpcode(ServerOpcode.PlayerLeftSlot)).toBeUndefined();
-    expect(kickedClient.popByOpcode(ServerOpcode.StageTransition)).toBeUndefined();
+    expect(kickedClient.popByOpcode(ServerOpcode.CrashDumpChunkRequest)).toBeUndefined();
     expect(kickedSession.stageId).toBe(StageId.Lobby);
     expect(kickedSession.currentRoomNumber).toBeNull();
     for (const slotIdx of kickedSlotIndices) {
@@ -614,7 +665,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
       expect(chiefNotice!.remaining).toBe(0);
     }
     expect(chiefClient.popByOpcode(ServerOpcode.PlayerLeftSlot)).toBeUndefined();
-    expect(chiefClient.popByOpcode(ServerOpcode.StageTransition)).toBeUndefined();
+    expect(chiefClient.popByOpcode(ServerOpcode.CrashDumpChunkRequest)).toBeUndefined();
 
     // The other room session receives one identity-matched notice for each removed local slot.
     for (let index = 0; index < kickedSlotIndices.length; index++) {
@@ -627,7 +678,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     }
     expect(normalClient.popByOpcode(ServerOpcode.PlayerLeftSlot)).toBeUndefined();
     expect(normalSession.currentRoomNumber).toBe(room.roomNumber);
-    expect(normalClient.popByOpcode(ServerOpcode.StageTransition)).toBeUndefined();
+    expect(normalClient.popByOpcode(ServerOpcode.CrashDumpChunkRequest)).toBeUndefined();
 
     // A normal leader kick carries the zero item flag through the same Client packet fields.
     const normalSlotIdx = normalSession.roomSlotIndices[0]!;
@@ -643,7 +694,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(normalNotice!.readU32()).toBe(normalNetSlotId);
     expect(normalNotice!.readU8()).toBe(0);
     expect(normalNotice!.remaining).toBe(0);
-    expect(normalClient.popByOpcode(ServerOpcode.StageTransition)).toBeUndefined();
+    expect(normalClient.popByOpcode(ServerOpcode.CrashDumpChunkRequest)).toBeUndefined();
     expect(normalSession.stageId).toBe(StageId.Lobby);
     expect(normalSession.currentRoomNumber).toBeNull();
 
@@ -654,7 +705,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(normalNoticeToChief!.readU8()).toBe(0);
     expect(normalNoticeToChief!.remaining).toBe(0);
     expect(chiefClient.popByOpcode(ServerOpcode.PlayerLeftSlot)).toBeUndefined();
-    expect(chiefClient.popByOpcode(ServerOpcode.StageTransition)).toBeUndefined();
+    expect(chiefClient.popByOpcode(ServerOpcode.CrashDumpChunkRequest)).toBeUndefined();
     expect(room.slots[normalSlotIdx]?.occupied).toBe(false);
   });
 
@@ -700,7 +751,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
 
     expect(leavingSession.stageId).toBe(StageId.Lobby);
     expect(leavingSession.currentRoomNumber).toBeNull();
-    expect(leavingClient.popByOpcode(ServerOpcode.StageTransition)).toBeUndefined();
+    expect(leavingClient.popByOpcode(ServerOpcode.CrashDumpChunkRequest)).toBeUndefined();
     expect(leavingClient.popByOpcode(ServerOpcode.PlayerLeftSlot)).toBeUndefined();
     expect(remainingSession.stageId).toBe(StageId.Prepare);
     expect(remainingSession.currentRoomNumber).toBe(room.roomNumber);
@@ -715,7 +766,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
       expect(notice!.remaining).toBe(0);
     }
     expect(remainingClient.popByOpcode(ServerOpcode.PlayerLeftSlot)).toBeUndefined();
-    expect(remainingClient.popByOpcode(ServerOpcode.StageTransition)).toBeUndefined();
+    expect(remainingClient.popByOpcode(ServerOpcode.CrashDumpChunkRequest)).toBeUndefined();
   });
 
   test("empty Lobby ignores C->S 80 room-detail prefetch instead of showing NotValidRoomInfo", () => {
@@ -779,7 +830,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     client.sendToServer(
       state,
       session.sessionId,
-      new PacketWriter(ClientOpcode.CheckIdOrNormalChat).writeString("hello")
+      new PacketWriter(ClientOpcode.ContextualClientPacket16).writeString("hello")
     );
 
     const normalChat = client.popByOpcode(ServerOpcode.NormalChat)!;
@@ -890,49 +941,8 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(p53Custom.readU8()).toBe(0);
     expect(p53Custom.remaining).toBe(0);
 
-    // Legacy INI checks (C->S 252, 267, 294, 305)
-    client1.sendToServer(
-      state,
-      session1.sessionId,
-      new PacketWriter(ClientOpcode.CheckPackageMapLegacy).writeU32(0xdcec1a37)
-    );
-    const p157 = client1.popByOpcode(ServerOpcode.PackageMapCheckAck)!;
-    expect(p157.readU8()).toBe(0);
-    expect(p157.remaining).toBe(0);
-
-    client1.sendToServer(state, session1.sessionId, new PacketWriter(ClientOpcode.CheckNoticeUrl));
-    const p163 = client1.popByOpcode(ServerOpcode.NoticeUrlSync)!;
-    expect(p163.readString()).toContain("http");
-    expect(p163.remaining).toBe(0);
-
-    client1.sendToServer(
-      state,
-      session1.sessionId,
-      new PacketWriter(ClientOpcode.CheckStringTableLegacy).writeU32(0x6683b836)
-    );
-    const p179 = client1.popByOpcode(ServerOpcode.StringTableCheckAck)!;
-    expect(p179.readU8()).toBe(0);
-    expect(p179.remaining).toBe(0);
-
-    client1.sendToServer(
-      state,
-      session1.sessionId,
-      new PacketWriter(ClientOpcode.CheckFxStockLegacy).writeU32(0xb5c71db3)
-    );
-    const p188Ack = client1.popByOpcode(ServerOpcode.FxStockCheckAck)!;
-    expect(p188Ack.readU8()).toBe(0);
-    expect(p188Ack.remaining).toBe(0);
-
-    // 2. Source-supported C->S 16 ID check -> S->C 59. C->S 18 / S->C 61 remain
-    // unresolved, so the playable-flow fixture provisions its demo account directly.
-    client1.sendToServer(
-      state,
-      session1.sessionId,
-      new PacketWriter(ClientOpcode.CheckIdOrNormalChat).writeString("bazzi_tw")
-    );
-    expect(client1.popByOpcode(ServerOpcode.CheckIdResult)?.readU8()).toBe(0); // Available
-    expect(state.db.getUserByUsername("bazzi_tw")).toBeNull();
-
+    // Enum-only config opcodes and the pre-login C->S 16 interpretation are not used as
+    // evidence for a server response. The playable-flow fixture provisions its local demo account.
     state.db.createUser("bazzi_tw", "pass123");
 
     // 3. Login via C->S 2 (with 0x11223344 & 0x44332211 keyed strings) -> S->C 4 (sub_567461)
@@ -1050,7 +1060,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     const p13 = client1.popByOpcode(ServerOpcode.LobbyStageTransition)!;
     expect(p13.readU8()).toBe(0); // TW feature 22; `sub_4B96B1` consumes one byte
     expect(p13.remaining).toBe(0);
-    expect(client1.popByOpcode(ServerOpcode.StageTransition)).toBeUndefined();
+    expect(client1.popByOpcode(ServerOpcode.CrashDumpChunkRequest)).toBeUndefined();
     expect(client1.popByOpcode(ServerOpcode.SelectServerDynamicI16Data)).toBeUndefined();
     expect(client1.popByOpcode(ServerOpcode.QuestConfigSync)?.readU32()).toBe(0);
     expect(session1.stageId).toBe(StageId.SelectServer);
@@ -1842,6 +1852,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(p16.readU32()).toBe(state.resources.ssdFiles.packagemap.adler32Zero);
     expect(p16.readString()).toContain("http");
     expect(p16.readU32()).toBe(0); // bannerCount = 0
+    expect(client1.popByOpcode(ServerOpcode.CrashDumpChunkRequest)).toBeUndefined();
     expect(client1.popByOpcode(ServerOpcode.InventoryData)).toBeDefined();
     expect(client1.popByOpcode(ServerOpcode.EquippedAvatarData)).toBeDefined();
 
@@ -1903,8 +1914,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     // The server updates its model and notifies remaining room members with S->C 103;
     // S->C 9 would be parsed by the Client's generic GameServer path as a dump-file offset.
     client1.sendToServer(state, session1.sessionId, new PacketWriter(ClientOpcode.LeaveRoom));
-    client1.popByOpcode(ServerOpcode.StageTransition); // pop earlier Shop Stage 14 transition
-    expect(client1.popByOpcode(ServerOpcode.StageTransition)).toBeUndefined();
+    expect(client1.popByOpcode(ServerOpcode.CrashDumpChunkRequest)).toBeUndefined();
     expect(session1.stageId).toBe(StageId.Lobby);
     expect(session1.udpEndpoint).toBeNull();
     expect(state.rooms.get(roomNum)?.slots[0]?.udpEndpoints).toEqual([
@@ -2279,7 +2289,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(p243AfterDeleteAll.readU8()).toBe(0);
     expect(p243AfterDeleteAll.remaining).toBe(0);
 
-    // 18d. Couple Ring (`CCouple` `304..306` -> `S->C 251..254`)
+    // 18d. Couple Ring Client readers/writers and local demo response schemas
     client1.sendToServer(
       state,
       session1.sessionId,
@@ -2288,31 +2298,101 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
         .writeString("dao_tw")
         .writeString("Be my couple partner!")
     );
-    const p252 = client1.popByOpcode(ServerOpcode.CoupleProposeStatus)!;
+    const p252 = client1.popByOpcode(ServerOpcode.CoupleStatus252)!;
     expect(p252).toBeDefined();
     expect(p252.readU8()).toBe(0);
-    expect(p252.readU8()).toBe(2); // 2 = waiting for partner
+    expect(p252.readU8()).toBe(2); // local status choice
+    expect(p252.readString()).toBe("dao_tw");
+    expect(p252.readString()).toBe(""); // second Client-read string; meaning UNKNOWN
+    expect(p252.remaining).toBe(0);
     const p251 = client2.popByOpcode(ServerOpcode.CoupleProposeIncoming)!;
     expect(p251).toBeDefined();
     expect(p251.readU8()).toBe(0);
     expect(p251.readString()).toBe("bazzi_tw");
+    expect(p251.readString()).toBe("Be my couple partner!");
+    expect(p251.readU8()).toBe(1);
+    expect(p251.remaining).toBe(0);
+
+    // Unknown target path uses the same full S->C 252 Client-read prefix, without
+    // asserting that the local status choice or response association is official.
+    client1.sendToServer(
+      state,
+      session1.sessionId,
+      new PacketWriter(ClientOpcode.CouplePropose)
+        .writeU8(0)
+        .writeString("missing_couple_target")
+        .writeString("opaque local test message")
+    );
+    const p252MissingTarget = client1.popByOpcode(ServerOpcode.CoupleStatus252)!;
+    expect(p252MissingTarget.readU8()).toBe(0);
+    expect(p252MissingTarget.readU8()).toBe(3);
+    expect(p252MissingTarget.readString()).toBe("missing_couple_target");
+    expect(p252MissingTarget.readString()).toBe("");
+    expect(p252MissingTarget.remaining).toBe(0);
+
+    // Exercise the local rejection builder, whose S->C 252 body also includes two strings.
+    client2.sendToServer(
+      state,
+      session2.sessionId,
+      new PacketWriter(ClientOpcode.CoupleRespond).writeU8(0).writeU8(0)
+    );
+    const p252Rejected = client1.popByOpcode(ServerOpcode.CoupleStatus252)!;
+    expect(p252Rejected.readU8()).toBe(0);
+    expect(p252Rejected.readU8()).toBe(14);
+    expect(p252Rejected.readString()).toBe("dao_tw");
+    expect(p252Rejected.readString()).toBe("");
+    expect(p252Rejected.remaining).toBe(0);
+
+    // A fresh local proposal re-establishes the demo pair for the status-253 reader check below.
+    client1.sendToServer(
+      state,
+      session1.sessionId,
+      new PacketWriter(ClientOpcode.CouplePropose)
+        .writeU8(0)
+        .writeString("dao_tw")
+        .writeString("Second local test proposal")
+    );
+    const p252Retry = client1.popByOpcode(ServerOpcode.CoupleStatus252)!;
+    expect(p252Retry.readU8()).toBe(0);
+    expect(p252Retry.readU8()).toBe(2);
+    expect(p252Retry.readString()).toBe("dao_tw");
+    expect(p252Retry.readString()).toBe("");
+    expect(p252Retry.remaining).toBe(0);
+    const p251Retry = client2.popByOpcode(ServerOpcode.CoupleProposeIncoming)!;
+    expect(p251Retry.readU8()).toBe(0);
+    expect(p251Retry.readString()).toBe("bazzi_tw");
+    expect(p251Retry.readString()).toBe("Second local test proposal");
+    expect(p251Retry.readU8()).toBe(1);
+    expect(p251Retry.remaining).toBe(0);
 
     client2.sendToServer(
       state,
       session2.sessionId,
       new PacketWriter(ClientOpcode.CoupleRespond).writeU8(0).writeU8(1)
     );
-    const p253 = client2.popByOpcode(ServerOpcode.CoupleCongratulate)!;
+    const p253 = client2.popByOpcode(ServerOpcode.CoupleStatus253)!;
     expect(p253).toBeDefined();
     expect(p253.readU8()).toBe(0);
-    expect(p253.readU8()).toBe(12); // 12 = accepted (`sub_5BBD3E`)
+    expect(p253.readU8()).toBe(12); // Local status choice; exact official association UNKNOWN.
+    expect(p253.readString()).toBe("bazzi_tw");
+    expect(p253.remaining).toBe(0); // `sub_5BBAA7` reads only u8, u8, str.
+    const p253ToPartner = client1.popByOpcode(ServerOpcode.CoupleStatus253)!;
+    expect(p253ToPartner.readU8()).toBe(0);
+    expect(p253ToPartner.readU8()).toBe(12);
+    expect(p253ToPartner.readString()).toBe("dao_tw");
+    expect(p253ToPartner.remaining).toBe(0);
 
     client1.sendToServer(
       state,
       session1.sessionId,
       new PacketWriter(ClientOpcode.CoupleBreakup).writeU8(0)
     );
-    expect(client1.popByOpcode(ServerOpcode.CoupleBreakupNotice)?.readU8()).toBe(0);
+    const p254Actor = client1.popByOpcode(ServerOpcode.CoupleBreakupNotice)!;
+    expect(p254Actor.readU8()).toBe(0);
+    expect(p254Actor.remaining).toBe(0);
+    const p254Partner = client2.popByOpcode(ServerOpcode.CoupleBreakupNotice)!;
+    expect(p254Partner.readU8()).toBe(0);
+    expect(p254Partner.remaining).toBe(0);
 
     // 19. Ranking (`C->S 64, 296, 311` -> `S->C 69, 240, 256`), Profile (`C->S 302, 66` -> `S->C 71, 248`),
     //     Chat Macro (`C->S 40` -> `S->C 50`), Exchange (`C->S 99..101`), Coupon (`C->S 286` -> `S->C 204`),
@@ -2364,20 +2444,22 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(p248).toBeDefined();
     expect(p248.readU8()).toBe(0); // playerIdx = 0 (`sub_4B9DB6`)
 
-    // C->S 293 carries one string in `sub_53DEEA`. The local S->C 220 fallback below
-    // matches the observed Client reader's empty structure; the request/reply pairing is unverified.
-    client1.sendToServer(
-      state,
-      session1.sessionId,
-      new PacketWriter(ClientOpcode.UserPagePacket293).writeString("dao_tw")
-    );
-    const p220 = client1.popByOpcode(ServerOpcode.MyPageData220)!;
-    expect(p220.readU8()).toBe(0); // zero u8-counted [u8,u16] records
-    expect(p220.readU16()).toBe(0); // opaque u16
-    expect(p220.readU8()).toBe(0); // opaque u8
-    expect(p220.readU16()).toBe(0); // first u32 list is empty
-    expect(p220.readU16()).toBe(0); // second u32 list is empty
-    expect(p220.remaining).toBe(0);
+    // The Client emits 290/68/293 from one user-page routine, but no reply association is
+    // established. Do not infer S->C 242, 34, or 220 merely because separate parsers exist.
+    for (const opcode of [
+      ClientOpcode.UserPagePacket290,
+      ClientOpcode.UserPagePacket68,
+      ClientOpcode.UserPagePacket293,
+    ]) {
+      client1.sendToServer(
+        state,
+        session1.sessionId,
+        new PacketWriter(opcode).writeString("dao_tw")
+      );
+    }
+    expect(client1.popByOpcode(ServerOpcode.SmsSendResult)).toBeUndefined();
+    expect(client1.popByOpcode(ServerOpcode.NexonClubDialogStatus34)).toBeUndefined();
+    expect(client1.popByOpcode(ServerOpcode.MyPageData220)).toBeUndefined();
 
     // Chat Macro (`C->S 40` -> `S->C 50`, `sub_4A27CB`)
     client1.sendToServer(
@@ -2472,7 +2554,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(client1.receivedPackets).toHaveLength(queuedPacketsBeforeUnknownForms);
     expect(state.db.getUserByUsername("new_hero_tw")).toBeNull();
 
-    // Password Change (`C->S 46`) follows a separate local status path.
+    // The source-backed C->S 46 writer has no confirmed response/backend path.
     client1.sendToServer(
       state,
       session1.sessionId,
@@ -2481,7 +2563,18 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
         .writeString("newpass456")
         .writeString("newpass456")
     );
-    expect(client1.popByOpcode(ServerOpcode.StatusResult34)?.readU8()).toBe(0);
+    expect(client1.popByOpcode(ServerOpcode.NexonClubDialogStatus34)).toBeUndefined();
+
+    // Opaque test bodies here exercise routing only; they do not assert E-Key wire schemas.
+    for (const opcode of [ClientOpcode.EKeyVerify, ClientOpcode.EKeyChallengeResponse]) {
+      client1.sendToServer(
+        state,
+        session1.sessionId,
+        new PacketWriter(opcode).writeString("opaque-e-key-input")
+      );
+    }
+    expect(client1.popByOpcode(ServerOpcode.NexonClubDialogStatus34)).toBeUndefined();
+    expect(state.db.getUserByUsername("bazzi_tw")?.password).toBe("pass123");
   });
 
   test("parses C->S 309's leading Nexon Pass string before the opaque u32 pair", () => {
@@ -2703,7 +2796,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
         ServerOpcode.LobbyStageTransition,
         ServerOpcode.QuestConfigSync,
       ]);
-      expect(gameClient.hasQueuedOpcode(ServerOpcode.StageTransition)).toBe(false);
+      expect(gameClient.hasQueuedOpcode(ServerOpcode.CrashDumpChunkRequest)).toBe(false);
       expect(gameClient.hasQueuedOpcode(ServerOpcode.SelectServerDynamicI16Data)).toBe(false);
 
       const gameSession = [...server.state.sessions.values()].find(
