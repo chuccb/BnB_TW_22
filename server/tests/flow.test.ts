@@ -441,10 +441,20 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(p53Custom.remaining).toBe(0);
 
     // Legacy INI checks (C->S 252, 267, 294, 305)
-    client1.sendToServer(state, session1.sessionId, new PacketWriter(252).writeU32(0xdcec1a37));
-    expect(client1.popByOpcode(157)?.readU8()).toBe(0);
-    client1.sendToServer(state, session1.sessionId, new PacketWriter(267));
-    expect(client1.popByOpcode(163)?.readString()).toContain("http");
+    client1.sendToServer(
+      state,
+      session1.sessionId,
+      new PacketWriter(ClientOpcode.CheckPackageMapLegacy).writeU32(0xdcec1a37)
+    );
+    const p157 = client1.popByOpcode(ServerOpcode.PackageMapCheckAck)!;
+    expect(p157.readU8()).toBe(0);
+    expect(p157.remaining).toBe(0);
+
+    client1.sendToServer(state, session1.sessionId, new PacketWriter(ClientOpcode.CheckNoticeUrl));
+    const p163 = client1.popByOpcode(ServerOpcode.NoticeUrlSync)!;
+    expect(p163.readString()).toContain("http");
+    expect(p163.remaining).toBe(0);
+
     client1.sendToServer(
       state,
       session1.sessionId,
@@ -453,8 +463,15 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     const p179 = client1.popByOpcode(ServerOpcode.StringTableCheckAck)!;
     expect(p179.readU8()).toBe(0);
     expect(p179.remaining).toBe(0);
-    client1.sendToServer(state, session1.sessionId, new PacketWriter(305).writeU32(0xb5c71db3));
-    expect(client1.popByOpcode(188)?.readU8()).toBe(0);
+
+    client1.sendToServer(
+      state,
+      session1.sessionId,
+      new PacketWriter(ClientOpcode.CheckFxStockLegacy).writeU32(0xb5c71db3)
+    );
+    const p188Ack = client1.popByOpcode(ServerOpcode.FxStockCheckAck)!;
+    expect(p188Ack.readU8()).toBe(0);
+    expect(p188Ack.remaining).toBe(0);
 
     // 2. Account ID Check (C->S 16 -> S->C 59) & Register (C->S 18 -> S->C 61)
     client1.sendToServer(

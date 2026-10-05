@@ -334,11 +334,11 @@ export const ServerOpcode = {
   InGameAliveCheck: 182, // CGameStage::sub_4EA141 -> triggers C->S 145
 
   // Config / Shop / Inventory / UserMarket / Couple / SMS Responses
-  PackageMapCheckAck: 157, // sub_5A1CD8
-  NoticeUrlSync: 163, // sub_5A1DF3
+  PackageMapCheckAck: 157, // reply to C->S 252; reconstruction writes u8(0), Client handler UNKNOWN
+  NoticeUrlSync: 163, // reply to C->S 267; reconstruction writes str noticeUrl, Client handler UNKNOWN
   StringTableCheckAck: 179, // reply to C->S 294; reconstruction writes u8(0), Client handler UNKNOWN
   LucciSync: 186, // CStage::sub_4BDBF5 -> sub_4B93FD -> sub_5ED36F: [u32 playerIdx, u32 value narrowed to char]; field meaning needs validation
-  FxStockCheckAck: 188, // CUserInventoryMan::sub_5953FE (InventoryUpdate) / sub_5A1A03 (legacy)
+  FxStockCheckAck: 188, // legacy reply to C->S 305: reconstruction writes u8(0); distinct flow from InventoryUpdate
   InventoryUpdate: 188, // CUserInventoryMan::sub_5953FE
   DynamicImgInfoSsd: 189, // sub_49E093: fxdynimginfo.ssd
   ShopLucciBalance190: 190, // CShopDlg::sub_546BE3: [u32 lucci]

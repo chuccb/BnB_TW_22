@@ -92,11 +92,14 @@ Upon `connect()`, `CPacketSocket` initializes with:
 | `2` (`0x0002`) | S->C | `CFxApp::sub_5A1328` -> `sub_5D00B9` (`0x005D00B9`) | `u8` hasStream (`0` = valid; `1` = `stream` of `csysstr.ssd` parsed by `sub_5CFE6C`) | Step 2 of pre-login `.ssd` sync (`csysstr.ssd`). |
 | `1` (`0x0001`) | S->C | `CFxApp::sub_5A14B1` -> `sub_5D7E8E` (`0x005D7E8E`) | `u8` hasMultiSvr (`0` or `1`+`stream` of `multisvr.ssd` parsed by `sub_5D782C`), *(if region requires it)* `u8` hasMultiSvrn (`0` or `1`+`stream` of `multisvrn.ssd` parsed by `sub_5D79AE`) | Step 3 of pre-login `.ssd` sync. The server preserves a client-edited `multisvr.ssd` when its CRC is a non-sentinel custom value (`> 0xFFFF`, not `0xFFFFFFFF`), rather than overwriting the address the user intentionally configured. |
 | `53` (`0x0035`) | S->C | `CFxApp::sub_5A1E40` -> `sub_5C8BE3` (`0x005C8BE3`) | `u8` hasFilterStream (`0` = no stream; `1` = followed by `stream` of `filterstr.ssd`). Inside that stream, `sub_5C89D7` reads `u16 entryCount`, then `entryCount * [u8 flag, str pattern, str replacement]`. There is no trailing packet-level `extraCount`. | Step 4 of pre-login `.ssd` sync (`filterstr.ssd`); `sub_5C8BE3` reads only the flag and optional SmartStream. |
-| `252` (`0x00FC`) | C->S | `CFxApp::sub_5A1DF3` | `u32` crcPackageMap (`0xDCEC1A37`) | Checks `packagemap.ini` (`S->C 157`: `u8(0)`). |
+| `252` (`0x00FC`) | C->S | `CFxApp` | `u32` crcPackageMap (`0xDCEC1A37`) | Checks `packagemap.ini` (`S->C 157`: `u8(0)`). |
+| `157` (`0x009D`) | S->C | Client receive handler `UNKNOWN`; local writer `authHandler.ts` | `u8` response (`0` in the reconstruction) | Acknowledges C->S 252. The response byte's production meaning is not established; tests assert the one-byte local response. |
 | `267` (`0x010B`) | C->S | `CFxApp` | *(empty)* | Requests notice URL (`S->C 163`: `str noticeUrl`). |
+| `163` (`0x00A3`) | S->C | Client receive handler `UNKNOWN`; local writer `authHandler.ts` | `str` noticeUrl | Response to C->S 267; current tests verify the string and packet exhaustion, but the exact Client receive function is not established in the checked decompilation. |
 | `294` (`0x0126`) | C->S | `CFxApp` | `u32` crcStringTable (`0x6683B836`) | Checks `stringtable.ini` (`S->C 179`: `u8(0)`). |
 | `179` (`0x00B3`) | S->C | Client receive handler `UNKNOWN`; local writer `authHandler.ts` | `u8` response (`0` in the reconstruction) | Acknowledges C->S 294. The response byte's production meaning is not established; tests assert the one-byte local response. |
-| `305` (`0x0131`) | C->S | `CFxApp` | `u32` crcFxStock (`0xB5C71DB3`) | Checks `fxstock.ini` (`S->C 188`: `u8(0)`). |
+| `305` (`0x0131`) | C->S | `CFxApp` | `u32` crcFxStock (`0xB5C71DB3`) | Checks `fxstock.ini` (`S->C 188`: `u8(0)`). This C->S 305 legacy checksum branch is distinct from C->S 305 CoupleRespond. |
+| `188` (`0x00BC`) | S->C | Legacy fxstock-check ack: Client receive handler `UNKNOWN`; local writer `authHandler.ts` | `u8` response (`0` in the reconstruction) | Context-specific legacy reply to C->S 305. `ServerOpcode` 188 is also used by the separate InventoryUpdate packet documented in Section 8; do not merge the two payload schemas. |
 
 ---
 
