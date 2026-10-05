@@ -17,6 +17,7 @@ import {
 import {
   PacketReader,
   PacketWriter,
+  ipv4ToBytes,
   ipv4ToInAddrLittleEndian,
   ipv4ToUint32,
   scrambleBlock,
@@ -295,7 +296,10 @@ describe("Protocol Layer — CRC, Cipher, Primitives, SmartStream & Framing", ()
     expect(ipv4ToInAddrLittleEndian("127.0.0.1")).toBe(0x0100007f);
     expect(ipv4ToUint32("192.0.2.71")).toBe(0xc0000247);
     expect(ipv4ToInAddrLittleEndian("192.0.2.71")).toBe(0x470200c0);
+    expect(Array.from(ipv4ToBytes("192.0.2.71"))).toEqual([192, 0, 2, 71]);
     expect(() => ipv4ToUint32("192.0.2.999")).toThrow();
+    expect(() => ipv4ToBytes("192.0.2.999")).toThrow();
+    expect(() => ipv4ToBytes("192.0.2")).toThrow();
   });
 
   test("CChannelCache category ordinals normalize raw category 18 exactly like sub_5D4071", () => {

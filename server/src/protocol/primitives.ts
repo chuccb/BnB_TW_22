@@ -31,8 +31,7 @@ export function unixMsToVariantTime(unixMs: number = Date.now()): number {
  * Convert an IPv4 dotted-quad string (`"127.0.0.1"`) into four network-order octets.
  */
 export function ipv4ToBytes(ip: string): Uint8Array {
-  const parts = ip.split(".").map((part) => Number.parseInt(part, 10) & 0xff);
-  return new Uint8Array([parts[0] ?? 127, parts[1] ?? 0, parts[2] ?? 0, parts[3] ?? 1]);
+  return new Uint8Array(parseIPv4Octets(ip));
 }
 
 /**
