@@ -193,22 +193,16 @@ class SimulatedClient {
 }
 
 describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Match -> Result -> Shop", () => {
-  test("dispatches every MTUDPPeer frame packed into one UDP datagram", () => {
+  test("does not dispatch batched frames from the current Client UDP send path", () => {
     using state = new WorldState(loadConfig({ dbPath: ":memory:" }));
+    // Client sub_693100 wraps one payload and calls sendto once per invocation. Its
+    // receive-side batch loop does not establish that Client requests are batched.
     const datagram = encodeUdpDatagram([
       new Uint8Array([0, 0, 3]),
       new Uint8Array([0, 0, 4]),
     ]);
 
-    const replies = dispatchUdpDatagram(state, datagram, "203.0.113.52", 55001);
-
-    expect(replies).toHaveLength(2);
-    expect(
-      replies.map(({ datagram: reply }) => Array.from(MTUDPPeer.decodeFrame(reply)!))
-    ).toEqual([
-      [0, 1, 3],
-      [0, 1, 4],
-    ]);
+    expect(dispatchUdpDatagram(state, datagram, "203.0.113.52", 55001)).toEqual([]);
   });
 
   test("Taiwan default endpoints match the client topology", () => {

@@ -1,4 +1,4 @@
-import { decodeUdpDatagram, MTUDPPeer } from "../protocol/framing.ts";
+import { MTUDPPeer } from "../protocol/framing.ts";
 import {
   ClientOpcode,
   ClientUdpOpcode,
@@ -468,7 +468,7 @@ export interface UdpOutDatagram {
 /**
  * Handles an incoming UDP datagram framed with `MTUDPPeer` (`0x005EBFA0`):
  *   `[u8 L = 1 + inner.length][inner][u8 CRC8(0, frame[0..L])]`
- * Mirrors `MTUDPPeer::sub_5EBF73` by processing every concatenated frame in order.
+ * The checked-in Client send helper (`sub_693100`) emits one frame per `sendto` call.
  */
 export function dispatchUdpDatagram(
   state: WorldState,
@@ -476,53 +476,16 @@ export function dispatchUdpDatagram(
   remoteAddress: string,
   remotePort: number
 ): UdpOutDatagram[] {
-  let chunks: Uint8Array[];
-  try {
-    chunks = decodeUdpDatagram(rawDatagram);
-  } catch (error) {
-    logger.warn("UDPDispatcher", "Rejected invalid MTUDPPeer datagram", {
+  const inner = MTUDPPeer.decodeFrame(rawDatagram);
+  if (!inner || inner.length === 0) {
+    logger.warn("UDPDispatcher", "Rejected invalid, empty, or batched MTUDPPeer datagram", {
       remoteAddress,
       remotePort,
       byteCount: rawDatagram.length,
-      error: error instanceof Error ? error.message : String(error),
     });
     return [];
   }
 
-  if (chunks.length === 0 || chunks.some((chunk) => chunk.length === 0)) {
-    logger.warn("UDPDispatcher", "Rejected empty MTUDPPeer datagram or frame", {
-      remoteAddress,
-      remotePort,
-      byteCount: rawDatagram.length,
-      chunkCount: chunks.length,
-    });
-    return [];
-  }
-
-  if (chunks.length > 1) {
-    logger.debug("UDPDispatcher", "Processing multiple MTUDPPeer frames in one datagram", {
-      remoteAddress,
-      remotePort,
-      byteCount: rawDatagram.length,
-      chunkCount: chunks.length,
-    });
-  }
-
-  const out: UdpOutDatagram[] = [];
-  for (const inner of chunks) {
-    const framedInner = MTUDPPeer.encodeFrame(inner);
-    out.push(...dispatchUdpFrame(state, framedInner, inner, remoteAddress, remotePort));
-  }
-  return out;
-}
-
-function dispatchUdpFrame(
-  state: WorldState,
-  framedInner: Uint8Array,
-  inner: Uint8Array,
-  remoteAddress: string,
-  remotePort: number
-): UdpOutDatagram[] {
   const opcodeForLog = inner.length >= 2 && inner[0] === 0 ? inner[1]! : inner[0]!;
   const messageKind =
     inner.length === 6 &&
@@ -538,7 +501,7 @@ function dispatchUdpFrame(
           : inner[0] === UdpPeerEnvelopeKind.GameData
             ? "peer-game-data"
             : "unclassified";
-  logger.debug("UDPDispatcher", "Decoded MTUDPPeer frame", {
+  logger.debug("UDPDispatcher", "Decoded MTUDPPeer datagram", {
     remoteAddress,
     remotePort,
     messageKind,
@@ -703,12 +666,12 @@ function dispatchUdpFrame(
       for (const peerSessionId of peerIds) {
         const peer = state.sessions.get(peerSessionId);
         if (peer?.udpEndpoint) {
-          // Re-emit this validated MTUDPPeer frame with its unchanged inner payload; the client
-          // validates its CRC and strips `[u8(1), u8(localPeerIdx)]` in sub_5EC943.
+          // Forward the original MTUDPPeer frame unchanged; the client validates its CRC and
+          // strips the `[u8(1), u8(localPeerIdx)]` wrapper in CUDPPeerManBase::sub_5EC943.
           out.push({
             address: peer.udpEndpoint.address,
             port: peer.udpEndpoint.port,
-            datagram: framedInner,
+            datagram: rawDatagram,
           });
         }
       }
@@ -716,7 +679,7 @@ function dispatchUdpFrame(
   }
 
   if (out.length === 0) {
-    logger.debug("UDPDispatcher", "UDP frame had no live handler or peer target", {
+    logger.debug("UDPDispatcher", "UDP datagram had no live handler or peer target", {
       remoteAddress,
       remotePort,
       messageKind,
@@ -730,7 +693,7 @@ function dispatchUdpFrame(
       roomNumber: senderSession?.currentRoomNumber,
     });
   } else {
-    logger.debug("UDPDispatcher", "Relayed MTUDPPeer frame to room peers", {
+    logger.debug("UDPDispatcher", "Relayed MTUDPPeer datagram to room peers", {
       remoteAddress,
       remotePort,
       senderSessionId: senderSession?.sessionId,
@@ -738,7 +701,7 @@ function dispatchUdpFrame(
       peerMessageType: inner[0],
       peerIdx: inner.length >= 2 ? inner[1] : undefined,
       innerBytes: inner.length,
-      frameBytes: framedInner.length,
+      datagramBytes: rawDatagram.length,
       recipientCount: out.length,
       recipients: out.map(({ address, port }) => ({ address, port })),
     });
