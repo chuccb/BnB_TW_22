@@ -275,6 +275,7 @@ The server defaults to `BNB_LOG_LEVEL=info` and emits a multi-line, chronologica
 
 - **Outer Frame (`MTUDPPeer` at `0x005EBFA0`)**:
   `[u8 L = 1 + innerLen][innerPayload (deg 0 plain BE)][u8 CRC8(0, frame[0..L-1])]`. Since `L` is one byte, `innerLen` is at most 254 bytes. `sub_693100` (`0x00693100`) builds this length byte and rejects ordinary input lengths where `a3 + 1 > 0xFF`; the TypeScript encoder now rejects payloads above the representable limit instead of wrapping the length.
+  - The Client receive loop `MTUDPPeer::sub_5EBF73` (`0x005EBF73`) walks concatenated chunks in one UDP datagram and stops at the first malformed chunk. The server dispatcher now processes every chunk in order when the entire datagram validates; this confirms Client receive support, not that the Client's send path batches frames.
 - **Unverified keepalive candidate and local reply policy**:
   - The server model accepts a `6B` inbound candidate `[u16 BE(0), u32 BE(userId)]`. The checked-in `CA.exe.c` does not contain the previously attributed `sub_57BEAE` / `sub_57BDCE` bodies, so no Client sender, direction provenance, or cadence is established.
   - The model replies with a `1B` inner payload `[u8(4)]`. `CUDPPeerManBase::sub_5EC943` proves that the Client recognizes this one-byte type, not that a production server sends it in response; verify both sides with a capture.

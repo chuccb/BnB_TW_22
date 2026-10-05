@@ -5,6 +5,7 @@ import { CrazyArcadeServer } from "../src/network/server.ts";
 import {
   buildUdpPeerData,
   buildUdpPeerProbe,
+  encodeUdpDatagram,
   MTUDPPeer,
   PacketSocketState,
 } from "../src/protocol/framing.ts";
@@ -192,6 +193,24 @@ class SimulatedClient {
 }
 
 describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Match -> Result -> Shop", () => {
+  test("dispatches every MTUDPPeer frame packed into one UDP datagram", () => {
+    using state = new WorldState(loadConfig({ dbPath: ":memory:" }));
+    const datagram = encodeUdpDatagram([
+      new Uint8Array([0, 0, 3]),
+      new Uint8Array([0, 0, 4]),
+    ]);
+
+    const replies = dispatchUdpDatagram(state, datagram, "203.0.113.52", 55001);
+
+    expect(replies).toHaveLength(2);
+    expect(
+      replies.map(({ datagram: reply }) => Array.from(MTUDPPeer.decodeFrame(reply)!))
+    ).toEqual([
+      [0, 1, 3],
+      [0, 1, 4],
+    ]);
+  });
+
   test("Taiwan default endpoints match the client topology", () => {
     const config = loadConfig();
     expect(config.tcpPort).toBe(3838);
@@ -2730,6 +2749,50 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     ).toBe(true);
   });
 
+  test("failed listener startup rolls back ports and can be retried", async () => {
+    const gameTcpReservation = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: { data() {} },
+    });
+    const gameTcpPort = gameTcpReservation.port;
+    gameTcpReservation.stop(true);
+
+    const occupiedGameUdp = await Bun.udpSocket({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: { data() {} },
+    });
+    let udpReservationOpen = true;
+    const server = new CrazyArcadeServer({
+      host: "127.0.0.1",
+      tcpPort: 0,
+      udpPort: 0,
+      gameTcpPort,
+      gameUdpPort: occupiedGameUdp.port,
+      dbPath: ":memory:",
+    });
+
+    try {
+      await expect(server.start()).rejects.toThrow();
+      expect(server.config.tcpPort).toBe(0);
+      expect(server.config.udpPort).toBe(0);
+      expect(server.config.gameTcpPort).toBe(gameTcpPort);
+      expect(server.config.gameUdpPort).toBe(occupiedGameUdp.port);
+
+      occupiedGameUdp.close();
+      udpReservationOpen = false;
+      const ports = await server.start();
+      expect(ports.tcpPort).toBeGreaterThan(0);
+      expect(ports.udpPort).toBeGreaterThan(0);
+      expect(ports.gameTcpPort).toBe(gameTcpPort);
+      expect(ports.gameUdpPort).toBe(occupiedGameUdp.port);
+    } finally {
+      if (udpReservationOpen) occupiedGameUdp.close();
+      server.stop();
+    }
+  });
+
   test("server shutdown is reported as a server-requested TCP close", async () => {
     const server = new CrazyArcadeServer({
       host: "127.0.0.1",
@@ -2751,6 +2814,8 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
       clearRecentLogs();
       server.stop();
       stopped = true;
+      expect(() => server.stop()).not.toThrow();
+      await expect(server.start()).rejects.toThrow("CrazyArcadeServer has been stopped");
       await Bun.sleep(10);
 
       const closeLog = getRecentLogs().findLast(

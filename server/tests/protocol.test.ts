@@ -10,6 +10,9 @@ import { computeAdler32Zero, computeCRC8, computeCRC32 } from "../src/protocol/c
 import {
   MTUDPPeer,
   PacketSocketState,
+  buildUdpGameLoadRegistration,
+  parseUdpGameLoadRegistration,
+  type UdpGameLoadRegistration,
   parseUdpPeerInnerPacket,
   decodeUdpDatagram,
   encodeUdpDatagram,
@@ -998,6 +1001,7 @@ describe("Protocol Layer — CRC, Cipher, Primitives, SmartStream & Framing", ()
     expect(decoded.length).toBe(2);
     expect(Array.from(decoded[0]!)).toEqual(Array.from(inner1));
     expect(Array.from(decoded[1]!)).toEqual(Array.from(inner2));
+    expect(MTUDPPeer.decodeFrame(datagram)).toBeNull();
 
     const single = MTUDPPeer.encodeFrame(inner1);
     const singleDec = MTUDPPeer.decodeFrame(single);
@@ -1009,6 +1013,38 @@ describe("Protocol Layer — CRC, Cipher, Primitives, SmartStream & Framing", ()
     expect(() => encodeUdpDatagram([new Uint8Array(255)])).toThrow(
       "MTUDPPeer inner payload 255 exceeds the one-byte length limit of 254"
     );
+  });
+
+  test("GameLoadRegistration builder/parser match the 36-byte Client writer", () => {
+    const registration: UdpGameLoadRegistration = {
+      userId: 0x01020304,
+      roomId: 0x0506,
+      roomGameKey: 0x0708090a,
+      localIp0: 0xc0a80119,
+      localPort0: 56002,
+      localIp1: 0xc0a8011a,
+      localPort1: 56003,
+      mapCrc8: 0x11223344,
+      player0Attrs: [0xaa, 0xbb, 0xcc, 0xdd],
+      player1Attrs: [0x10, 0x20, 0x30, 0x40],
+    };
+    const frame = buildUdpGameLoadRegistration(registration);
+    const inner = MTUDPPeer.decodeFrame(frame);
+
+    expect(inner).not.toBeNull();
+    expect(inner).toHaveLength(36);
+    expect(Array.from(inner!.subarray(0, 12))).toEqual([
+      0x00, 0x01,
+      0x01, 0x02, 0x03, 0x04,
+      0x05, 0x06,
+      0x07, 0x08, 0x09, 0x0a,
+    ]);
+    expect(parseUdpGameLoadRegistration(inner!)).toEqual(registration);
+    expect(parseUdpGameLoadRegistration(inner!.subarray(0, 35))).toBeNull();
+
+    const wrongOpcode = inner!.slice();
+    wrongOpcode[1] = 2;
+    expect(parseUdpGameLoadRegistration(wrongOpcode)).toBeNull();
   });
 
   test("CGameStage UDP inner codes 0..4 follow Client dispatch widths", () => {

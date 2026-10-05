@@ -827,6 +827,10 @@ export function buildUdpGameLoadRegistration(reg: UdpGameLoadRegistration): Uint
   return MTUDPPeer.encodeFrame(w.toPayload());
 }
 
+/**
+ * Parse the known Client-written fields. Server acceptance of truncated registrations is a
+ * separate policy.
+ */
 export function parseUdpGameLoadRegistration(inner: Uint8Array): UdpGameLoadRegistration | null {
   if (inner.length < 36) {
     return null;
@@ -1052,10 +1056,13 @@ export const MTUDPPeer = {
   encodeFrame(innerPayload: Uint8Array): Uint8Array {
     return encodeUdpDatagram([innerPayload]);
   },
+  /**
+   * Decode a single-frame datagram; use `decodeUdpDatagram` when the wire payload may be batched.
+   */
   decodeFrame(datagram: Uint8Array): Uint8Array | null {
     try {
       const chunks = decodeUdpDatagram(datagram);
-      return chunks[0] ?? null;
+      return chunks.length === 1 ? (chunks[0] ?? null) : null;
     } catch {
       return null;
     }

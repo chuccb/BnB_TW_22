@@ -36,6 +36,7 @@ export class CrazyArcadeServer implements Disposable, AsyncDisposable {
 
   private readonly tcpServers: TCPSocketListener<SocketData>[] = [];
   private readonly udpSockets: udp.Socket<"buffer">[] = [];
+  private stopped = false;
 
   constructor(configOverrides: Partial<ServerConfig> = {}, state?: WorldState) {
     this.config = loadConfig(configOverrides);
@@ -43,10 +44,21 @@ export class CrazyArcadeServer implements Disposable, AsyncDisposable {
   }
 
   public async start(): Promise<BoundServerPorts> {
+    if (this.stopped) {
+      throw new Error("CrazyArcadeServer has been stopped and cannot be restarted");
+    }
     if (this.tcpServers.length > 0 || this.udpSockets.length > 0) {
       throw new Error("CrazyArcadeServer is already started");
     }
 
+    // Port 0 is replaced with its bound port before all four listeners are ready; restore
+    // the original configuration if a later bind fails so a retry remains valid.
+    const originalPorts = {
+      tcpPort: this.config.tcpPort,
+      udpPort: this.config.udpPort,
+      gameTcpPort: this.config.gameTcpPort,
+      gameUdpPort: this.config.gameUdpPort,
+    };
     const requestedLoginTcpPort = this.config.tcpPort;
     const requestedGameTcpPort = this.config.gameTcpPort;
 
@@ -67,8 +79,16 @@ export class CrazyArcadeServer implements Disposable, AsyncDisposable {
       const gameUdpPort =
         requestedGameTcpPort === 0 ? 0 : this.config.gameUdpPort || gameServer.port + 1;
       const loginUdp = await this.listenUdp("login", loginUdpPort);
+      if (this.stopped) {
+        loginUdp.close();
+        throw new Error("CrazyArcadeServer was stopped during startup");
+      }
       this.udpSockets.push(loginUdp);
       const gameUdp = await this.listenUdp("game", gameUdpPort);
+      if (this.stopped) {
+        gameUdp.close();
+        throw new Error("CrazyArcadeServer was stopped during startup");
+      }
       this.udpSockets.push(gameUdp);
 
       this.config.udpPort = loginUdp.port;
@@ -107,6 +127,7 @@ export class CrazyArcadeServer implements Disposable, AsyncDisposable {
       return ports;
     } catch (error) {
       this.closeListeners("startup-failure");
+      Object.assign(this.config, originalPorts);
       logger.error("Network", "Failed to start one or more server endpoints", {
         host: this.config.host,
         requestedLoginTcpPort,
@@ -409,7 +430,10 @@ export class CrazyArcadeServer implements Disposable, AsyncDisposable {
     }
   }
 
+  /** Stop and dispose this server; create a new instance to bind listeners again. */
   public stop(): void {
+    if (this.stopped) return;
+    this.stopped = true;
     this.closeListeners("server-shutdown");
     this.state.db.close();
   }
