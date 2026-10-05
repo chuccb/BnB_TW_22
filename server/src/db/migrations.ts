@@ -101,29 +101,38 @@ const MIGRATIONS = [
 export const CURRENT_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;
 
 /**
- * Applies each missing schema version in its own transaction. Version 1 uses
- * CREATE IF NOT EXISTS so databases using the previous schema are adopted in
- * place without replacing their existing rows.
+ * Applies each missing schema version in its own immediate transaction. The
+ * version is read after the write lock is acquired so concurrent server starts
+ * cannot both apply the same non-idempotent migration. Version 1 uses CREATE
+ * IF NOT EXISTS so databases using the previous schema are adopted in place
+ * without replacing their existing rows.
  */
 export function migrateDatabase(database: Database): void {
-  const currentVersion =
-    database.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version ?? 0;
+  const applyNextMigration = database.transaction((): boolean => {
+    const currentVersion =
+      database.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version ?? 0;
 
-  if (currentVersion > CURRENT_SCHEMA_VERSION) {
-    throw new Error(
-      `Database schema version ${currentVersion} is newer than supported version ${CURRENT_SCHEMA_VERSION}`
-    );
-  }
-
-  for (let version = currentVersion + 1; version <= CURRENT_SCHEMA_VERSION; version += 1) {
-    const migration = MIGRATIONS.find((candidate) => candidate.version === version);
-    if (!migration) {
-      throw new Error(`Database schema migration ${version} is missing`);
+    if (currentVersion > CURRENT_SCHEMA_VERSION) {
+      throw new Error(
+        `Database schema version ${currentVersion} is newer than supported version ${CURRENT_SCHEMA_VERSION}`
+      );
+    }
+    if (currentVersion === CURRENT_SCHEMA_VERSION) {
+      return false;
     }
 
-    database.transaction(() => {
-      migration.up(database);
-      database.exec(`PRAGMA user_version = ${migration.version}`);
-    })();
+    const nextVersion = currentVersion + 1;
+    const migration = MIGRATIONS.find((candidate) => candidate.version === nextVersion);
+    if (!migration) {
+      throw new Error(`Database schema migration ${nextVersion} is missing`);
+    }
+
+    migration.up(database);
+    database.exec(`PRAGMA user_version = ${migration.version}`);
+    return true;
+  });
+
+  while (applyNextMigration.immediate()) {
+    // Apply one version at a time so each schema change and version bump commit together.
   }
 }
