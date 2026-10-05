@@ -339,24 +339,59 @@ export class CrazyArcadeServer implements Disposable, AsyncDisposable {
       hostname: this.config.host,
       port,
       socket: {
-        data(socket, buf, remotePort, remoteAddress) {
+        data(socket, buf, remotePort, remoteAddress, flags) {
           const datagram = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+          if (flags.truncated) {
+            logger.warn("UDP", `${label} truncated datagram dropped`, {
+              remoteAddress,
+              remotePort,
+              byteCount: datagram.length,
+            });
+            return;
+          }
+
           logger.debug("UDP", `${label} datagram received`, {
             remoteAddress,
             remotePort,
             byteCount: datagram.length,
             encryptedFramePreview: formatHexPreview(datagram, 24),
           });
-          const replies = dispatchUdpDatagram(world, datagram, remoteAddress, remotePort);
-          for (const reply of replies) {
-            socket.send(reply.datagram, reply.port, reply.address);
-            logger.debug("UDP", `${label} datagram sent`, {
-              remoteAddress: reply.address,
-              remotePort: reply.port,
-              byteCount: reply.datagram.length,
-              framePreview: formatHexPreview(reply.datagram, 24),
+
+          try {
+            const replies = dispatchUdpDatagram(world, datagram, remoteAddress, remotePort);
+            for (const reply of replies) {
+              const queued = socket.send(reply.datagram, reply.port, reply.address);
+              if (!queued) {
+                logger.warn("UDP", `${label} response was not queued`, {
+                  remoteAddress: reply.address,
+                  remotePort: reply.port,
+                  byteCount: reply.datagram.length,
+                });
+                continue;
+              }
+              logger.debug("UDP", `${label} datagram sent`, {
+                remoteAddress: reply.address,
+                remotePort: reply.port,
+                byteCount: reply.datagram.length,
+                framePreview: formatHexPreview(reply.datagram, 24),
+              });
+            }
+          } catch (error) {
+            logger.error("UDP", `${label} datagram processing failed`, {
+              remoteAddress,
+              remotePort,
+              byteCount: datagram.length,
+              error: error instanceof Error ? error.message : String(error),
             });
           }
+        },
+
+        error(socket, error) {
+          logger.error("UDP", `${label} socket error`, {
+            bindAddress: socket.hostname,
+            bindPort: socket.port,
+            error: error.message,
+          });
         },
       },
     });
