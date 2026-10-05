@@ -1,4 +1,5 @@
 import { Database, type Statement } from "bun:sqlite";
+import { migrateDatabase } from "./migrations.ts";
 
 export interface UserRecord {
   id: number;
@@ -219,6 +220,7 @@ export class GameDatabase implements Disposable {
     [{ receiverUserId: number; senderName: string; message: string; createdAt: number }]
   >;
   private readonly selectSmsByUserStmt: Statement<SmsRecord, [{ receiverUserId: number }]>;
+  private readonly hasUnreadSmsStmt: Statement<{ hasUnread: number }, [{ receiverUserId: number }]>;
   private readonly deleteSmsByIdStmt: Statement<
     unknown,
     [{ id: number; receiverUserId: number }]
@@ -350,6 +352,12 @@ export class GameDatabase implements Disposable {
     this.selectSmsByUserStmt = this.db.query(
       `SELECT * FROM user_sms WHERE receiverUserId = $receiverUserId ORDER BY id DESC`
     );
+    this.hasUnreadSmsStmt = this.db.query(
+      `SELECT EXISTS (
+         SELECT 1 FROM user_sms
+         WHERE receiverUserId = $receiverUserId AND isRead = 0
+       ) AS hasUnread`
+    );
     this.deleteSmsByIdStmt = this.db.query(
       `DELETE FROM user_sms WHERE id = $id AND receiverUserId = $receiverUserId`
     );
@@ -397,91 +405,8 @@ export class GameDatabase implements Disposable {
       PRAGMA synchronous = NORMAL;
       PRAGMA foreign_keys = ON;
       PRAGMA temp_store = MEMORY;
-
-      CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-        nickname TEXT NOT NULL DEFAULT '',
-        password TEXT NOT NULL,
-        gender INTEGER NOT NULL DEFAULT 0,
-        level INTEGER NOT NULL DEFAULT 1,
-        exp INTEGER NOT NULL DEFAULT 0,
-        wins INTEGER NOT NULL DEFAULT 0,
-        draws INTEGER NOT NULL DEFAULT 0,
-        losses INTEGER NOT NULL DEFAULT 0,
-        lucci INTEGER NOT NULL DEFAULT 50000,
-        cash INTEGER NOT NULL DEFAULT 10000,
-        marketLucci INTEGER NOT NULL DEFAULT 50000,
-        rankGrade INTEGER NOT NULL DEFAULT 1,
-        grade INTEGER NOT NULL DEFAULT 0,
-        rankFlag INTEGER NOT NULL DEFAULT 0,
-        ladderPoints INTEGER NOT NULL DEFAULT 1000,
-        isGm INTEGER NOT NULL DEFAULT 0,
-        equippedChar INTEGER NOT NULL DEFAULT 0,
-        guildName TEXT NOT NULL DEFAULT '',
-        guildMark INTEGER NOT NULL DEFAULT 0
-      );
-
-      CREATE TABLE IF NOT EXISTS inventory (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        userId INTEGER NOT NULL,
-        packageId INTEGER NOT NULL,
-        itemId INTEGER NOT NULL,
-        quantity INTEGER NOT NULL DEFAULT 1,
-        equippedSlot INTEGER NOT NULL DEFAULT 0,
-        expireTime INTEGER NOT NULL DEFAULT 0,
-        customText TEXT NOT NULL DEFAULT '',
-        remainUnits INTEGER NOT NULL DEFAULT 0,
-        marketStatus INTEGER NOT NULL DEFAULT 0,
-        FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_inventory_user ON inventory(userId);
-
-      CREATE TABLE IF NOT EXISTS user_gifts (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        receiverUserId INTEGER NOT NULL,
-        senderName TEXT NOT NULL,
-        packageId INTEGER NOT NULL,
-        itemId INTEGER NOT NULL,
-        title TEXT NOT NULL DEFAULT '',
-        message TEXT NOT NULL DEFAULT '',
-        claimed INTEGER NOT NULL DEFAULT 0,
-        createdAt INTEGER NOT NULL DEFAULT 0,
-        FOREIGN KEY (receiverUserId) REFERENCES users(id) ON DELETE CASCADE
-      );
-
-      CREATE TABLE IF NOT EXISTS user_sms (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        receiverUserId INTEGER NOT NULL,
-        senderName TEXT NOT NULL,
-        message TEXT NOT NULL,
-        isRead INTEGER NOT NULL DEFAULT 0,
-        createdAt INTEGER NOT NULL DEFAULT 0,
-        FOREIGN KEY (receiverUserId) REFERENCES users(id) ON DELETE CASCADE
-      );
-
-      CREATE TABLE IF NOT EXISTS user_couples (
-        userId INTEGER PRIMARY KEY,
-        partnerUserId INTEGER NOT NULL,
-        partnerName TEXT NOT NULL,
-        coupleGrade INTEGER NOT NULL DEFAULT 1,
-        createdAt INTEGER NOT NULL DEFAULT 0,
-        FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
-      );
-
-      CREATE TABLE IF NOT EXISTS market_listings (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        sellerUserId INTEGER NOT NULL,
-        sellerName TEXT NOT NULL,
-        stockId INTEGER NOT NULL,
-        itemCode INTEGER NOT NULL,
-        price INTEGER NOT NULL,
-        status INTEGER NOT NULL DEFAULT 0,
-        createdAt INTEGER NOT NULL DEFAULT 0,
-        FOREIGN KEY (sellerUserId) REFERENCES users(id) ON DELETE CASCADE
-      );
     `);
+    migrateDatabase(this.db);
   }
 
   public getUserByUsername(username: string): UserRecord | null {
@@ -835,7 +760,7 @@ export class GameDatabase implements Disposable {
   }
 
   public hasUnreadSms(userId: number): boolean {
-    return this.getSmsByUser(userId).some((s) => s.isRead === 0);
+    return this.hasUnreadSmsStmt.get({ receiverUserId: userId })?.hasUnread === 1;
   }
 
   public getCoupleInfo(userId: number): CoupleRecord | null {

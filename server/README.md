@@ -17,6 +17,10 @@ bun run check
 
 The server uses Bun TCP/UDP sockets, `bun:sqlite`, and CP950 text encoding. It starts a LoginServer and a separate GameServer so the client can perform the verified `LoginServer -> CSelectServerStage -> GameServer` TCP handoff.
 
+## Database schema
+
+`src/db/migrations.ts` tracks the SQLite schema with `PRAGMA user_version`. Each numbered migration runs in its own transaction. The initial migration creates the current tables and indexes with `IF NOT EXISTS`, so an existing unversioned database using the previous schema is adopted in place without rebuilding its data. Startup fails clearly if the database was created by a newer schema version. Add future schema changes as a new migration; do not rewrite an already-applied migration.
+
 ## Logs and Shop-click diagnostics
 
 The default `info` level keeps routine cache-sync and request-decoding details quiet. It retains listener/session lifecycle summaries and high-level handoff events. When the server decodes a packet on the statically evidenced Shop connection path, it emits a `ShopTrace` line with the timestamp, session ID, LoginServer/GameServer connection kind, remote endpoint, local port, stage, opcode, and payload length. These are **Shop-flow candidates**, not proof that a UI click reached its callback or caused a send. The TCP close summary includes a bounded per-session packet timeline; `S->C` rows mean socket write calls, not verified Client receipt.
