@@ -86,7 +86,7 @@ const SHOP_OPCODES = new Set<number>([
   ClientOpcode.GachaponRoll,
   ClientOpcode.GachaponClose,
   ClientOpcode.ShopBuyItemPass,
-  ClientOpcode.AckGiftDelivery,
+  ClientOpcode.UnresolvedClientPacket310,
   ClientOpcode.BasketOpen,
   ClientOpcode.BasketQueryInfo,
   ClientOpcode.BasketQueryCoupons,

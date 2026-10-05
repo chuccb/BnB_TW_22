@@ -145,24 +145,22 @@ export function buildUserItemRecordsPacket(
 }
 
 /**
- * Builds S->C 203 (`CUserInventoryMan::sub_5954D2` -> `sub_58DFE6` at `0x0058DFE6`):
- *   u8 playerCount (`sub_6974B0`)
- *   For each local player:
- *     u8 giftCount (`sub_6974B0`)
- *     For each gift (`sub_58DFE6` for `giftType == 200`):
- *       u8 giftType (`200` = item gift, `201` = coupon gift)
- *       u32 stockId (`sub_697580`)
- *       u32 amount (`sub_697580`)
- *       u8 flag (`sub_6974B0`)
- *       u16 validDays (`sub_697510`)
- *       str senderName (`sub_698290`)
- *       str message (`sub_698290`)
+ * Builds the local reconstruction's S->C 203 packet for the Client receive path:
+ * `CShopStageNew::sub_53C550` falls through to `CStage::sub_4BDBF5` case 203,
+ * then `sub_4B965F` -> `CUserInventoryMan::sub_5954D2` (`0x005954D2`).
+ * Wire fields read there:
+ *   u8 playerCount
+ *   For each player: u8 recordCount
+ *   For each record: u8 type, u32 lookup value, u32 value, u8 flag, u16 value, str, str
+ *
+ * The field semantics/identity mapping and any official-server response policy are not
+ * inferred here. `0x0058DFE6` is not the S->C 203 parser or a recovered function entry.
  */
 export function buildGiftListPacket203(
   state: WorldState,
   session: ClientSession
 ): PacketWriter {
-  const players = session.users.length > 0 ? session.users : [null];
+  const players = (session.users.length > 0 ? session.users : [null]).slice(0, 255);
   const w203 = new PacketWriter(ServerOpcode.ShopGiftList);
   w203.writeU8(players.length);
 
@@ -170,11 +168,11 @@ export function buildGiftListPacket203(
     const gifts = user ? state.db.getGiftsByUser(user.id) : [];
     w203.writeU8(Math.min(255, gifts.length));
     for (const g of gifts.slice(0, 255)) {
-      w203.writeU8(200); // 200 = item gift (`sub_58DFE6`)
-      w203.writeU32(g.itemId);
-      w203.writeU32(1); // amount
-      w203.writeU8(1); // delivery flag
-      w203.writeU16(30); // validDays
+      w203.writeU8(200); // Local record-type fixture; parser branches on 200, business meaning UNKNOWN.
+      w203.writeU32(g.itemId); // Local database value; Client lookup-key mapping is unverified.
+      w203.writeU32(1); // Local quantity/value fixture.
+      w203.writeU8(1); // Local flag fixture.
+      w203.writeU16(30); // Local u16 fixture.
       w203.writeString(g.senderName);
       w203.writeString(g.message);
     }
@@ -842,11 +840,14 @@ export function handleShopPacket(
     }
 
     case ClientOpcode.ShopSendGift: {
-      // C->S 279 (`sub_52C5A2`: `[u32 packageId, str receiverName, str title, str message, u8 flag]`)
+      // C->S 279 (`sub_52C5A2`: `[u32 packageId, str receiverName, str title, str message, u8 flag]`).
+      // The local S->C 199/203 sends below are reconstruction behavior, not official response policy.
       const packageId = reader.remaining >= 4 ? reader.readU32() : 1001;
       const receiverName = reader.remaining >= 2 ? reader.readString() : "";
       const title = reader.remaining >= 2 ? reader.readString() : "";
       const message = reader.remaining >= 2 ? reader.readString() : "";
+      const callerSuppliedFlag = reader.remaining > 0 ? reader.readU8() : undefined;
+      void callerSuppliedFlag; // Current Client writer includes this byte; its meaning is unverified.
       const senderName = user?.username ?? "Sender";
 
       if (receiverName) {
@@ -988,10 +989,32 @@ export function handleShopPacket(
       break;
     }
 
+    case ClientOpcode.UnresolvedClientPacket310: {
+      const payloadBytes = reader.remaining;
+      const callerSuppliedValue = payloadBytes > 0 ? reader.readU8() : undefined;
+      reader.offset = reader.plain.length;
+      logger.info("PacketAudit", "Observed C->S 310 from the conditional sub_58EBFE writer; response policy UNKNOWN", {
+        direction: "C->S",
+        wireOpcode: ClientOpcode.UnresolvedClientPacket310,
+        opcodeName: formatClientOpcode(ClientOpcode.UnresolvedClientPacket310),
+        sessionId: session.sessionId,
+        connectionKind: session.connectionKind,
+        stageId: formatStageId(session.stageId),
+        payloadBytes,
+        payloadSchema: "u8 caller-supplied n0xB value; meaning UNKNOWN",
+        payloadWidthValid: payloadBytes === 1,
+        callerSuppliedValue,
+        clientWriter: "sub_58EBFE conditional CSendPacket site at 0x005905B8",
+        responseAssociation: "UNKNOWN",
+        responseSent: false,
+        databaseMutation: false,
+      });
+      break;
+    }
+
     case ClientOpcode.ShopSaveSlotOrder:
     case ClientOpcode.ShopStateSync:
     case ClientOpcode.GachaponClose:
-    case ClientOpcode.AckGiftDelivery:
     case ClientOpcode.BasketOpen:
     case ClientOpcode.BasketThrowAway:
     case ClientOpcode.ShopActionNotify: {

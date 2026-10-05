@@ -177,7 +177,7 @@ export const ClientOpcode = {
   RequestFxStockIni: 276, // sub_594353: request fxstock.ini SmartStream -> S->C 193 (sub_4B95B0)
   ShopBillingCheck: 277, // sub_589D78 -> S->C 201 (sub_58C8EA)
   RequestStringTableIni: 278, // sub_59449A: request stringtable.ini SmartStream -> S->C 200 (sub_4B95F7); distinct from S->C UserMarket notifications 278/279
-  ShopSendGift: 279, // sub_52C5A2: [u32 packageId, str receiver, str title, str msg, u8 flag] -> S->C 199 + S->C 203
+  ShopSendGift: 279, // CShopGiftSendDlg::sub_52C5A2: [u32 packageId, str receiver, str title, str message, u8 flag]; official response/destination policy UNKNOWN
   ShopBuy280: 280, // CShopCouponDlg::sub_492CD9 / sub_492E5C: [str couponCode, str targetUser] -> S->C 204
   ShopRedeemCoupon: 280,
   RequestPackageMapIni: 281, // sub_5943FB: request packagemap.ini SmartStream -> S->C 210 (sub_4B966A)
@@ -208,7 +208,7 @@ export const ClientOpcode = {
   GachaponRoll: 307, // CGachaponDlg::sub_5C3330: [u32 couponStockId] -> S->C 255 / 257
   GachaponClose: 308, // sub_5BF559
   ShopBuyItemPass: 309, // sub_58B871: [str NexonPass, u32 selected-object +8, u32 opaque caller value] -> S->C 199
-  AckGiftDelivery: 310, // sub_58DFE6: [u8 playerIdx]
+  UnresolvedClientPacket310: 310, // sub_58EBFE conditional writer at 0x005905B8: [u8 caller-supplied n0xB]; reached from S->C 199/238 parsers, but semantics/official reply policy UNKNOWN
   QueryMyCharacterRank: 311, // sub_4A4A0F: empty -> S->C 256 (sub_4B96F3 -> sub_4A527F)
   BasketOpen: 312, // sub_5C2A43
   BasketQueryInfo: 313, // CBasketDlg::sub_5C0C05 -> S->C 258 / 259
@@ -352,7 +352,7 @@ export const ServerOpcode = {
   ShopGiftResult: 201, // sub_58C8EA: [u8 result, u32 val1, u32 val2]
   ShopUseOrEquipResult202: 202, // CShopDlg::sub_547038: [u8 result=2, u32 stockId, u32 unk=0]
   InventoryDeleteResult: 202,
-  ShopGiftList: 203, // CUserInventoryMan::sub_5954D2: [u8 playerCount, u8 giftCount, gifts...]
+  ShopGiftList: 203, // CStage case 203 -> sub_4B965F -> CUserInventoryMan::sub_5954D2: u8 playerCount, per-player u8 recordCount, records
   ShopEquipResult: 204, // CShopStageNew::sub_53A6F1: [u8 res, u32 count, 8B f64 LE vtime, items...]
   ShopCouponResult: 204,
   DynamicMapInfoSsdStream: 205, // sub_4E0131 -> sub_4DFE20: fxdynmapinfo.ssd SmartStream
@@ -372,7 +372,7 @@ export const ServerOpcode = {
   NexonClubAuthResult: 232, // CStage::sub_4BC337: [u8 ok, u8 playerIdx, (if ok: str clubId)]
   PremiumSlotDuration: 235, // sub_4B9D05: [u32 slotMask, u32 duration]
   ItemLimitCounts: 237, // sub_4BA3ED: [u16 count, count*(u16 id, u16 a, u16 b, u16 c)]
-  ShopGiftReceive: 238, // CShopStageNew::sub_537B1C: [str sender, u32 itemId, 8B vtime, sub_58EBFE]
+  ShopStagePacket238: 238, // sub_53C550 -> sub_537B1C: str, u32, 8 raw bytes, then sub_58EBFE status/conditional tail; full schema UNKNOWN
   RankingTop3: 240, // sub_4A522B: [u8 count(<=3), count*sub_4A4FBD]
   ShopPurchaseDetail: 240, // CShopStageNew::sub_53B7D3
   SmsSendResult: 242, // SMS path `CSmsDlg::sub_4838E8` reads u8; C->S 290 response path remains UNKNOWN (sub_544049 is S->C 220)

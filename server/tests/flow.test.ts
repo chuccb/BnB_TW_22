@@ -490,6 +490,52 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(observation?.data?.databaseMutation).toBe(false);
   });
 
+  test("C->S 310 is observed without a guessed gift acknowledgement or mutation", () => {
+    clearRecentLogs();
+    const config = loadConfig({ dbPath: ":memory:" });
+    using state = new WorldState(config);
+    const client = new SimulatedClient();
+    const session = state.createSession(client.onWireBytes, "127.0.0.1", 51022, "0.0.0.0", 0, "game");
+    session.sendConnectHello(config);
+    session.stageId = StageId.Shop;
+
+    const user = state.db.createUser("packet310_receiver", "password");
+    session.users = [user];
+    state.db.createGift(user.id, "packet310_sender", 5001, 5002, "existing title", "existing message");
+    const userBefore = state.db.getUserByUsername(user.username);
+    const inventoryBefore = state.db.getInventory(user.id);
+    const giftsBefore = state.db.getGiftsByUser(user.id);
+
+    // The current Client conditionally writes one byte from sub_58EBFE's caller-supplied n0xB.
+    // This observation test checks routing and width only; it does not prove acknowledgement
+    // semantics or server reply policy.
+    client.sendToServer(
+      state,
+      session.sessionId,
+      new PacketWriter(ClientOpcode.UnresolvedClientPacket310).writeU8(7)
+    );
+
+    expect(client.receivedPackets).toHaveLength(0);
+    expect(session.stageId).toBe(StageId.Shop);
+    expect(state.db.getUserByUsername(user.username)).toEqual(userBefore);
+    expect(state.db.getInventory(user.id)).toEqual(inventoryBefore);
+    expect(state.db.getGiftsByUser(user.id)).toEqual(giftsBefore);
+    expect(session.getPacketTraceSummary().packetFlow).toContain(
+      "C->S [decoded] 310 (UnresolvedClientPacket310)"
+    );
+
+    const observation = getRecentLogs().find(
+      (entry) => entry.category === "PacketAudit" && entry.data?.wireOpcode === 310
+    );
+    expect(observation?.data?.payloadBytes).toBe(1);
+    expect(observation?.data?.payloadSchema).toBe("u8 caller-supplied n0xB value; meaning UNKNOWN");
+    expect(observation?.data?.payloadWidthValid).toBe(true);
+    expect(observation?.data?.callerSuppliedValue).toBe(7);
+    expect(observation?.data?.responseAssociation).toBe("UNKNOWN");
+    expect(observation?.data?.responseSent).toBe(false);
+    expect(observation?.data?.databaseMutation).toBe(false);
+  });
+
   test("C->S 14 periodic status is not misrouted as chat or an S->C 15 Lobby alert", () => {
     const config = loadConfig({ dbPath: ":memory:" });
     using state = new WorldState(config);
@@ -2063,7 +2109,18 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(client1.popByOpcode(ServerOpcode.ShopBuyResult)?.readU8()).toBe(0);
     const p203 = client2.popByOpcode(ServerOpcode.ShopGiftList)!;
     expect(p203).toBeDefined();
-    expect(p203.readU32()).toBeGreaterThanOrEqual(0); // sentCount
+    // S->C 203's Client route is CStage case 203 -> sub_4B965F -> sub_5954D2:
+    // one u8 playerCount, then one u8 recordCount and the exact record widths below.
+    expect(p203.readU8()).toBe(1); // playerCount
+    expect(p203.readU8()).toBe(1); // recordCount for the receiver
+    expect(p203.readU8()).toBe(200); // local record-type fixture; semantic mapping UNKNOWN
+    expect(p203.readU32()).toBe(3002); // local lookup value; Client/database key mapping unverified
+    expect(p203.readU32()).toBe(1); // local value fixture
+    expect(p203.readU8()).toBe(1); // local flag fixture
+    expect(p203.readU16()).toBe(30); // local u16 fixture
+    expect(p203.readString()).toBe("bazzi_tw");
+    expect(p203.readString()).toBe("Happy Birthday!");
+    expect(p203.remaining).toBe(0);
 
     // Redeem Coupon (`C->S 280`, `sub_492CD9`)
     client1.sendToServer(
