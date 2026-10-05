@@ -43,17 +43,16 @@ function getObservedUdpEndpoint(remoteAddress: string, remotePort: number): UdpE
 const AUTH_OPCODES = new Set<number>([
   ClientOpcode.PreLoginSsdCheck,
   ClientOpcode.LoginCredentials,
-  ClientOpcode.CreateOrUpdateAccount,
+  ClientOpcode.UnresolvedClientPacket4,
   ClientOpcode.LoginPassport,
   ClientOpcode.AcceptAgreement,
-  ClientOpcode.RegisterAccount,
   ClientOpcode.NewUserIdentifierCheck3,
   ClientOpcode.LoginBeanfunToken,
   ClientOpcode.EKeyVerify,
   ClientOpcode.EKeyChallengeResponse,
-  ClientOpcode.CheckUserIdAvailable,
-  ClientOpcode.SubmitRegistrationForm,
-  ClientOpcode.VerifyAccountIdentity,
+  ClientOpcode.UnresolvedClientPacket34,
+  ClientOpcode.UnresolvedClientPacket35,
+  ClientOpcode.UnresolvedClientPacket36,
   ClientOpcode.ChangeAccountPassword,
   ClientOpcode.CheckPackageMapLegacy,
   ClientOpcode.CheckNoticeUrl,
@@ -274,6 +273,26 @@ export function dispatchTcpPacket(
       handler,
     });
   };
+
+  // C->S 18 has no recovered Client writer or stage/role evidence. Keep it out of
+  // the auth route: observe only, without parsing a body or changing session/DB state.
+  if (opcode === ClientOpcode.UnresolvedClientPacket18) {
+    logger.info("PacketAudit", "Observed unresolved C->S packet candidate", {
+      direction: "C->S",
+      sessionId: session.sessionId,
+      connectionKind: session.connectionKind,
+      stageId: formatStageId(session.stageId),
+      wireOpcode: opcode,
+      opcodeName: formatClientOpcode(opcode),
+      payloadBytes: reader.remaining,
+      payloadSchema: "UNKNOWN",
+      semanticRole: "UNKNOWN",
+      responseAssociation: "UNKNOWN",
+      responseSent: false,
+      databaseMutation: false,
+    });
+    return;
+  }
 
   // 0. Opcode 305: `CCouple::sub_5B9FD6` (`[u8 playerIdx, u8 accept]`, 2 bytes) vs `CheckFxStockLegacy` (4 bytes)
   if (opcode === ClientOpcode.CoupleRespond && reader.remaining === 2) {

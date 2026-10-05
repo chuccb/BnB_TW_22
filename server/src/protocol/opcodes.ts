@@ -33,7 +33,7 @@ export const ClientOpcode = {
   PreLoginSsdCheck: 0, // sub_5A1E40: [u32 dynamic-img context, u32 csysstr, u32 multisvr, u32 filterstr, (opt u32 multisvrn)]
   LoginCredentials: 2, // sub_5D8BD8: 1P/2P keyed username (0x11223344) + password (0x44332211)
   NewUserIdentifierCheck3: 3, // CNewUserDlgChina::sub_496AA6 [str, u8 selector] or CNewUserDlg::sub_498367 [str]; response UNKNOWN, not channel selection
-  CreateOrUpdateAccount: 4, // sub_496D15 / sub_4985CD: account creation / update form
+  UnresolvedClientPacket4: 4, // sub_496D15 has feature/state-dependent forms; sub_4985CD emits [5*str, u8]; meaning/reply/backend association UNKNOWN
   SelectChannel: 5, // CSelectServerStage::sub_56AF39
   SessionHandoff: 6, // sub_5D8879 / sub_5D893D / sub_5D8A3F
   UploadCrashReport: 7, // sub_5A885A / sub_5D090B: [str crashInfo] (CA_Crash_info.nfo / Crash_CA.dmp.log)
@@ -46,7 +46,7 @@ export const ClientOpcode = {
   ClientPeriodicStatus: 14, // sub_5AA9CC, emitted by sub_5AB8CB after >5000 ms: [u32 timeGetTime, u32 opaque context]
   CheckIdOrNormalChat: 16, // COnePageIDStage check ID (stage < 10) or CChatStage::sub_4AD598 normal chat
   AcceptAgreement: 17, // CAgreementStage accept
-  RegisterAccount: 18, // COnePageIDStage register
+  UnresolvedClientPacket18: 18, // No direct writer recovered in checked CA.exe.c; payload/role UNKNOWN (previous sub_516FA7 attribution withdrawn)
   ChatMessageWithType: 19, // Typed chat message
   PingReplyOrWhisper: 20, // CPacketDispatcher::sub_5D7CA5 (8B ping) or CChatStage::sub_4AD598 (whisper)
   MessengerInviteUser: 21, // sub_4B4F83 / sub_4DB16C / sub_55AAF0 / sub_5E9F86: [u16 roomNum, u32 key, str targetUser, u8 flag]
@@ -58,9 +58,9 @@ export const ClientOpcode = {
   LoginBeanfunToken: 31, // sub_5D8494: Taiwan Beanfun / GASH token login
   EKeyVerify: 32, // CEKeyDlg::sub_55FB0B: PlaySafe / E-Key security token verification
   EKeyChallengeResponse: 33, // CEKeyDlg::sub_561394: E-Key challenge response
-  CheckUserIdAvailable: 34, // sub_49A5CA / sub_49A7F4: check user ID availability
-  SubmitRegistrationForm: 35, // sub_49AB07: submit registration form
-  VerifyAccountIdentity: 36, // sub_49B6E4: verify account identity
+  UnresolvedClientPacket34: 34, // sub_49A5CA / sub_49A7F4: [u8 mode(0/1), str]; meaning/reply association UNKNOWN
+  UnresolvedClientPacket35: 35, // sub_49AB07: [5*str, u8, 2*str]; meaning/reply/backend association UNKNOWN
+  UnresolvedClientPacket36: 36, // sub_49B6E4: [2*str, u8]; meaning/reply/backend association UNKNOWN
   RequestShopConnection: 37, // CShopConnectionMan::sub_529AFB
   AuthenticateShopConnection: 38, // CShopConnectionMan::sub_529D8E
   MacroListQuery: 40, // sub_4A29A1: [u8(0)] -> S->C 50
@@ -249,7 +249,7 @@ export const ServerOpcode = {
   LobbyStageTransition: 13, // CSelectServerStage root dispatch: slot 48 -> sub_56A9DA -> CStage::sub_4B96B1; requests StageId.Lobby (11)
   LobbyGuildUserOnlyNotice: 15, // CLobbyStage::sub_4C86A2 -> sub_4C5DE7; modal + PostQuitMessage
   ShopInitAndStage14: 16, // sub_4BB82A: shop checksums (fxstock, stringtable, packagemap) + qmarksfn.ssd + banners
-  PingRequest: 18, // CStage::sub_4BDBF5: [u32 tick, u32 seq]
+  UnresolvedServerPacket18: 18, // CStage::sub_4BDBF5 reads [u32, u32] then dispatches; semantics UNKNOWN
   UserDynamicInfoSync: 19, // Stage-root fallback case 19 -> root +0xDC -> sub_4BA3BA -> sub_5ED779 (Login root included); current server sends no S->C 19
   NormalChat: 21, // CChatStage::sub_4B070C / CGameStage::sub_4F4D49
   WhisperOrEmotion: 23, // CChatStage::sub_4A8727 / CGameStage::sub_4F4F4B
@@ -263,7 +263,7 @@ export const ServerOpcode = {
   FilterStringSsd: 53, // sub_5C8BE3: filterstr.ssd
   CheckIdResult: 59,
   MapNameOverrides: 60, // sub_5D9F0B -> sub_5C578E: [i32 count, count*(u32 mapId, str name)]
-  RegisterAccountResult: 61,
+  UnresolvedServerPacket61: 61, // No Client receive route/request association confirmed in checked CA.exe.c
   UserItemsSyncLegacy: 63, // CUserInventoryMan::sub_598BEC -> sub_597611
 
   // Lobby, Ranking, Room & Exchange Responses

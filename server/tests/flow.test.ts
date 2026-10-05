@@ -221,7 +221,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     client.sendToServer(
       state,
       session.sessionId,
-      new PacketWriter(ClientOpcode.NewUserIdentifierCheck3).writeString("NewUser")
+      new PacketWriter(ClientOpcode.NewUserIdentifierCheck3).writeString("identifier-marker-two")
     );
 
     expect(client.receivedPackets).toHaveLength(0);
@@ -237,6 +237,81 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     );
     expect(checks).toHaveLength(2);
     expect(checks.every((entry) => entry.data?.responseSent === false)).toBe(true);
+    expect(checks.every((entry) => entry.data?.databaseMutation === false)).toBe(true);
+    expect(JSON.stringify(getRecentLogs())).not.toContain("ChinaUser");
+    expect(JSON.stringify(getRecentLogs())).not.toContain("identifier-marker-two");
+  });
+
+  test("C->S 4/34/35/36 form writers do not share a guessed schema or response", () => {
+    clearRecentLogs();
+    const config = loadConfig({ dbPath: ":memory:" });
+    using state = new WorldState(config);
+    const client = new SimulatedClient();
+    const session = state.createSession(client.onWireBytes, "127.0.0.1", 51021, "0.0.0.0", 0, "game");
+    session.sendConnectHello(config);
+    session.stageId = StageId.Login;
+
+    // C->S 4 has a five-string + u8 writer and feature/state-dependent China variants.
+    // C->S 34 has separate mode-0/mode-1 [u8, str] writers; 35 is [5*str, u8, 2*str];
+    // 36 is [2*str, u8]. None has a confirmed server reply/backend association here.
+    const packet4Standard = new PacketWriter(ClientOpcode.UnresolvedClientPacket4)
+      .writeString("marker-packet4-standard")
+      .writeString("field-2")
+      .writeString("field-3")
+      .writeString("field-4")
+      .writeString("field-5")
+      .writeU8(1);
+    const packet4China = new PacketWriter(ClientOpcode.UnresolvedClientPacket4)
+      .writeU8(1)
+      .writeString("marker-packet4-china")
+      .writeString("opaque-form-value")
+      .writeU8(0);
+    const packet34Mode0 = new PacketWriter(ClientOpcode.UnresolvedClientPacket34)
+      .writeU8(0)
+      .writeString("marker-packet34-mode0");
+    const packet34Mode1 = new PacketWriter(ClientOpcode.UnresolvedClientPacket34)
+      .writeU8(1)
+      .writeString("marker-packet34-mode1");
+    const packet35 = new PacketWriter(ClientOpcode.UnresolvedClientPacket35)
+      .writeString("marker-packet35")
+      .writeString("field-2")
+      .writeString("field-3")
+      .writeString("field-4")
+      .writeString("field-5")
+      .writeU8(1)
+      .writeString("field-6")
+      .writeString("field-7");
+    const packet36 = new PacketWriter(ClientOpcode.UnresolvedClientPacket36)
+      .writeString("marker-packet36")
+      .writeString("opaque-value")
+      .writeU8(0);
+
+    for (const packet of [packet4Standard, packet4China, packet34Mode0, packet34Mode1, packet35, packet36]) {
+      client.sendToServer(state, session.sessionId, packet);
+    }
+
+    expect(client.receivedPackets).toHaveLength(0);
+    expect(session.stageId).toBe(StageId.Login);
+    expect(session.users).toHaveLength(0);
+    expect(state.db.db.query("SELECT COUNT(*) AS count FROM users").get()).toEqual({ count: 0 });
+    for (const marker of [
+      "marker-packet4-standard",
+      "marker-packet4-china",
+      "marker-packet34-mode0",
+      "marker-packet34-mode1",
+      "marker-packet35",
+      "marker-packet36",
+    ]) {
+      expect(state.db.getUserByUsername(marker)).toBeNull();
+    }
+
+    const observations = getRecentLogs().filter(
+      (entry) => entry.category === "PacketAudit" && entry.data?.responseAssociation === "UNKNOWN"
+    );
+    expect(observations).toHaveLength(6);
+    expect(JSON.stringify(getRecentLogs())).not.toContain("marker-packet");
+    expect(observations.every((entry) => entry.data?.responseSent === false)).toBe(true);
+    expect(observations.every((entry) => entry.data?.databaseMutation === false)).toBe(true);
   });
 
   test("C->S 10 contextual signal is not routed as a C->S 9 channel-cache request", () => {
@@ -325,7 +400,8 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(getRecentLogs().some((entry) => entry.message.includes("Shop-flow candidate packet"))).toBe(false);
   });
 
-  test("unresolved C->S 30 and 49 do not mutate Login state or use generic credentials", () => {
+  test("unresolved C->S 18, 30, and 49 do not mutate Login state or use generic credentials", () => {
+    clearRecentLogs();
     const config = loadConfig({ dbPath: ":memory:" });
     using state = new WorldState(config);
     const client = new SimulatedClient();
@@ -334,8 +410,12 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     session.stageId = StageId.Login;
 
     // This synthetic test payload is only chosen to catch accidental generic-login parsing;
-    // it does not claim that either unresolved opcode has a string wire schema.
-    for (const opcode of [ClientOpcode.UnresolvedClientPacket30, ClientOpcode.UnresolvedClientPacket49]) {
+    // it does not claim that any unresolved opcode has a string wire schema.
+    for (const opcode of [
+      ClientOpcode.UnresolvedClientPacket18,
+      ClientOpcode.UnresolvedClientPacket30,
+      ClientOpcode.UnresolvedClientPacket49,
+    ]) {
       client.sendToServer(
         state,
         session.sessionId,
@@ -345,7 +425,17 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
 
     expect(client.receivedPackets).toHaveLength(0);
     expect(session.users).toHaveLength(0);
+    expect(state.db.db.query("SELECT COUNT(*) AS count FROM users").get()).toEqual({ count: 0 });
     expect(state.db.getUserByUsername("opaque-unresolved-value")).toBeNull();
+    expect(JSON.stringify(getRecentLogs())).not.toContain("opaque-unresolved-value");
+    const packet18Observations = getRecentLogs().filter(
+      (entry) => entry.category === "PacketAudit" && entry.data?.wireOpcode === 18
+    );
+    expect(packet18Observations).toHaveLength(1);
+    expect(packet18Observations[0]?.data?.payloadSchema).toBe("UNKNOWN");
+    expect(packet18Observations[0]?.data?.semanticRole).toBe("UNKNOWN");
+    expect(packet18Observations[0]?.data?.responseSent).toBe(false);
+    expect(packet18Observations[0]?.data?.databaseMutation).toBe(false);
     expect(session.stageId).toBe(StageId.Login);
   });
 
@@ -622,20 +712,17 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(p188Ack.readU8()).toBe(0);
     expect(p188Ack.remaining).toBe(0);
 
-    // 2. Account ID Check (C->S 16 -> S->C 59) & Register (C->S 18 -> S->C 61)
+    // 2. Source-supported C->S 16 ID check -> S->C 59. C->S 18 / S->C 61 remain
+    // unresolved, so the playable-flow fixture provisions its demo account directly.
     client1.sendToServer(
       state,
       session1.sessionId,
-      new PacketWriter(16).writeString("bazzi_tw")
+      new PacketWriter(ClientOpcode.CheckIdOrNormalChat).writeString("bazzi_tw")
     );
-    expect(client1.popByOpcode(59)?.readU8()).toBe(0); // Available
+    expect(client1.popByOpcode(ServerOpcode.CheckIdResult)?.readU8()).toBe(0); // Available
+    expect(state.db.getUserByUsername("bazzi_tw")).toBeNull();
 
-    client1.sendToServer(
-      state,
-      session1.sessionId,
-      new PacketWriter(18).writeString("bazzi_tw").writeString("pass123")
-    );
-    expect(client1.popByOpcode(61)?.readU8()).toBe(0); // Registered
+    state.db.createUser("bazzi_tw", "pass123");
 
     // 3. Login via C->S 2 (with 0x11223344 & 0x44332211 keyed strings) -> S->C 4 (sub_567461)
     client1.sendToServer(
@@ -2151,23 +2238,31 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(client2.popByOpcode(ServerOpcode.ExchangePassResult)?.readU8()).toBe(1);
     expect(client2.popByOpcode(ServerOpcode.ExchangeState)?.readU8()).toBe(2);
 
-    // Account Registration & Password Change (`C->S 32..36, 46`)
+    // C->S 34/35 registration forms have source-backed but distinct grammars;
+    // their response/backend association is UNKNOWN, so they do not create users or reply.
+    const queuedPacketsBeforeUnknownForms = client1.receivedPackets.length;
     client1.sendToServer(
       state,
       session1.sessionId,
-      new PacketWriter(ClientOpcode.CheckUserIdAvailable).writeString("new_hero_tw")
+      new PacketWriter(ClientOpcode.UnresolvedClientPacket34).writeU8(0).writeString("new_hero_tw")
     );
-    expect(client1.popByOpcode(ServerOpcode.CheckIdResult)?.readU8()).toBe(0);
-
     client1.sendToServer(
       state,
       session1.sessionId,
-      new PacketWriter(ClientOpcode.SubmitRegistrationForm)
+      new PacketWriter(ClientOpcode.UnresolvedClientPacket35)
         .writeString("new_hero_tw")
         .writeString("secret123")
+        .writeString("field-3")
+        .writeString("field-4")
+        .writeString("field-5")
+        .writeU8(1)
+        .writeString("field-6")
+        .writeString("field-7")
     );
-    expect(client1.popByOpcode(ServerOpcode.RegisterAccountResult)?.readU8()).toBe(0);
+    expect(client1.receivedPackets).toHaveLength(queuedPacketsBeforeUnknownForms);
+    expect(state.db.getUserByUsername("new_hero_tw")).toBeNull();
 
+    // Password Change (`C->S 46`) follows a separate local status path.
     client1.sendToServer(
       state,
       session1.sessionId,

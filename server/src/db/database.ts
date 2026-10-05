@@ -524,8 +524,9 @@ export class GameDatabase implements Disposable {
   }
 
   /**
-   * Authenticate user or auto-register if account does not exist yet
-   * (supports both explicit registration via C->S 18 and instant login via C->S 31 / C->S 2).
+   * Local reconstruction adapter used by the current C->S 2 / 11 / 31 login paths.
+   * Missing-user auto-creation is demo policy, not confirmed official-server behavior;
+   * unresolved C->S 18 is deliberately not routed through this method.
    */
   public authenticateOrCreate(
     username: string,

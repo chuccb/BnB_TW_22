@@ -390,10 +390,30 @@ export function handlePostLoginChannelRequest(
   });
 }
 
+function observeUnresolvedClientPacket(
+  session: ClientSession,
+  opcode: number,
+  reader: PacketReader,
+  explanation: string
+): void {
+  logger.info("PacketAudit", `Observed ${formatClientOpcode(opcode)}; ${explanation}`, {
+    direction: "C->S",
+    wireOpcode: opcode,
+    opcodeName: formatClientOpcode(opcode),
+    sessionId: session.sessionId,
+    connectionKind: session.connectionKind,
+    stageId: formatStageId(session.stageId),
+    payloadBytes: reader.remaining,
+    responseAssociation: "UNKNOWN",
+    responseSent: false,
+    databaseMutation: false,
+  });
+}
+
 /**
- * Handles `C->S 16` (Verify account ID availability), `C->S 17` (Agreement accept), and `C->S 18` (Register new account).
+ * Handles the source-supported `C->S 16` ID check and `C->S 17` agreement transition.
  */
-export function handleVerifyOrRegister(
+export function handleIdCheckOrAgreement(
   state: WorldState,
   session: ClientSession,
   opcode: number,
@@ -409,13 +429,6 @@ export function handleVerifyOrRegister(
     const w9 = new PacketWriter(ServerOpcode.StageTransition);
     w9.writeU32(StageId.OnePageId);
     session.sendPacket(w9);
-  } else if (opcode === ClientOpcode.RegisterAccount) {
-    const username = reader.remaining >= 2 ? reader.readString().trim() : `user_${Date.now()}`;
-    const password = reader.remaining >= 2 ? reader.readString() : "1234";
-    state.db.authenticateOrCreate(username, password);
-    const w = new PacketWriter(ServerOpcode.RegisterAccountResult);
-    w.writeU8(0); // 0 = registration success
-    session.sendPacket(w);
   }
 }
 
@@ -440,7 +453,9 @@ export function handleAuthPacket(
         connectionKind: session.connectionKind,
         stageId: formatStageId(session.stageId),
         payloadBytes: reader.remaining,
+        responseAssociation: "UNKNOWN",
         responseSent: false,
+        databaseMutation: false,
       });
       break;
     case ClientOpcode.LoginCredentials:
@@ -450,39 +465,23 @@ export function handleAuthPacket(
       break;
     case ClientOpcode.CheckIdOrNormalChat:
     case ClientOpcode.AcceptAgreement:
-    case ClientOpcode.RegisterAccount:
-      handleVerifyOrRegister(state, session, opcode, reader);
+      handleIdCheckOrAgreement(state, session, opcode, reader);
       break;
-    case ClientOpcode.CreateOrUpdateAccount:
-    case ClientOpcode.SubmitRegistrationForm:
-    case ClientOpcode.VerifyAccountIdentity: {
-      // C->S 4 (`sub_496D15`/`sub_4985CD`), C->S 35 (`sub_49AB07`), C->S 36 (`sub_49B6E4`) -> S->C 61 & S->C 34
-      const username = reader.remaining >= 2 ? reader.readString().trim() : "";
-      const password = reader.remaining >= 2 ? reader.readString() : "1234";
-      if (username) {
-        state.db.authenticateOrCreate(username, password);
-      }
-      const w61 = new PacketWriter(ServerOpcode.RegisterAccountResult);
-      w61.writeU8(0);
-      session.sendPacket(w61);
-
-      const w34 = new PacketWriter(ServerOpcode.StatusResult34);
-      w34.writeU8(0); // 0 = success (`sub_46BBB1`)
-      session.sendPacket(w34);
-      break;
-    }
-    case ClientOpcode.CheckUserIdAvailable: {
-      // C->S 34 (`sub_49A5CA` / `sub_49A7F4`) -> S->C 59 (`CheckIdResult`) & S->C 34 (`sub_46BBB1`)
-      const _mode = reader.remaining >= 1 ? reader.readU8() : 0;
-      const username = reader.remaining >= 2 ? reader.readString().trim() : "";
-      const existing = username ? state.db.getUserByUsername(username) : null;
-      const w59 = new PacketWriter(ServerOpcode.CheckIdResult);
-      w59.writeU8(existing ? 1 : 0);
-      session.sendPacket(w59);
-
-      const w34 = new PacketWriter(ServerOpcode.StatusResult34);
-      w34.writeU8(existing ? 1 : 0);
-      session.sendPacket(w34);
+    case ClientOpcode.UnresolvedClientPacket4:
+    case ClientOpcode.UnresolvedClientPacket34:
+    case ClientOpcode.UnresolvedClientPacket35:
+    case ClientOpcode.UnresolvedClientPacket36: {
+      const explanations: Record<number, string> = {
+        [ClientOpcode.UnresolvedClientPacket4]:
+          "Client has distinct feature/state-dependent form writers; reply and backend mapping UNKNOWN",
+        [ClientOpcode.UnresolvedClientPacket34]:
+          "Client writers use [u8 mode, str]; reply association UNKNOWN",
+        [ClientOpcode.UnresolvedClientPacket35]:
+          "Client writer uses [5*str, u8, 2*str]; meaning, reply, and backend mapping UNKNOWN",
+        [ClientOpcode.UnresolvedClientPacket36]:
+          "Client writer uses two strings and one u8; reply and backend mapping UNKNOWN",
+      };
+      observeUnresolvedClientPacket(session, opcode, reader, explanations[opcode]!);
       break;
     }
     case ClientOpcode.EKeyVerify:
