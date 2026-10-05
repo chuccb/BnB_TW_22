@@ -8,7 +8,8 @@
  * This working inventory is not proof of exhaustive wire coverage.
  * Numeric aliases, stage-dependent overloads, incomplete parser associations, and
  * unresolved Client writer candidates and incomplete S->C receive dispatch coverage are tracked
- * in `server/docs/unknowns.md` (RE-12, RE-19).
+ * in `server/docs/unknowns.md` (RE-12, RE-19). For repeated numeric values, declaration order
+ * selects the context-free log label; a stage-aware log may use a narrower, source-backed route.
  */
 
 export const StageId = {

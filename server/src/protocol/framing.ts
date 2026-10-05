@@ -12,6 +12,8 @@ import {
   formatHexPreview,
   formatServerOpcode,
   formatU8Hex,
+  getClientOpcodeAliases,
+  getServerOpcodeAliases,
   logger,
 } from "../utils/logger.ts";
 
@@ -434,18 +436,24 @@ export class PacketSocketState {
 
       this.serverToClientCounter += this.step;
       if (writer.opcode !== null) {
-        logger.debug("Framing", `Encoded S->C packet ${formatServerOpcode(writer.opcode)}`, {
-          ...packetLogContextFields(logContext),
-          direction: "S->C",
-          opcode: writer.opcode,
-          counter,
-          nextCounter: this.serverToClientCounter,
-          seqByte: formatU8Hex(seq),
-          payloadBytes: N,
-          frameBytes: frame.length,
-          crc8: formatU8Hex(crc),
-          payloadContent: "<omitted>",
-        });
+        const opcodeAliases = getServerOpcodeAliases(writer.opcode, logContext.stageId);
+        logger.debug(
+          "Framing",
+          `Encoded S->C packet ${formatServerOpcode(writer.opcode, logContext.stageId)}`,
+          {
+            ...packetLogContextFields(logContext),
+            direction: "S->C",
+            opcode: writer.opcode,
+            ...(opcodeAliases.length > 0 ? { opcodeAliases } : {}),
+            counter,
+            nextCounter: this.serverToClientCounter,
+            seqByte: formatU8Hex(seq),
+            payloadBytes: N,
+            frameBytes: frame.length,
+            crc8: formatU8Hex(crc),
+            payloadContent: "<omitted>",
+          }
+        );
       }
       return frame;
     } else {
@@ -621,10 +629,12 @@ export class PacketSocketState {
 
         this.clientToServerCounter += this.step;
         const reader = new PacketReader(plain, 2);
+        const opcodeAliases = getClientOpcodeAliases(reader.opcode);
         logger.debug("Framing", `Decoded C->S packet ${formatClientOpcode(reader.opcode)}`, {
           ...packetLogContextFields(logContext),
           direction: "C->S",
           opcode: reader.opcode,
+          ...(opcodeAliases.length > 0 ? { opcodeAliases } : {}),
           counter,
           nextCounter: this.clientToServerCounter,
           seqByte: formatU8Hex(frame[0]!),
@@ -703,20 +713,26 @@ export class PacketSocketState {
 
         this.serverToClientCounter += this.step;
         const reader = new PacketReader(plain, 3);
-        logger.debug("Framing", `Decoded S->C packet ${formatServerOpcode(reader.opcode)}`, {
-          ...packetLogContextFields(logContext),
-          direction: "S->C",
-          opcode: reader.opcode,
-          counter,
-          nextCounter: this.serverToClientCounter,
-          seqByte: formatU8Hex(frame[0]!),
-          payloadBytes: N,
-          frameBytes: frame.length,
-          crc8: formatU8Hex(actualCrc),
-          plainHex: REDACTED_SERVER_PAYLOAD_OPCODES.has(reader.opcode)
-            ? "<redacted>"
-            : formatHexPreview(plain, 24),
-        });
+        const opcodeAliases = getServerOpcodeAliases(reader.opcode, logContext.stageId);
+        logger.debug(
+          "Framing",
+          `Decoded S->C packet ${formatServerOpcode(reader.opcode, logContext.stageId)}`,
+          {
+            ...packetLogContextFields(logContext),
+            direction: "S->C",
+            opcode: reader.opcode,
+            ...(opcodeAliases.length > 0 ? { opcodeAliases } : {}),
+            counter,
+            nextCounter: this.serverToClientCounter,
+            seqByte: formatU8Hex(frame[0]!),
+            payloadBytes: N,
+            frameBytes: frame.length,
+            crc8: formatU8Hex(actualCrc),
+            plainHex: REDACTED_SERVER_PAYLOAD_OPCODES.has(reader.opcode)
+              ? "<redacted>"
+              : formatHexPreview(plain, 24),
+          }
+        );
         packets.push(reader);
       }
     }

@@ -1063,6 +1063,20 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(p19.readU8()).toBe(0);
     expect(p19.remaining).toBe(0);
 
+    const loginResponseLog = getRecentLogs().findLast(
+      (entry) =>
+        entry.category === "Login" &&
+        entry.message === "Authentication succeeded; wrote ordered Login responses"
+    );
+    expect(loginResponseLog?.data?.connectionKind).toBe("login");
+    expect(loginResponseLog?.data?.stageId).toBe("1 (Login)");
+    expect(loginResponseLog?.data?.serverOpcodes).toEqual([
+      "4 (LoginResult)",
+      "19 (UserDynamicInfoSync)",
+    ]);
+    expect(loginResponseLog?.data?.serverWriteCalls).toBe(2);
+    expect(loginResponseLog?.data?.clientReceiptVerified).toBe(false);
+
     // 4. Post-login Channel List Request (C->S 9 -> S->C 10 `channel2_001.ssd`, 12, 11)
     client1.sendToServer(state, session1.sessionId, new PacketWriter(9).writeU32(0));
     const p10 = client1.popByOpcode(10)!;
@@ -1168,7 +1182,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(handoffSendLog?.data?.loginSessionId).toBe(loginSession1.sessionId);
     expect(handoffSendLog?.data?.lobbyEntrySignalObserved).toBe(false);
     expect(handoffSendLog?.data?.serverOpcodes).toEqual([
-      "13 (StageSpecificRoute13)",
+      "13 (LobbyStageTransition)",
       "75 (QuestConfigSync)",
     ]);
     expect(handoffSendLog?.data?.opcode13PayloadBytes).toBe(1);

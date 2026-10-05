@@ -176,7 +176,7 @@ export function handleChannelSelect(
       remoteAddress: session.remoteAddress,
       advertisedAddress: state.config.publicIp,
       gameTcpPort: state.config.gameTcpPort,
-      responseOpcode: formatServerOpcode(ServerOpcode.ChannelSelectResult),
+      responseOpcode: formatServerOpcode(ServerOpcode.ChannelSelectResult, session.stageId),
     },
     {
       displayData: {
@@ -494,8 +494,8 @@ export function handleSessionAuthHandoff(
     targetStageId: StageId.Lobby,
     targetStage: formatStageId(StageId.Lobby),
     serverOpcodes: [
-      formatServerOpcode(ServerOpcode.LobbyStageTransition),
-      formatServerOpcode(ServerOpcode.QuestConfigSync),
+      formatServerOpcode(ServerOpcode.LobbyStageTransition, session.stageId),
+      formatServerOpcode(ServerOpcode.QuestConfigSync, session.stageId),
     ],
     feature22Enabled: state.config.enabledFeatures.has(22),
     opcode13PayloadBytes: state.config.enabledFeatures.has(22) ? 1 : 0,
@@ -510,8 +510,8 @@ export function handleSessionAuthHandoff(
       loginSessionId: session.linkedLoginSessionId,
       targetStage: formatStageId(StageId.Lobby),
       serverOpcodes: [
-        formatServerOpcode(ServerOpcode.LobbyStageTransition),
-        formatServerOpcode(ServerOpcode.QuestConfigSync),
+        formatServerOpcode(ServerOpcode.LobbyStageTransition, session.stageId),
+        formatServerOpcode(ServerOpcode.QuestConfigSync, session.stageId),
       ],
       lobbyEntrySignalObserved: session.lobbyEntryPacketSeen,
       clientAcceptanceVerified: false,

@@ -354,13 +354,29 @@ export function handleLogin(
     session.equippedCharIds.push(auth.user.equippedChar);
   }
 
-  session.sendPacket(buildLoginSuccessPacket(state, session));
-  // LoginStage forwards S->C 19 to the common CStage fallback. The Client parser initializes
-  // the per-user dynamic-info records and sets its App-global readiness gate before channel selection.
-  session.sendPacket(buildUserDynamicInfoSyncPacket(session.users));
-  logger.info("Login", "Authentication succeeded", {
+  // The Login-stage root fallback handles S->C 19. This local policy writes it after successful
+  // S->C 4 and before the next channel-list request so its parser can set the readiness gate;
+  // this ordering is not evidence of official-server timing.
+  const loginResponsePackets = [
+    [ServerOpcode.LoginResult, buildLoginSuccessPacket(state, session)],
+    [ServerOpcode.UserDynamicInfoSync, buildUserDynamicInfoSyncPacket(session.users)],
+  ] as const;
+  for (const [, packet] of loginResponsePackets) {
+    session.sendPacket(packet);
+  }
+
+  logger.info("Login", "Authentication succeeded; wrote ordered Login responses", {
     sessionId: session.sessionId,
+    connectionKind: session.connectionKind,
+    remoteAddress: session.remoteAddress,
+    remotePort: session.remotePort,
+    stageId: formatStageId(session.stageId),
     playerCount: session.users.length,
+    serverOpcodes: loginResponsePackets.map(([opcode]) =>
+      formatServerOpcode(opcode, session.stageId)
+    ),
+    serverWriteCalls: loginResponsePackets.length,
+    clientReceiptVerified: false,
   });
   logger.debug("Login", "Login identity and channel eligibility details", {
     sessionId: session.sessionId,

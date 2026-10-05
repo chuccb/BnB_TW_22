@@ -199,7 +199,7 @@ export class ClientSession {
         ? "ConnectHello"
         : direction === "C->S"
           ? formatClientOpcode(opcode)
-          : formatServerOpcode(opcode));
+          : formatServerOpcode(opcode, stageId));
 
     if (direction === "C->S") {
       this.clientToServerDecodedPackets++;

@@ -27,22 +27,82 @@ export interface FormatLogEntryOptions extends LogOutputOptions {
   color?: boolean;
 }
 
-function makeOpcodeNameMap(table: object): Map<number, string> {
-  const names = new Map<number, string>();
-  for (const [name, value] of Object.entries(table)) {
-    if (typeof value !== "number") continue;
-    // Keep the first name for aliased opcode numbers; it is the primary protocol label.
-    if (!names.has(value)) names.set(value, name);
-  }
-  return names;
+interface OpcodeNameIndex {
+  /** First declaration for a numeric value is its context-free fallback label. */
+  primary: Map<number, string>;
+  /** All declarations, in source order, so debug logs can expose overloaded aliases. */
+  all: Map<number, string[]>;
 }
 
-const CLIENT_OPCODE_NAMES = makeOpcodeNameMap(ClientOpcode);
-const SERVER_OPCODE_NAMES = makeOpcodeNameMap(ServerOpcode);
-const CLIENT_UDP_OPCODE_NAMES = makeOpcodeNameMap(ClientUdpOpcode);
-const SERVER_UDP_OPCODE_NAMES = makeOpcodeNameMap(ServerUdpOpcode);
-const RECONSTRUCTED_UDP_INPUT_OPCODE_NAMES = makeOpcodeNameMap(ReconstructedUdpInputOpcode);
-const STAGE_ID_NAMES = makeOpcodeNameMap(StageId);
+function makeOpcodeNameIndex(table: object): OpcodeNameIndex {
+  const primary = new Map<number, string>();
+  const all = new Map<number, string[]>();
+  for (const [name, value] of Object.entries(table)) {
+    if (typeof value !== "number") continue;
+    const aliases = all.get(value) ?? [];
+    aliases.push(name);
+    all.set(value, aliases);
+    if (!primary.has(value)) primary.set(value, name);
+  }
+  return { primary, all };
+}
+
+function getOpcodeAliases(index: OpcodeNameIndex, opcode: number): string[] {
+  return index.all.get(opcode)?.slice(1) ?? [];
+}
+
+const CLIENT_OPCODE_NAMES = makeOpcodeNameIndex(ClientOpcode);
+const SERVER_OPCODE_NAMES = makeOpcodeNameIndex(ServerOpcode);
+const CLIENT_UDP_OPCODE_NAMES = makeOpcodeNameIndex(ClientUdpOpcode);
+const SERVER_UDP_OPCODE_NAMES = makeOpcodeNameIndex(ServerUdpOpcode);
+const RECONSTRUCTED_UDP_INPUT_OPCODE_NAMES = makeOpcodeNameIndex(ReconstructedUdpInputOpcode);
+const STAGE_ID_NAMES = makeOpcodeNameIndex(StageId);
+
+// Prefer a narrower label only when the server-side session stage identifies a
+// source-backed route. Otherwise keep the neutral first-declared label.
+const SERVER_OPCODE_STAGE_LABELS: ReadonlyMap<number, ReadonlyMap<number, string>> = new Map<
+  number,
+  ReadonlyMap<number, string>
+>([
+  [
+    StageId.Login,
+    new Map<number, string>([
+      [ServerOpcode.LoginResult, "LoginResult"],
+      [ServerOpcode.MessengerHandoff, "MessengerHandoff"],
+    ]),
+  ],
+  [
+    StageId.SelectServer,
+    new Map<number, string>([
+      [ServerOpcode.ChannelSelectResult, "ChannelSelectResult"],
+      [ServerOpcode.LobbyStageTransition, "LobbyStageTransition"],
+    ]),
+  ],
+  [
+    StageId.Lobby,
+    new Map<number, string>([
+      [ServerOpcode.LobbyStageRoute32, "LobbyStageRoute32"],
+      [ServerOpcode.RankingTop3, "RankingTop3"],
+    ]),
+  ],
+  [
+    StageId.Prepare,
+    new Map<number, string>([[ServerOpcode.QuickSlotEquipSync, "QuickSlotEquipSync"]]),
+  ],
+  [
+    StageId.Game,
+    new Map<number, string>([[ServerOpcode.BomberTrapped, "BomberTrapped"]]),
+  ],
+  [
+    StageId.Shop,
+    new Map<number, string>([
+      [ServerOpcode.ShopInitAndStage14, "ShopInitAndStage14"],
+      [ServerOpcode.ShopConfigCrc224, "ShopConfigCrc224"],
+      [ServerOpcode.ShopSaleModifiers, "ShopSaleModifiers"],
+      [ServerOpcode.ShopPurchaseDetail, "ShopPurchaseDetail"],
+    ]),
+  ],
+]);
 
 const LEVEL_PRIORITY: Record<LogLevel, number> = {
   debug: 10,
@@ -110,32 +170,49 @@ export function formatHexPreview(bytes: Uint8Array, maxBytes: number = 32): stri
 }
 
 export function formatClientOpcode(opcode: number): string {
-  const name = CLIENT_OPCODE_NAMES.get(opcode);
+  const name = CLIENT_OPCODE_NAMES.primary.get(opcode);
   return name ? `${opcode} (${name})` : `${opcode} (UnknownClientOpcode)`;
 }
 
-export function formatServerOpcode(opcode: number): string {
-  const name = SERVER_OPCODE_NAMES.get(opcode);
+export function getClientOpcodeAliases(opcode: number): string[] {
+  return getOpcodeAliases(CLIENT_OPCODE_NAMES, opcode);
+}
+
+function getServerOpcodeLabelName(opcode: number, stageId?: number): string | undefined {
+  const stageName =
+    stageId === undefined ? undefined : SERVER_OPCODE_STAGE_LABELS.get(stageId)?.get(opcode);
+  const knownNames = SERVER_OPCODE_NAMES.all.get(opcode);
+  if (stageName && knownNames?.includes(stageName)) return stageName;
+  return SERVER_OPCODE_NAMES.primary.get(opcode);
+}
+
+export function formatServerOpcode(opcode: number, stageId?: number): string {
+  const name = getServerOpcodeLabelName(opcode, stageId);
   return name ? `${opcode} (${name})` : `${opcode} (UnknownServerOpcode)`;
 }
 
+export function getServerOpcodeAliases(opcode: number, stageId?: number): string[] {
+  const labelName = getServerOpcodeLabelName(opcode, stageId);
+  return (SERVER_OPCODE_NAMES.all.get(opcode) ?? []).filter((name) => name !== labelName);
+}
+
 export function formatClientUdpOpcode(opcode: number): string {
-  const name = CLIENT_UDP_OPCODE_NAMES.get(opcode);
+  const name = CLIENT_UDP_OPCODE_NAMES.primary.get(opcode);
   return name ? `${opcode} (${name})` : `${opcode} (UnknownClientUdpOpcode)`;
 }
 
 export function formatServerUdpOpcode(opcode: number): string {
-  const name = SERVER_UDP_OPCODE_NAMES.get(opcode);
+  const name = SERVER_UDP_OPCODE_NAMES.primary.get(opcode);
   return name ? `${opcode} (${name})` : `${opcode} (UnknownServerUdpOpcode)`;
 }
 
 export function formatReconstructedUdpInputOpcode(opcode: number): string {
-  const name = RECONSTRUCTED_UDP_INPUT_OPCODE_NAMES.get(opcode);
+  const name = RECONSTRUCTED_UDP_INPUT_OPCODE_NAMES.primary.get(opcode);
   return name ? `${opcode} (${name})` : `${opcode} (UnknownReconstructedUdpInputOpcode)`;
 }
 
 export function formatStageId(stageId: number): string {
-  const name = STAGE_ID_NAMES.get(stageId);
+  const name = STAGE_ID_NAMES.primary.get(stageId);
   return name ? `${stageId} (${name})` : `${stageId}`;
 }
 

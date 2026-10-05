@@ -378,7 +378,9 @@ export function handleLobbyPacket(
         lobbyEntrySignalObserved: session.lobbyEntryPacketSeen,
         clientUiModalStateObservable: false,
         playerCount: session.users.length,
-        serverOpcodes: lobbyServerOpcodes.map(formatServerOpcode),
+        serverOpcodes: lobbyServerOpcodes.map((serverOpcode) =>
+          formatServerOpcode(serverOpcode, session.stageId)
+        ),
         feature32Enabled,
         stageConfig207WriteCall: sendLobbyStageConfig207Fallback,
         clientModalDismissalVerified: false,
@@ -398,7 +400,9 @@ export function handleLobbyPacket(
           clientRequest: formatClientOpcode(opcode),
           stageId: formatStageId(session.stageId),
           playerCount: session.users.length,
-          serverOpcodes: lobbyServerOpcodes.map(formatServerOpcode),
+          serverOpcodes: lobbyServerOpcodes.map((serverOpcode) =>
+            formatServerOpcode(serverOpcode, session.stageId)
+          ),
           feature32Enabled,
           stageConfig207WriteCall: sendLobbyStageConfig207Fallback,
         },

@@ -60,6 +60,8 @@ import {
   formatServerOpcode,
   formatServerUdpOpcode,
   formatStageId,
+  getClientOpcodeAliases,
+  getServerOpcodeAliases,
   getRecentLogs,
   getLogLevel,
   setLogLevel,
@@ -551,6 +553,11 @@ describe("Protocol Layer — CRC, Cipher, Primitives, SmartStream & Framing", ()
         0,
         context
       );
+      outbound.encodePacket(
+        new PacketWriter(ServerOpcode.LobbyStageTransition),
+        0,
+        { ...context, stageId: StageId.SelectServer }
+      );
 
       const connectHelloLog = getRecentLogs().find(
         (entry) => entry.message.includes("Encoded ConnectHello")
@@ -570,6 +577,13 @@ describe("Protocol Layer — CRC, Cipher, Primitives, SmartStream & Framing", ()
       expect(outboundPacketLog?.data?.payloadContent).toBe("<omitted>");
       expect(outboundPacketLog?.data?.plainHex).toBeUndefined();
 
+      const routeAliasLog = getRecentLogs().find(
+        (entry) => entry.data?.direction === "S->C" && entry.data?.opcode === ServerOpcode.LobbyStageTransition
+      );
+      expect(routeAliasLog?.data?.stageId).toBe(StageId.SelectServer);
+      expect(routeAliasLog?.message).toContain("Encoded S->C packet 13 (LobbyStageTransition)");
+      expect(routeAliasLog?.data?.opcodeAliases).toEqual(["StageSpecificRoute13"]);
+
       const inboundServer = new PacketSocketState("server");
       const inboundClient = new PacketSocketState("client");
       const hello = inboundServer.encodeConnectHello(helloInfo);
@@ -585,6 +599,17 @@ describe("Protocol Layer — CRC, Cipher, Primitives, SmartStream & Framing", ()
       expect(inboundPacketLog?.data?.sessionId).toBe(77);
       expect(inboundPacketLog?.data?.connectionKind).toBe("game");
       expect(inboundPacketLog?.data?.stageId).toBe(11);
+
+      const shopEnterFrame = inboundClient.encodePacket(
+        new PacketWriter(ClientOpcode.ShopEnter, 2).writeU8(0)
+      );
+      inboundServer.feed(shopEnterFrame, { ...context, stageId: StageId.Shop });
+      const shopAliasLog = getRecentLogs().findLast(
+        (entry) => entry.data?.direction === "C->S" && entry.data?.opcode === ClientOpcode.ShopEnter
+      );
+      expect(shopAliasLog?.message).toContain("Decoded C->S packet 269 (ShopEnter)");
+      expect(shopAliasLog?.data?.stageId).toBe(StageId.Shop);
+      expect(shopAliasLog?.data?.opcodeAliases).toEqual(["ShopCashQuery"]);
 
       const sensitiveClientPackets = [
         {
@@ -672,6 +697,24 @@ describe("Protocol Layer — CRC, Cipher, Primitives, SmartStream & Framing", ()
     expect(formatServerOpcode(7)).toBe("7 (StageSpecificRoute7)");
     expect(formatClientOpcode(13)).toBe("13 (ReturnToChannelSelect)");
     expect(formatServerOpcode(13)).toBe("13 (StageSpecificRoute13)");
+    expect(formatServerOpcode(13, StageId.SelectServer)).toBe("13 (LobbyStageTransition)");
+    expect(getServerOpcodeAliases(13)).toEqual(["LobbyStageTransition"]);
+    expect(getServerOpcodeAliases(13, StageId.SelectServer)).toEqual(["StageSpecificRoute13"]);
+    expect(getServerOpcodeAliases(19)).toEqual([]);
+    expect(getClientOpcodeAliases(ClientOpcode.ShopEnter)).toEqual(["ShopCashQuery"]);
+    expect(formatServerOpcode(4, StageId.Login)).toBe("4 (LoginResult)");
+    expect(formatServerOpcode(7, StageId.SelectServer)).toBe("7 (ChannelSelectResult)");
+    expect(formatServerOpcode(11, StageId.Login)).toBe("11 (MessengerHandoff)");
+    expect(formatServerOpcode(12, StageId.Login)).toBe("12 (StageSpecificRoute12)");
+    expect(getServerOpcodeAliases(12, StageId.Login)).toEqual(["ChannelLoads"]);
+    expect(formatServerOpcode(16, StageId.Shop)).toBe("16 (ShopInitAndStage14)");
+    expect(formatServerOpcode(32, StageId.Lobby)).toBe("32 (LobbyStageRoute32)");
+    expect(formatServerOpcode(115, StageId.Prepare)).toBe("115 (QuickSlotEquipSync)");
+    expect(formatServerOpcode(165, StageId.Game)).toBe("165 (BomberTrapped)");
+    expect(formatServerOpcode(224, StageId.Shop)).toBe("224 (ShopConfigCrc224)");
+    expect(formatServerOpcode(229, StageId.Shop)).toBe("229 (ShopSaleModifiers)");
+    expect(formatServerOpcode(240, StageId.Lobby)).toBe("240 (RankingTop3)");
+    expect(formatServerOpcode(240, StageId.Shop)).toBe("240 (ShopPurchaseDetail)");
     expect(formatServerOpcode(33)).toBe("33 (SelectServerDynamicI16Data)");
     expect(formatStageId(10)).toBe("10 (SelectServer)");
     expect(formatStageId(11)).toBe("11 (Lobby)");
@@ -726,7 +769,7 @@ describe("Protocol Layer — CRC, Cipher, Primitives, SmartStream & Framing", ()
     expect(summary.packetFlow).toBe(
       "#01 +4ms S->C [write-call] ConnectHello 48B @1 (Login)\n" +
         "#02 +101ms C->S [decoded] 6 (SessionHandoff) 29B @10 (SelectServer)\n" +
-        "#03 +102ms S->C [write-call] 13 (StageSpecificRoute13) 3B @10 (SelectServer)"
+        "#03 +102ms S->C [write-call] 13 (LobbyStageTransition) 3B @10 (SelectServer)"
     );
     expect(summary.packetFlow).not.toContain("sessionKey");
   });
