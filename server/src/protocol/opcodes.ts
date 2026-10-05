@@ -264,7 +264,7 @@ export const ServerOpcode = {
   UnresolvedServerPacket59: 59, // No Client receive route or source-supported C->S ID-check association recovered in this build.
   MapNameOverrides: 60, // sub_5D9F0B -> sub_5C578E: [i32 count, count*(u32 mapId, str name)]
   UnresolvedServerPacket61: 61, // No Client receive route/request association confirmed in checked CA.exe.c
-  UserItemsSyncLegacy: 63, // CUserInventoryMan::sub_598BEC -> sub_597611
+  UserItemsSyncLegacy: 63, // Project label only; Client routes via sub_4BDBF5 -> sub_4B9654 and sub_5B2B2D both reach sub_598BEC(dword_929C70) -> sub_597611; same reader as S->C 197, trigger/meaning UNKNOWN
 
   // Lobby, Ranking, Room & Exchange Responses
   SuperSpeakerBanner: 65, // sub_4B976C -> sub_4A03EB
@@ -344,7 +344,7 @@ export const ServerOpcode = {
   FxStockIniStream: 193, // sub_4B95B0 -> sub_593FF6: fxstock.ini SmartStream
   InventoryData: 194, // CUserInventoryMan::sub_595272: [u8 playerCount, i32 itemCount, items...]
   EquippedAvatarData: 196, // CUserInventoryMan::sub_597040: [u8 playerCount, 8 * (u32 stockId, str text)]
-  UserItemsData: 197, // CUserInventoryMan::sub_598BEC -> sub_597611: [u16 itemCount, items...]
+  UserItemsData: 197, // Client CStage fallback -> sub_4B9654 -> sub_598BEC(dword_929C70) -> sub_597611; [u16 count, repeated offset-based UserItem fields, optional feature-28 u8]; trigger/meaning UNKNOWN
   ShopUserStockList: 198, // CShopStageNew::sub_53885C: [u32 cash, u8 flag=1]
   ShopCashBalance198: 198,
   ShopBuyResult: 199, // CShopStageNew::sub_5382EA -> sub_58EBFE: [u8 result, 8B f64 LE vtime]

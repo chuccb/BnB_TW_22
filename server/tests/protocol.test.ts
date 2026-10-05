@@ -37,6 +37,7 @@ import {
 } from "../src/protocol/channelCache.ts";
 import { decodeClientText, encodeClientText } from "../src/protocol/textEncoding.ts";
 import { parseSessionHandoffPayload } from "../src/handlers/channelHandler.ts";
+import { buildUserItemRecordsPacket } from "../src/handlers/shopHandler.ts";
 import {
   ClientOpcode,
   ClientUdpOpcode,
@@ -58,6 +59,101 @@ import {
   getLogLevel,
   setLogLevel,
 } from "../src/utils/logger.ts";
+
+describe("S->C UserItem-record packet builder", () => {
+  const record = {
+    field0x08U32: 0x01020304,
+    field0x14U8: 0x07,
+    field0x20String: "",
+    field0x38U32: 0x11223344,
+    field0x44U32: 0x55667788,
+    field0x50U32: 0x99aabbcc,
+    field0x5cString: "",
+    field0x74U16: 0x1234,
+    field0x80U8: 0x56,
+  };
+
+  test("writes the exact base schema and widths for S->C 197 with feature 28 disabled", () => {
+    const packet = buildUserItemRecordsPacket([record]);
+    const payload = packet.toPayload();
+
+    expect(payload.length).toBe(28);
+    expect(Array.from(payload)).toEqual([
+      0xa5, 0xac, 0xa5, 0x68, 0x97, 0xc8, 0x50, 0x91,
+      0x5d, 0xa5, 0x69, 0x87, 0xe8, 0x60, 0xd1, 0xc3,
+      0xac, 0x24, 0x1d, 0x0f, 0x60, 0xe8, 0x59, 0xa5,
+      0x69, 0xb7, 0x5d, 0x0c,
+    ]);
+
+    const reader = new PacketReader(payload, packet.degree, true);
+    expect(reader.opcode).toBe(ServerOpcode.UserItemsData);
+    expect(reader.readU16()).toBe(1);
+    expect(reader.readU32()).toBe(record.field0x08U32);
+    expect(reader.readU8()).toBe(record.field0x14U8);
+    expect(reader.readString()).toBe(record.field0x20String);
+    expect(reader.readU32()).toBe(record.field0x38U32);
+    expect(reader.readU32()).toBe(record.field0x44U32);
+    expect(reader.readU32()).toBe(record.field0x50U32);
+    expect(reader.readString()).toBe(record.field0x5cString);
+    expect(reader.readU16()).toBe(record.field0x74U16);
+    expect(reader.readU8()).toBe(record.field0x80U8);
+    expect(reader.remaining).toBe(0);
+  });
+
+  test("rejects record counts that cannot be represented by the Client's u16 count", () => {
+    const tooManyRecords = Array.from({ length: 0x1_0000 }, () => record);
+    expect(() => buildUserItemRecordsPacket(tooManyRecords))
+      .toThrow("UserItem record count 65536 exceeds the u16 wire limit");
+  });
+
+  test("adds exactly one source-supplied u8 per record when feature 28 is enabled", () => {
+    const feature28Byte = 0xa5;
+    const packet = buildUserItemRecordsPacket(
+      [{ ...record, field0x20String: "A", field0x5cString: "B", field0x9cU8: feature28Byte }],
+      { feature28Enabled: true }
+    );
+    const reader = new PacketReader(packet.toPayload(), packet.degree, true);
+
+    expect(reader.opcode).toBe(ServerOpcode.UserItemsData);
+    expect(reader.readU16()).toBe(1);
+    expect(reader.readU32()).toBe(record.field0x08U32);
+    expect(reader.readU8()).toBe(record.field0x14U8);
+    expect(reader.readString()).toBe("A");
+    expect(reader.readU32()).toBe(record.field0x38U32);
+    expect(reader.readU32()).toBe(record.field0x44U32);
+    expect(reader.readU32()).toBe(record.field0x50U32);
+    expect(reader.readString()).toBe("B");
+    expect(reader.readU16()).toBe(record.field0x74U16);
+    expect(reader.readU8()).toBe(record.field0x80U8);
+    expect(reader.readU8()).toBe(feature28Byte);
+    expect(reader.remaining).toBe(0);
+  });
+
+  test("rejects a missing feature-28 byte instead of fabricating a value", () => {
+    expect(() => buildUserItemRecordsPacket([record], { feature28Enabled: true }))
+      .toThrow("UserItem record at index 0 is missing its feature-28 byte");
+  });
+
+  test("opcode 63 selects the same Client parser widths without changing the fields", () => {
+    const packet = buildUserItemRecordsPacket([record], {
+      opcode: ServerOpcode.UserItemsSyncLegacy,
+    });
+    const reader = new PacketReader(packet.toPayload(), packet.degree, true);
+
+    expect(reader.opcode).toBe(ServerOpcode.UserItemsSyncLegacy);
+    expect(reader.readU16()).toBe(1);
+    expect(reader.readU32()).toBe(record.field0x08U32);
+    expect(reader.readU8()).toBe(record.field0x14U8);
+    expect(reader.readString()).toBe(record.field0x20String);
+    expect(reader.readU32()).toBe(record.field0x38U32);
+    expect(reader.readU32()).toBe(record.field0x44U32);
+    expect(reader.readU32()).toBe(record.field0x50U32);
+    expect(reader.readString()).toBe(record.field0x5cString);
+    expect(reader.readU16()).toBe(record.field0x74U16);
+    expect(reader.readU8()).toBe(record.field0x80U8);
+    expect(reader.remaining).toBe(0);
+  });
+});
 
 describe("Protocol Layer — CRC, Cipher, Primitives, SmartStream & Framing", () => {
   test("CCRC32 and CCRC8 match MSB-first polynomials 0x04C11DB7 and 0x07", () => {

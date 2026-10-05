@@ -73,51 +73,75 @@ export function buildEquippedAvatarPacket196(
   return w196;
 }
 
-export interface CustomItemDefinition {
-  id: number;
-  category: number;
-  code: string;
-  v1: number;
-  v2: number;
-  v3: number;
-  name: string;
-  val: number;
-  flag1: number;
+/** Wire fields are named by their destination offsets in Client `UserItem`; meanings are unknown. */
+export interface UserItemRecord {
+  field0x08U32: number;
+  field0x14U8: number;
+  field0x20String: string;
+  field0x38U32: number;
+  field0x44U32: number;
+  field0x50U32: number;
+  field0x5cString: string;
+  field0x74U16: number;
+  field0x80U8: number;
+  /** One additional u8 is read into UserItem+0x9c when feature 28 is enabled. */
+  field0x9cU8?: number;
+}
+
+export type UserItemRecordsOpcode =
+  | typeof ServerOpcode.UserItemsData
+  | typeof ServerOpcode.UserItemsSyncLegacy;
+
+export interface UserItemRecordsPacketOptions {
+  opcode?: UserItemRecordsOpcode;
+  feature28Enabled?: boolean;
 }
 
 /**
- * Builds S->C 197 / S->C 63 (`CUserItemMan::sub_598BEC` -> `sub_597611` at `0x00597611`):
- *   u16 itemCount (`sub_697510`)
- *   For each item (`sub_597611`, TW region 8 has `sub_5CEA88(28) == 0`):
- *     u32 id (`sub_697580`)
- *     u8 category (`sub_6974B0`)
- *     str code (`sub_698290`)
- *     u32 v1 (`sub_697580`)
- *     u32 v2 (`sub_697580`)
- *     u32 v3 (`sub_697580`)
- *     str name (`sub_698290`)
- *     u16 val (`sub_697510`)
- *     u8 flag1 (`sub_6974B0`)
+ * Builds the Client's UserItem-record stream handled by S->C 63 and 197:
+ *   u16 count (`CStage::sub_4BDBF5` -> `sub_4B9654` -> `sub_598BEC`)
+ *   For each record (`sub_597611` at `0x00597611`):
+ *     u32 -> UserItem+0x08, u8 -> +0x14, str -> +0x20,
+ *     u32 -> +0x38, u32 -> +0x44, u32 -> +0x50, str -> +0x5c,
+ *     u16 -> +0x74, u8 -> +0x80, and (if feature 28) u8 -> +0x9c
+ *
+ * The Client code establishes widths and destination offsets, not application-level field meanings.
+ * The current Taiwan feature set disables feature 28. A caller enabling it must provide each
+ * record's additional byte; the builder does not invent a placeholder. No current server handler
+ * sends this packet or establishes its trigger or official-server response policy.
  */
-export function buildUserItemsPacket197(
-  _session?: ClientSession,
-  items: readonly CustomItemDefinition[] = [],
-  opcode: number = ServerOpcode.UserItemsData
+export function buildUserItemRecordsPacket(
+  records: readonly UserItemRecord[] = [],
+  options: UserItemRecordsPacketOptions = {}
 ): PacketWriter {
-  const w197 = new PacketWriter(opcode);
-  w197.writeU16(items.length);
-  for (const item of items) {
-    w197.writeU32(item.id);
-    w197.writeU8(item.category);
-    w197.writeString(item.code);
-    w197.writeU32(item.v1);
-    w197.writeU32(item.v2);
-    w197.writeU32(item.v3);
-    w197.writeString(item.name);
-    w197.writeU16(item.val);
-    w197.writeU8(item.flag1);
+  const opcode = options.opcode ?? ServerOpcode.UserItemsData;
+  const feature28Enabled = options.feature28Enabled ?? false;
+
+  if (records.length > 0xffff) {
+    throw new RangeError(`UserItem record count ${records.length} exceeds the u16 wire limit`);
   }
-  return w197;
+
+  const packet = new PacketWriter(opcode);
+  packet.writeU16(records.length);
+  for (const [index, record] of records.entries()) {
+    packet.writeU32(record.field0x08U32);
+    packet.writeU8(record.field0x14U8);
+    packet.writeString(record.field0x20String);
+    packet.writeU32(record.field0x38U32);
+    packet.writeU32(record.field0x44U32);
+    packet.writeU32(record.field0x50U32);
+    packet.writeString(record.field0x5cString);
+    packet.writeU16(record.field0x74U16);
+    packet.writeU8(record.field0x80U8);
+
+    if (feature28Enabled) {
+      if (record.field0x9cU8 === undefined) {
+        throw new Error(`UserItem record at index ${index} is missing its feature-28 byte`);
+      }
+      packet.writeU8(record.field0x9cU8);
+    }
+  }
+  return packet;
 }
 
 /**

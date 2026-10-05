@@ -300,7 +300,18 @@ The server defaults to `BNB_LOG_LEVEL=info` and emits a multi-line, chronologica
 
 ## 8. `CUserInventoryMan`, `CShopConnectionMan`, `CShopStageNew` (Stage 14) & `CUserMarketStage` (Stage 20) (` Confirmed `)
 
-### 8.1 `CUserInventoryMan` (`dword_929D78`) & `CShopStageNew` (`0x00529CC1`, `0x0053C550`, `0x00595F5D`)
+### 8.1 Generic `UserItem` record stream (S->C 63 / 197; receive-path evidence only)
+
+`dword_929C70`, consumed by `sub_598BEC`, is distinct from `CUserInventoryMan` at `dword_929D78`. In the current `CA.exe`, `CStage::sub_4BDBF5` routes both opcodes 63 and 197 through `sub_4B9654` -> `sub_598BEC`; the separate `sub_5B2B2D` dispatcher also calls `sub_598BEC` for opcode 63. `sub_598BEC` reads a `u16` count and calls `UserItem::sub_597611` once per record.
+
+| Opcode | Dir | Client route | Exact Client read schema | Effects & Limits |
+|---:|---|---|---|---|
+| `63` (`0x003F`) | S->C | `CStage::sub_4BDBF5` -> `sub_4B9654` -> `sub_598BEC`; alternate `sub_5B2B2D` -> `sub_598BEC` | `u16` count, then count * [`u32` -> `UserItem+0x08`, `u8` -> `+0x14`, `str` -> `+0x20`, `u32` -> `+0x38`, `u32` -> `+0x44`, `u32` -> `+0x50`, `str` -> `+0x5c`, `u16` -> `+0x74`, `u8` -> `+0x80`, *(if feature 28: `u8` -> `+0x9c`)*] | Current-build Client receive/read path is confirmed; field meanings, trigger, payload source, and official-server response policy are UNKNOWN. The `UserItem` class/object offsets do not establish an inventory-row or active-item semantic. |
+| `197` (`0x00C5`) | S->C | `CStage::sub_4BDBF5` -> `sub_4B9654` -> `sub_598BEC` | Same count and per-record parser as S->C 63 | The current source-backed route does not support the previously documented `sub_4BBA8F` / `u8 playerCount` / `u32 activeItemCode` schema; field meanings remain unknown. The reconstruction has a source-width-aware builder but no current sender/callsite; absence is not evidence of an official omission. |
+
+The Taiwan feature table in `CA.exe.c::sub_5CEE8E` case 8 excludes feature 28, matching `TW_ENABLED_FEATURES` and `tests/resources.test.ts`; the Client's conditional read exists but is not enabled by the current Taiwan default. No checked `.idx`/`.idd` entry, extracted `Fx/Attr/ItemAttr.i16`, or `.ssd`/`.ini` record has been tied to this `UserItem` parser or a server send trigger. The `CATW.ini` file is excluded as GameGuard-related, not game evidence. The separate `CUserInventoryMan` receive routes for S->C 188/194/196 and the `fxstock.ini` resource parser are not evidence for this record's field meanings or production payload source.
+
+### 8.2 `CUserInventoryMan` (`dword_929D78`) & `CShopStageNew` (`0x00529CC1`, `0x0053C550`, `0x00595F5D`)
 
 | Opcode | Dir | Handler | Exact Payload Schema | Effects & Notes |
 |---:|---|---|---|---|
@@ -316,7 +327,6 @@ The server defaults to `BNB_LOG_LEVEL=info` and emits a multi-line, chronologica
 | `194` (`0x00C2`) | S->C | `CStage::sub_4BC9CC` -> `CUserInventoryMan::sub_595F5D` (`0x00595F5D`) | `u8` playerCount, per player (`sub_595005`): `i32` count, `count *` (`sub_594ECF`: `u32` stockId, `u8` slotCategory, `u32` qty, `str` customText, `8B f64 LE` VariantTime, `u32` remainUnits, `u8` marketStatus) | Full inventory synchronization on login/lobby/shop entry (`dword_929D78`). |
 | `188` (`0x00BC`) | S->C | `CStage::sub_4BAFE1` -> `CUserInventoryMan::sub_595FA9` (`0x00595FA9`) | Same schema as `S->C 194` (`sub_595005` + `sub_594ECF`) | Incremental inventory refresh after buying/equipping/using items. |
 | `196` (`0x00C4`) | S->C | `CStage::sub_4BCA1A` -> `CUserInventoryMan::sub_595FF8` (`0x00595FF8`) | `u8` playerCount, per player (`sub_594F54` + `sub_594F84`): `8` slots * (`u32` stockId, `str` customText) | Synchronizes the 8 equipped avatar/accessory slots per local player. |
-| `197` (`0x00C5`) | S->C | `CStage::sub_4BBA8F` (`0x004BBA8F`) | `u8` playerCount, per player: `u8` count, `count * u32` activeItemCode | Synchronizes active consumable/effect items. |
 | `268` (`0x010C`) | S->C | `CStage::sub_4B9E20` -> `sub_5832DB` (`0x005832DB`) | `u8` playerCount, per player: `i32` expansionCount, `expansionCount * [u32 a, u32 b, u32 c]` | Synchronizes inventory expansion data. `sub_5832DB` reads the count with `sub_697580` (`u32`); zero expansion count is a 4-byte field. |
 | `208` (`0x00D0`) | S->C | `CShopStageNew::sub_53660B` (`0x0053660B`) | `u8` status (`1`), `u32` fxstockCrc, `u32` stringtableCrc, `u32` packagemapCrc, `str` noticeUrl, *(if feat 23: `u8` hasQmark)*, `u32` bannerCount (`0`) | Shop configuration / catalog sync inside `CShopStageNew`. |
 | `276` (`0x0114`) | C->S | `sub_594353` (`0x00594353`) | *(empty)* | Requests `fxstock.ini` stream (`S->C 193`). |
@@ -344,7 +354,7 @@ The server defaults to `BNB_LOG_LEVEL=info` and emits a multi-line, chronologica
 
 **Lobby Shop control: initial request vs. follow-on traffic.** The mapped click's direct candidates are C->S `37`, `316`, or the conditional `269` above; `37`/`316` use `CSendPacket::sub_57B757` -> `sub_5D842A`, whereas `269` uses `sub_589DB9` -> `sub_5AA68F`. Depending on the S->C 48 endpoint and permission responses and their ordering, the Client has conditional C->S `38`, empty C->S `318`, and C->S `98` paths; no production capture proves which runs or which session carries each packet. S->C `48` starts a new `CClientSocket`, so capture/log all TCP sessions and the advertised endpoint, not only the original GameServer stream. The local handler currently answers C->S `37`/`316` with S->C `261` then `48`; that order is reconstruction policy, not validated production ordering. Order is material because the Client's permission and endpoint handlers both clear the same pending `this+12` state, while the C->S 38 connection-manager path depends on queue/socket readiness. After Stage 14, C->S `276`/`278`/`281` can also appear on checksum mismatch.
 
-### 8.2 `CUserMarketStage` (Stage 20; `OnPacket` `sub_574380` at vtable slot 51 / `+0xCC`, primary vtable `0x007BEF20`)
+### 8.3 `CUserMarketStage` (Stage 20; `OnPacket` `sub_574380` at vtable slot 51 / `+0xCC`, primary vtable `0x007BEF20`)
 
 | Opcode | Dir | Handler | Exact Payload Schema | Effects & Notes |
 |---:|---|---|---|---|
@@ -368,7 +378,7 @@ The server defaults to `BNB_LOG_LEVEL=info` and emits a multi-line, chronologica
 | `278` / `279` | S->C | `CUserMarketStage::sub_574380` -> `sub_539A17` / `sub_539C8B` | `278`: `str`, `u32 count`, `count * u32`; `279`: `str`, `u32 count`, `count * [u32, u32]` | Market expired/sold notifications, not cash or Lucci balance packets. C->S 278 is a separate ClientOpcode requesting `stringtable.ini` (`S->C 200`). |
 | `280` (`0x0118`) | S->C | `CUserMarketStage::sub_574380` -> `sub_572277` | `i32 count`, then `count * u32` | Client reader shape confirmed; item interpretation is local fixture policy. |
 
-### 8.3 `CChatStage` NexonClub dialog submission
+### 8.4 `CChatStage` NexonClub dialog submission
 
 | Opcode | Dir | Handler | Exact Payload Schema | Effects & Notes |
 |---:|---|---|---|---|
