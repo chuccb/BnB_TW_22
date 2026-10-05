@@ -53,6 +53,7 @@ const REDACTED_SERVER_PAYLOAD_OPCODES = new Set<number>([
   ServerOpcode.ShopServerEndpoint,
 ]);
 const MAX_TCP_PAYLOAD_BYTES = 16 * 1024 * 1024;
+const MAX_UDP_INNER_PAYLOAD_BYTES = 0xfe;
 // CPacketSocket advances packet counters by three only after successful frames. Probe
 // nearby values and two sequence-byte cycle values on CRC failure; candidates never make
 // a failed frame acceptable. With a counter step of 3, the sequence repeats after 256 packets
@@ -732,6 +733,11 @@ export class PacketSocketState {
 export function encodeUdpDatagram(innerPayloads: Uint8Array[]): Uint8Array {
   let total = 0;
   for (const inner of innerPayloads) {
+    if (inner.length > MAX_UDP_INNER_PAYLOAD_BYTES) {
+      throw new RangeError(
+        `MTUDPPeer inner payload ${inner.length} exceeds the one-byte length limit of ${MAX_UDP_INNER_PAYLOAD_BYTES}`
+      );
+    }
     total += 2 + inner.length;
   }
   const out = new Uint8Array(total);

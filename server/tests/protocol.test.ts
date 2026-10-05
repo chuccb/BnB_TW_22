@@ -999,6 +999,12 @@ describe("Protocol Layer — CRC, Cipher, Primitives, SmartStream & Framing", ()
     const singleDec = MTUDPPeer.decodeFrame(single);
     expect(singleDec).not.toBeNull();
     expect(Array.from(singleDec!)).toEqual(Array.from(inner1));
+
+    const maxInnerPayload = Uint8Array.from({ length: 254 }, (_, index) => index & 0xff);
+    expect(decodeUdpDatagram(encodeUdpDatagram([maxInnerPayload]))[0]).toEqual(maxInnerPayload);
+    expect(() => encodeUdpDatagram([new Uint8Array(255)])).toThrow(
+      "MTUDPPeer inner payload 255 exceeds the one-byte length limit of 254"
+    );
   });
 
   test("CGameStage UDP inner codes 0..4 follow Client dispatch widths", () => {
