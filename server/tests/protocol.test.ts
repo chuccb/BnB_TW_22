@@ -769,7 +769,8 @@ describe("Protocol Layer — CRC, Cipher, Primitives, SmartStream & Framing", ()
     expect(summary.packetFlow).toBe(
       "#01 +4ms S->C [write-call] ConnectHello 48B @1 (Login)\n" +
         "#02 +101ms C->S [decoded] 6 (SessionHandoff) 29B @10 (SelectServer)\n" +
-        "#03 +102ms S->C [write-call] 13 (LobbyStageTransition) 3B @10 (SelectServer)"
+        "#03 +102ms S->C [write-call] 13 (LobbyStageTransition) 3B @10 (SelectServer) " +
+        "aliases=[StageSpecificRoute13]"
     );
     expect(summary.packetFlow).not.toContain("sessionKey");
   });

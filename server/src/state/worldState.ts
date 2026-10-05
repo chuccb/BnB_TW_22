@@ -13,6 +13,8 @@ import {
   formatClientOpcode,
   formatServerOpcode,
   formatStageId,
+  getClientOpcodeAliases,
+  getServerOpcodeAliases,
 } from "../utils/logger.ts";
 
 export type { CChannelInfo } from "../protocol/channelCache.ts";
@@ -85,6 +87,8 @@ interface TcpPacketTraceEvent {
   atMs: number;
   direction: TcpPacketDirection;
   label: string;
+  /** Other declared names for the numeric opcode; does not imply shared payload semantics. */
+  opcodeAliases?: string[];
   packetBytes: number;
   stageId: number;
 }
@@ -200,6 +204,12 @@ export class ClientSession {
         : direction === "C->S"
           ? formatClientOpcode(opcode)
           : formatServerOpcode(opcode, stageId));
+    const opcodeAliases =
+      opcode === null
+        ? []
+        : direction === "C->S"
+          ? getClientOpcodeAliases(opcode)
+          : getServerOpcodeAliases(opcode, stageId);
 
     if (direction === "C->S") {
       this.clientToServerDecodedPackets++;
@@ -218,6 +228,7 @@ export class ClientSession {
       atMs,
       direction,
       label: packetLabel,
+      ...(opcodeAliases.length > 0 ? { opcodeAliases } : {}),
       packetBytes: Math.max(0, packetBytes),
       stageId,
     });
@@ -231,9 +242,13 @@ export class ClientSession {
             const elapsedMs = Math.max(0, event.atMs - this.connectedAtMs);
             const sequence = this.omittedPacketTraceEvents + index + 1;
             const observation = event.direction === "C->S" ? "decoded" : "write-call";
+            const aliasSummary = event.opcodeAliases?.length
+              ? ` aliases=[${event.opcodeAliases.join(", ")}]`
+              : "";
             return (
               `#${String(sequence).padStart(2, "0")} +${elapsedMs}ms ${event.direction} ` +
-              `[${observation}] ${event.label} ${event.packetBytes}B @${formatStageId(event.stageId)}`
+              `[${observation}] ${event.label} ${event.packetBytes}B @${formatStageId(event.stageId)}` +
+              aliasSummary
             );
           })
           .join("\n");

@@ -15,6 +15,7 @@ import {
   formatClientUdpOpcode,
   formatReconstructedUdpInputOpcode,
   formatStageId,
+  getClientOpcodeAliases,
   logger,
 } from "../utils/logger.ts";
 import type { ClientSession, UdpEndpoint, WorldState } from "../state/worldState.ts";
@@ -265,10 +266,12 @@ function observeUnresolvedClientCandidate(
   reader: PacketReader,
   candidate: UnresolvedClientCandidate
 ): void {
+  const opcodeAliases = getClientOpcodeAliases(opcode);
   logger.info("PacketAudit", `Observed ${formatClientOpcode(opcode)}; ${candidate.explanation}`, {
     direction: "C->S",
     wireOpcode: opcode,
     opcodeName: formatClientOpcode(opcode),
+    ...(opcodeAliases.length > 0 ? { opcodeAliases } : {}),
     sessionId: session.sessionId,
     connectionKind: session.connectionKind,
     stageId: formatStageId(session.stageId),
@@ -301,9 +304,11 @@ export function dispatchTcpPacket(
 
   const shopFlowRole = SHOP_FLOW_CANDIDATE_ROLES.get(opcode);
   if (shopFlowRole) {
+    const opcodeAliases = getClientOpcodeAliases(opcode);
     const shopTraceData = {
       direction: "C->S",
       opcode: formatClientOpcode(opcode),
+      ...(opcodeAliases.length > 0 ? { opcodeAliases } : {}),
       sessionId: session.sessionId,
       connectionKind: session.connectionKind,
       remoteAddress: session.remoteAddress,
@@ -321,6 +326,7 @@ export function dispatchTcpPacket(
         displayData: {
           sessionId: shopTraceData.sessionId,
           connectionKind: shopTraceData.connectionKind,
+          ...(opcodeAliases.length > 0 ? { opcodeAliases } : {}),
           remoteAddress: shopTraceData.remoteAddress,
           remotePort: shopTraceData.remotePort,
           localPort: shopTraceData.localPort,

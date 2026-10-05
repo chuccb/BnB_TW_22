@@ -413,6 +413,35 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(getRecentLogs().some((entry) => entry.message.includes("Shop-flow candidate packet"))).toBe(false);
   });
 
+  test("ShopTrace retains aliases for overloaded Client opcodes", () => {
+    clearRecentLogs();
+    const config = loadConfig({ dbPath: ":memory:" });
+    using state = new WorldState(config);
+    const client = new SimulatedClient();
+    const session = state.createSession(client.onWireBytes, "127.0.0.1", 51019, "0.0.0.0", 0, "game");
+    session.sendConnectHello(config);
+    session.stageId = StageId.Shop;
+
+    // C->S 269 is labeled ShopEnter by the first declaration, but ShopCashQuery is also
+    // documented for this value. Keep both names visible in the info-level candidate trace.
+    client.sendToServer(
+      state,
+      session.sessionId,
+      new PacketWriter(ClientOpcode.ShopEnter).writeU8(0)
+    );
+
+    const shopTrace = getRecentLogs().findLast(
+      (entry) =>
+        entry.category === "ShopTrace" &&
+        entry.data?.opcode === formatClientOpcode(ClientOpcode.ShopEnter)
+    );
+    expect(shopTrace?.data?.stageId).toBe(formatStageId(StageId.Shop));
+    expect(shopTrace?.data?.opcodeAliases).toEqual(["ShopCashQuery"]);
+    expect(session.getPacketTraceSummary().packetFlow).toContain("aliases=[ShopCashQuery]");
+    expect(client.popByOpcode(ServerOpcode.ShopCashBalance198)).toBeDefined();
+    expect(session.stageId).toBe(StageId.Shop);
+  });
+
   test("unresolved Client opcode candidates and unverified legacy replies stay observation-only", () => {
     clearRecentLogs();
     const config = loadConfig({ dbPath: ":memory:" });

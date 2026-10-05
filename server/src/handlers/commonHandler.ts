@@ -3,7 +3,12 @@ import { ClientOpcode, ServerOpcode, StageId } from "../protocol/opcodes.ts";
 import { PacketReader, PacketWriter } from "../protocol/primitives.ts";
 import { SmartStreamWriter } from "../protocol/stream.ts";
 import type { ClientSession, WorldState } from "../state/worldState.ts";
-import { formatClientOpcode, formatStageId, logger } from "../utils/logger.ts";
+import {
+  formatClientOpcode,
+  formatStageId,
+  getClientOpcodeAliases,
+  logger,
+} from "../utils/logger.ts";
 
 function observeClientPacketWithoutReply(
   session: ClientSession,
@@ -13,11 +18,13 @@ function observeClientPacketWithoutReply(
   explanation: string
 ): void {
   const payloadBytes = reader.remaining;
+  const opcodeAliases = getClientOpcodeAliases(opcode);
   reader.offset = reader.plain.length;
   logger.info("PacketAudit", `Observed ${formatClientOpcode(opcode)}; ${explanation}`, {
     direction: "C->S",
     wireOpcode: opcode,
     opcodeName: formatClientOpcode(opcode),
+    ...(opcodeAliases.length > 0 ? { opcodeAliases } : {}),
     sessionId: session.sessionId,
     connectionKind: session.connectionKind,
     stageId: formatStageId(session.stageId),

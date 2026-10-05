@@ -6,6 +6,7 @@ import {
   formatServerOpcode,
   formatStageId,
   formatU32Hex,
+  getClientOpcodeAliases,
   logger,
 } from "../utils/logger.ts";
 import {
@@ -460,10 +461,12 @@ function observeUnresolvedClientPacket(
   reader: PacketReader,
   explanation: string
 ): void {
+  const opcodeAliases = getClientOpcodeAliases(opcode);
   logger.info("PacketAudit", `Observed ${formatClientOpcode(opcode)}; ${explanation}`, {
     direction: "C->S",
     wireOpcode: opcode,
     opcodeName: formatClientOpcode(opcode),
+    ...(opcodeAliases.length > 0 ? { opcodeAliases } : {}),
     sessionId: session.sessionId,
     connectionKind: session.connectionKind,
     stageId: formatStageId(session.stageId),
