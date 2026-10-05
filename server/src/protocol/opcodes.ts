@@ -83,7 +83,7 @@ export const ClientOpcode = {
   CreateRoom: 75, // sub_4CD379 / sub_4CAC9F / sub_4CB60D / sub_4CC28E -> S->C 79 + S->C 102
   JoinRoom: 76, // sub_4C4D93 -> S->C 80 + S->C 102
   QuickJoin: 77, // sub_4C83BA / CNormalLobbyStrategy::sub_4CCCE2 -> S->C 81
-  LeaveRoom: 78, // sub_5AA580: []; current server's S->C 9 reply is a separate Prepare-stage defect
+  LeaveRoom: 78, // sub_5AA580: []; Client locally enters Lobby before send; S->C 9 is a dump-offset route in GameServer stages
   CreateRoomShort: 79, // sub_4C070B -> S->C 79 + S->C 102
   RoomListScrollOrDetail: 80, // sub_4A496F -> S->C 83
   QuickJoinShort: 81, // Quick join alias -> S->C 81
@@ -98,7 +98,7 @@ export const ClientOpcode = {
   SelectTeamColor: 88, // sub_4D2A67: [u8((localIdx<<4)|team)] -> S->C 105 + S->C 104
   SelectCharacter: 89, // sub_4D2AFD: [u8 localIdx, u8 charId] -> S->C 106 + S->C 104
   ToggleSlotOpen: 90, // sub_4D2BB8: [u8((slotIdx<<4)|open)] -> S->C 107 + S->C 104
-  KickPlayer: 91, // sub_4DA92C -> S->C 103
+  KickPlayer: 91, // CPrepareStage::sub_4DAE65: [u32 targetSlotNetId, u8 hasSuperChiefItem]
   BanVoteResponse: 92, // sub_4D555E -> S->C 111
   StartMatch: 93, // sub_4D5DB1 + sub_4DF2EC -> S->C 112 + S->C 113
   ChangeRoomPassword: 94, // sub_4DB16C -> S->C 231 + S->C 93
@@ -285,7 +285,7 @@ export const ServerOpcode = {
   RoomSettingsSync: 93, // CPrepareStage::sub_4D6BC2
   ShopLeaveReturnStage: 99, // CShopConnectionMan::sub_529EB2: [u16 targetStageId] -> C->S 82 or 78
   SetPlayerOnPrepare: 102, // CSlotStage::sub_4B89E4 (CSetPlayerOnPreparePacket)
-  PlayerLeftSlot: 103, // CPrepareStage::sub_4D4154
+  PlayerLeftSlot: 103, // CSessionStage::sub_4B789B [u8 slotIdx, u32 removedNetId, u8 flag] -> CPrepareStage::sub_4D4154
   SlotStateSync: 104, // CPrepareStage::sub_4D9D08
   TeamColorSync: 105, // CPrepareStage::sub_4D4434
   CharSelectSync: 106, // CPrepareStage::sub_4D35DA

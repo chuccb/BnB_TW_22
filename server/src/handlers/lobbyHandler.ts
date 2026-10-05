@@ -8,7 +8,6 @@ import {
   formatU8Hex,
   logger,
 } from "../utils/logger.ts";
-import { sendChannelListAndLoads } from "./channelHandler.ts";
 import {
   buildCoupleInfoSyncPacket250,
   buildDynamicMapConfigPacket207,
@@ -403,15 +402,6 @@ export function handleLobbyPacket(
           stageConfig207WriteCall: sendLobbyStageConfig207Fallback,
         },
       });
-      break;
-    }
-
-    case ClientOpcode.ReturnToChannelSelect: {
-      session.stageId = StageId.SelectServer;
-      sendChannelListAndLoads(state, session);
-      const w9 = new PacketWriter(ServerOpcode.StageTransition);
-      w9.writeU32(StageId.SelectServer);
-      session.sendPacket(w9);
       break;
     }
 

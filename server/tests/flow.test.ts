@@ -507,6 +507,217 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(client.receivedPackets).toHaveLength(0);
   });
 
+  test("empty C->S 96 does not act as a room leave or emit S->C 9", () => {
+    const config = loadConfig({ dbPath: ":memory:" });
+    using state = new WorldState(config);
+    const client = new SimulatedClient();
+    const session = state.createSession(client.onWireBytes, "127.0.0.1", 51029, "0.0.0.0", 0, "game");
+    session.sendConnectHello(config);
+    session.users = [state.db.createUser("handicap_user", "password")];
+    session.netSlotIds = [state.allocateNetSlotId()];
+    session.equippedCharIds = [0];
+    session.stageId = StageId.Prepare;
+    session.channelIndex = 1;
+    const room = state.createRoom(session, "Handicap test", "", false, 0, 0, [0]);
+
+    client.sendToServer(state, session.sessionId, new PacketWriter(ClientOpcode.PracticeHandicap));
+
+    expect(session.stageId).toBe(StageId.Prepare);
+    expect(session.currentRoomNumber).toBe(room.roomNumber);
+    expect(room.slots[0]?.occupied).toBe(true);
+    expect(client.popByOpcode(ServerOpcode.StageTransition)).toBeUndefined();
+    expect(client.popByOpcode(ServerOpcode.PlayerLeftSlot)).toBeUndefined();
+  });
+
+  test("C->S 91 notifies the kicked Client with S->C 103 instead of S->C 9", () => {
+    const config = loadConfig({ dbPath: ":memory:" });
+    using state = new WorldState(config);
+    const chiefClient = new SimulatedClient();
+    const kickedClient = new SimulatedClient();
+    const normalClient = new SimulatedClient();
+    const chiefSession = state.createSession(
+      chiefClient.onWireBytes,
+      "127.0.0.1",
+      51030,
+      "0.0.0.0",
+      0,
+      "game"
+    );
+    const kickedSession = state.createSession(
+      kickedClient.onWireBytes,
+      "127.0.0.1",
+      51031,
+      "0.0.0.0",
+      0,
+      "game"
+    );
+    const normalSession = state.createSession(
+      normalClient.onWireBytes,
+      "127.0.0.1",
+      51034,
+      "0.0.0.0",
+      0,
+      "game"
+    );
+    chiefSession.sendConnectHello(config);
+    kickedSession.sendConnectHello(config);
+    normalSession.sendConnectHello(config);
+
+    chiefSession.users = [state.db.createUser("kick_chief", "password")];
+    chiefSession.netSlotIds = [state.allocateNetSlotId()];
+    chiefSession.equippedCharIds = [0];
+    kickedSession.users = [
+      state.db.createUser("kick_target_a", "password"),
+      state.db.createUser("kick_target_b", "password"),
+    ];
+    kickedSession.netSlotIds = [state.allocateNetSlotId(), state.allocateNetSlotId()];
+    kickedSession.equippedCharIds = [0, 0];
+    normalSession.users = [state.db.createUser("kick_normal_target", "password")];
+    normalSession.netSlotIds = [state.allocateNetSlotId()];
+    normalSession.equippedCharIds = [0];
+
+    const room = state.createRoom(chiefSession, "Kick test", "", false, 0, 0, [0]);
+    state.assignSessionToRoom(kickedSession, room, [0, 0]);
+    state.assignSessionToRoom(normalSession, room, [0]);
+    const kickedSlotIndices = [...kickedSession.roomSlotIndices];
+    const kickedNetSlotIds = [...kickedSession.netSlotIds];
+    const selectedLocalIdx = 1;
+    const kickedSlotIdx = kickedSlotIndices[selectedLocalIdx]!;
+    const kickedNetSlotId = kickedNetSlotIds[selectedLocalIdx]!;
+
+    chiefClient.sendToServer(
+      state,
+      chiefSession.sessionId,
+      new PacketWriter(ClientOpcode.KickPlayer).writeU32(kickedNetSlotId).writeU8(1)
+    );
+
+    const kickedNotice = kickedClient.popByOpcode(ServerOpcode.PlayerLeftSlot);
+    expect(kickedNotice).toBeDefined();
+    expect(kickedNotice!.readU8()).toBe(kickedSlotIdx);
+    expect(kickedNotice!.readU32()).toBe(kickedNetSlotId);
+    expect(kickedNotice!.readU8()).toBe(1); // hasSuperChiefItem from the C->S 91 request
+    expect(kickedNotice!.remaining).toBe(0);
+    expect(kickedClient.popByOpcode(ServerOpcode.PlayerLeftSlot)).toBeUndefined();
+    expect(kickedClient.popByOpcode(ServerOpcode.StageTransition)).toBeUndefined();
+    expect(kickedSession.stageId).toBe(StageId.Lobby);
+    expect(kickedSession.currentRoomNumber).toBeNull();
+    for (const slotIdx of kickedSlotIndices) {
+      expect(room.slots[slotIdx]?.occupied).toBe(false);
+    }
+
+    for (let index = 0; index < kickedSlotIndices.length; index++) {
+      const chiefNotice = chiefClient.popByOpcode(ServerOpcode.PlayerLeftSlot);
+      expect(chiefNotice).toBeDefined();
+      expect(chiefNotice!.readU8()).toBe(kickedSlotIndices[index]);
+      expect(chiefNotice!.readU32()).toBe(kickedNetSlotIds[index]);
+      expect(chiefNotice!.readU8()).toBe(1);
+      expect(chiefNotice!.remaining).toBe(0);
+    }
+    expect(chiefClient.popByOpcode(ServerOpcode.PlayerLeftSlot)).toBeUndefined();
+    expect(chiefClient.popByOpcode(ServerOpcode.StageTransition)).toBeUndefined();
+
+    // The other room session receives one identity-matched notice for each removed local slot.
+    for (let index = 0; index < kickedSlotIndices.length; index++) {
+      const notice = normalClient.popByOpcode(ServerOpcode.PlayerLeftSlot);
+      expect(notice).toBeDefined();
+      expect(notice!.readU8()).toBe(kickedSlotIndices[index]);
+      expect(notice!.readU32()).toBe(kickedNetSlotIds[index]);
+      expect(notice!.readU8()).toBe(1);
+      expect(notice!.remaining).toBe(0);
+    }
+    expect(normalClient.popByOpcode(ServerOpcode.PlayerLeftSlot)).toBeUndefined();
+    expect(normalSession.currentRoomNumber).toBe(room.roomNumber);
+    expect(normalClient.popByOpcode(ServerOpcode.StageTransition)).toBeUndefined();
+
+    // A normal leader kick carries the zero item flag through the same Client packet fields.
+    const normalSlotIdx = normalSession.roomSlotIndices[0]!;
+    const normalNetSlotId = normalSession.netSlotIds[0]!;
+    chiefClient.sendToServer(
+      state,
+      chiefSession.sessionId,
+      new PacketWriter(ClientOpcode.KickPlayer).writeU32(normalNetSlotId).writeU8(0)
+    );
+    const normalNotice = normalClient.popByOpcode(ServerOpcode.PlayerLeftSlot);
+    expect(normalNotice).toBeDefined();
+    expect(normalNotice!.readU8()).toBe(normalSlotIdx);
+    expect(normalNotice!.readU32()).toBe(normalNetSlotId);
+    expect(normalNotice!.readU8()).toBe(0);
+    expect(normalNotice!.remaining).toBe(0);
+    expect(normalClient.popByOpcode(ServerOpcode.StageTransition)).toBeUndefined();
+    expect(normalSession.stageId).toBe(StageId.Lobby);
+    expect(normalSession.currentRoomNumber).toBeNull();
+
+    const normalNoticeToChief = chiefClient.popByOpcode(ServerOpcode.PlayerLeftSlot);
+    expect(normalNoticeToChief).toBeDefined();
+    expect(normalNoticeToChief!.readU8()).toBe(normalSlotIdx);
+    expect(normalNoticeToChief!.readU32()).toBe(normalNetSlotId);
+    expect(normalNoticeToChief!.readU8()).toBe(0);
+    expect(normalNoticeToChief!.remaining).toBe(0);
+    expect(chiefClient.popByOpcode(ServerOpcode.PlayerLeftSlot)).toBeUndefined();
+    expect(chiefClient.popByOpcode(ServerOpcode.StageTransition)).toBeUndefined();
+    expect(room.slots[normalSlotIdx]?.occupied).toBe(false);
+  });
+
+  test("C->S 78 reports each removed local slot by its own net ID and sends no S->C 9", () => {
+    const config = loadConfig({ dbPath: ":memory:" });
+    using state = new WorldState(config);
+    const leavingClient = new SimulatedClient();
+    const remainingClient = new SimulatedClient();
+    const leavingSession = state.createSession(
+      leavingClient.onWireBytes,
+      "127.0.0.1",
+      51032,
+      "0.0.0.0",
+      0,
+      "game"
+    );
+    const remainingSession = state.createSession(
+      remainingClient.onWireBytes,
+      "127.0.0.1",
+      51033,
+      "0.0.0.0",
+      0,
+      "game"
+    );
+    leavingSession.sendConnectHello(config);
+    remainingSession.sendConnectHello(config);
+    leavingSession.users = [
+      state.db.createUser("leave_local_a", "password"),
+      state.db.createUser("leave_local_b", "password"),
+    ];
+    leavingSession.netSlotIds = [state.allocateNetSlotId(), state.allocateNetSlotId()];
+    leavingSession.equippedCharIds = [0, 0];
+    remainingSession.users = [state.db.createUser("remain_user", "password")];
+    remainingSession.netSlotIds = [state.allocateNetSlotId()];
+    remainingSession.equippedCharIds = [0];
+
+    const room = state.createRoom(leavingSession, "Multi-local leave", "", false, 0, 0, [0, 0]);
+    state.assignSessionToRoom(remainingSession, room, [0]);
+    const leavingSlots = [...leavingSession.roomSlotIndices];
+    const leavingNetSlotIds = [...leavingSession.netSlotIds];
+
+    leavingClient.sendToServer(state, leavingSession.sessionId, new PacketWriter(ClientOpcode.LeaveRoom));
+
+    expect(leavingSession.stageId).toBe(StageId.Lobby);
+    expect(leavingSession.currentRoomNumber).toBeNull();
+    expect(leavingClient.popByOpcode(ServerOpcode.StageTransition)).toBeUndefined();
+    expect(leavingClient.popByOpcode(ServerOpcode.PlayerLeftSlot)).toBeUndefined();
+    expect(remainingSession.stageId).toBe(StageId.Prepare);
+    expect(remainingSession.currentRoomNumber).toBe(room.roomNumber);
+
+    for (let index = 0; index < leavingSlots.length; index++) {
+      expect(room.slots[leavingSlots[index]!]?.occupied).toBe(false);
+      const notice = remainingClient.popByOpcode(ServerOpcode.PlayerLeftSlot);
+      expect(notice).toBeDefined();
+      expect(notice!.readU8()).toBe(leavingSlots[index]);
+      expect(notice!.readU32()).toBe(leavingNetSlotIds[index]);
+      expect(notice!.readU8()).toBe(0);
+      expect(notice!.remaining).toBe(0);
+    }
+    expect(remainingClient.popByOpcode(ServerOpcode.PlayerLeftSlot)).toBeUndefined();
+    expect(remainingClient.popByOpcode(ServerOpcode.StageTransition)).toBeUndefined();
+  });
+
   test("empty Lobby ignores C->S 80 room-detail prefetch instead of showing NotValidRoomInfo", () => {
     const config = loadConfig({ dbPath: ":memory:" });
     using state = new WorldState(config);
@@ -1688,11 +1899,12 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     );
     expect(client1.popByOpcode(ServerOpcode.ShopEquipResult)).toBeDefined();
 
-    // 16. Leave Room (current server output: C->S 78 -> S->C 9 u32(11) + S->C 103).
-    // The opcode-9 leave response is a separate known defect in the generic CPrepareStage path.
+    // 16. Leave Room: CPrepareStage::sub_4D1F0F changes to Lobby locally before C->S 78.
+    // The server updates its model and notifies remaining room members with S->C 103;
+    // S->C 9 would be parsed by the Client's generic GameServer path as a dump-file offset.
     client1.sendToServer(state, session1.sessionId, new PacketWriter(ClientOpcode.LeaveRoom));
-    client1.popByOpcode(ServerOpcode.StageTransition); // pop earlier Stage 14 transition
-    expect(client1.popByOpcode(ServerOpcode.StageTransition)?.readU32()).toBe(StageId.Lobby);
+    client1.popByOpcode(ServerOpcode.StageTransition); // pop earlier Shop Stage 14 transition
+    expect(client1.popByOpcode(ServerOpcode.StageTransition)).toBeUndefined();
     expect(session1.stageId).toBe(StageId.Lobby);
     expect(session1.udpEndpoint).toBeNull();
     expect(state.rooms.get(roomNum)?.slots[0]?.udpEndpoints).toEqual([
@@ -1703,11 +1915,9 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
 
     const p103 = client2.popByOpcode(ServerOpcode.PlayerLeftSlot)!;
     expect(p103).toBeDefined();
-    expect(p103.readU8()).toBe(0); // leftSlotIdx = 0
-    expect(p103.readU32()).toBeGreaterThan(0); // newChiefSlotNetId
-    expect(p103.readU8()).toBe(0); // bannedByLeaderFlag = 0
-    expect(p103.readU16()).toBe(0); // unused u16 in CPrepareStage::sub_4D4154
-    expect(p103.readU8()).toBe(1); // newChiefSlotIdx = 1 (`j[779]`)
+    expect(p103.readU8()).toBe(0); // removed slotIdx
+    expect(p103.readU32()).toBe(session1.netSlotIds[0]); // removed slot's own NetID
+    expect(p103.readU8()).toBe(0); // hasSuperChiefItem / leave reason flag
     expect(p103.remaining).toBe(0);
 
     // 17. UserMarket packet sequence. The source confirms the client writers/readers;

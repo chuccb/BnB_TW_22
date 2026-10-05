@@ -78,9 +78,9 @@ The default Taiwan peer ports are LoginServer TCP/UDP `3838/3839` and GameServer
 │ 20: CUserMarket  │  local C->S 318 -> S->C 262/265 │  (S->C 194,196,250) │
 └──────────────────┘                             └────┬───────────▲────┘
                                                       │           │
-                          C->S 75 / 79 (Create Room)  │           │ C->S 78 (Leave Room)
-                          C->S 76 (Join Room)         │           │ current server S->C 9 (separate fix pending)
-                          C->S 77 / 81 (Quick Join)   │           │ S->C 103 (To Room)
+                          C->S 75 / 79 (Create Room)  │           │ C->S 78 (Leave Room; Lobby is local)
+                          C->S 76 (Join Room)         │           │ S->C 103 (to remaining room members)
+                          C->S 77 / 81 (Quick Join)   │           │ C->S 91 kick -> S->C 103 (target + room)
                           S->C 79 / 80 + S->C 102     ▼           │
                                                  ┌────────────────┴────┐
                                                  │  12: CPrepareStage  │
@@ -133,7 +133,7 @@ Keep other Lobby toolbar paths separate: `CGlobalButtonDlg::sub_46AE9B` command 
 
 **C->S 6 variants.** `sub_5D893D` is the confirmed post-S->C-7 SelectServer handoff writer and includes a per-player field97 u32, an opaque byte from `CNetworkFacade+8`, and two trailing u32s. `sub_5D8A3F` and `sub_5D8879` emit different shapes. At a traced `sub_5D8A3F` caller the final byte is the current StageId; it is not interchangeable with the `sub_5D893D` byte and neither should be treated as a destination based solely on its numeric value. The server implements the confirmed `sub_5D893D` variant; other C->S-6 variants remain stage-specific/unhandled pending evidence.
 
-**Opcode 9 scope.** The GameServer Lobby handoff does not send S->C 9: in the `CSelectServerStage` fallback, opcode 9 is the `Crash_CA.dmp` file-offset request described in `packets.md`. Other uses of the shared `ServerOpcode.StageTransition` constant (including the existing room-leave response) are not changed by this fix and need separate, stage-specific regression coverage before the shared name or behavior is revised.
+**Opcode 9 scope.** The GameServer Lobby handoff does not send S->C 9: in the `CSelectServerStage` and generic `CStage` fallback paths, opcode 9 is the `Crash_CA.dmp` file-offset request described in `packets.md`, not a stage transition. The server no longer sends it for C->S 78 (the Client changes to Lobby locally) or C->S 91 (the kicked Client receives S->C 103). These source-backed Client paths have local regression coverage; official-server timing and broadcast policy remain unverified (EXT-11). Keep other opcode-9 uses stage-specific; the shared `ServerOpcode.StageTransition` name does not establish identical Client semantics.
 
 ---
 

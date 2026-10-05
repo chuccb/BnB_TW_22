@@ -3,6 +3,7 @@ import { ClientOpcode, ServerOpcode, StageId } from "../protocol/opcodes.ts";
 import { PacketReader, PacketWriter } from "../protocol/primitives.ts";
 import { SmartStreamWriter } from "../protocol/stream.ts";
 import type { ClientSession, GameRoom, RoomSlot, WorldState } from "../state/worldState.ts";
+import { formatStageId, logger } from "../utils/logger.ts";
 import { buildShopInitPacket16, buildUserStockPacket } from "./shopHandler.ts";
 
 /**
@@ -159,26 +160,22 @@ export function buildSetPlayerPacket(
 }
 
 /**
- * Builds S->C 103 (`CSessionStage::sub_4B7DF2` case `0x67` -> vtable `+336` -> `CPrepareStage::sub_4D4154` at `0x004D4154`
- * & `CSessionStage::sub_4B789B` at `0x004B789B`):
- *   u8 slotIdx (`sub_6974B0`)
- *   u32 newChiefSlotNetId (`sub_697580`)
- *   u8 bannedByLeaderFlag (`sub_6974B0`)
- *   u16 unused (`sub_697510` in `CPrepareStage::sub_4D4154`)
- *   u8 newChiefSlotIdx (`j[779] = sub_6974B0` in `CPrepareStage::sub_4D4154`)
+ * Builds the Client-consumed S->C 103 payload:
+ *   u8 slotIdx (`CPrepareStage::sub_4D4154`, after rereading the u16 opcode)
+ *   u32 removedSlotNetId (`CSessionStage::sub_4B789B`, checked by `sub_5A799E` against slotIdx)
+ *   u8 leaveReasonFlag (`CSessionStage::sub_4B789B`)
+ * The recovered Client handlers consume these six payload bytes. The prior reconstruction's
+ * trailing u16/u8 were not read by either handler and are omitted rather than assigned meanings.
  */
 export function buildPlayerLeftSlotPacket(
   slotIdx: number,
-  newChiefSlotNetId: number,
-  bannedByLeader: number = 0,
-  newChiefSlotIdx: number = 0
+  removedSlotNetId: number,
+  leaveReasonFlag: number = 0
 ): PacketWriter {
   const w = new PacketWriter(ServerOpcode.PlayerLeftSlot);
   w.writeU8(slotIdx & 0xff);
-  w.writeU32(newChiefSlotNetId >>> 0);
-  w.writeU8(bannedByLeader & 0xff);
-  w.writeU16(0);
-  w.writeU8(newChiefSlotIdx & 0xff);
+  w.writeU32(removedSlotNetId >>> 0);
+  w.writeU8(leaveReasonFlag & 0xff);
   return w;
 }
 
@@ -566,19 +563,44 @@ export function handlePrepareRoomPacket(
     }
 
     case ClientOpcode.KickPlayer: {
-      // `sub_4DA92C`: `[u32 targetSlotNetId, u8 kickFlag]`
-      const targetNetId = reader.remaining >= 4 ? reader.readU32() : 0;
-      const _kickFlag = reader.remaining >= 1 ? reader.readU8() : 0;
-      const targetSlot = room.slots.find((s) => s.occupied && s.netSlotId === targetNetId);
+      // `CPrepareStage::sub_4DAE65` sends `[u32 targetSlotNetId, u8 hasSuperChiefItem]`.
+      if (reader.remaining !== 5) {
+        logger.warn("Room", "Ignored malformed C->S 91 kick-player packet", {
+          sessionId: session.sessionId,
+          connectionKind: session.connectionKind,
+          stageId: formatStageId(session.stageId),
+          payloadBytes: reader.remaining,
+          expectedPayloadBytes: 5,
+          responseSent: false,
+          roomStateChanged: false,
+        });
+        break;
+      }
+      const targetNetId = reader.readU32();
+      const hasSuperChiefItem = reader.readU8();
+      const targetSlot = room.slots.find((slot) => slot.occupied && slot.netSlotId === targetNetId);
       if (targetSlot && targetSlot.session && targetSlot.session !== session) {
         const kickedSession = targetSlot.session;
+        const kickedSlotIdx = targetSlot.slotIdx;
+        const kickedSlotNetId = targetSlot.netSlotId;
+        const removedSlotNetIds = new Map(
+          room.slots
+            .filter((slot) => slot.occupied && slot.session === kickedSession)
+            .map((slot) => [slot.slotIdx, slot.netSlotId] as const)
+        );
         const { removedSlots } = state.leaveRoom(kickedSession);
-        const w9 = new PacketWriter(ServerOpcode.StageTransition);
-        w9.writeU32(StageId.Lobby);
-        kickedSession.sendPacket(w9);
-        for (const rSlotIdx of removedSlots) {
+
+        // The Client base handler checks [slotIdx, removedSlotNetId, hasSuperChiefItem];
+        // CPrepareStage rereads the opcode and slotIdx to clear its local slot. One matching
+        // notice removes the selected local user and takes the kicked multi-local session to Lobby.
+        kickedSession.sendPacket(
+          buildPlayerLeftSlotPacket(kickedSlotIdx, kickedSlotNetId, hasSuperChiefItem)
+        );
+        for (const removedSlotIdx of removedSlots) {
+          const removedSlotNetId = removedSlotNetIds.get(removedSlotIdx);
+          if (removedSlotNetId === undefined) continue;
           state.broadcastToRoom(room, () =>
-            buildPlayerLeftSlotPacket(rSlotIdx, room.chiefSlotNetId, 1)
+            buildPlayerLeftSlotPacket(removedSlotIdx, removedSlotNetId, hasSuperChiefItem)
           );
         }
       }
@@ -663,24 +685,23 @@ export function handlePrepareRoomPacket(
     }
 
     case ClientOpcode.PracticeHandicap: {
-      // `sub_4D0627`: `[u8 slotIdx, u8 delta]` -> S->C 108 (`sub_4D05C1`)
-      if (reader.remaining >= 2) {
-        const slotIdx = reader.readU8();
-        const delta = reader.readU8();
-        state.broadcastToRoom(room, () => buildPracticeHandicapPacket(slotIdx, delta));
-      } else {
-        const { room: leftRoom, removedSlots, roomDeleted } = state.leaveRoom(session);
-        const w9 = new PacketWriter(ServerOpcode.StageTransition);
-        w9.writeU32(StageId.Lobby);
-        session.sendPacket(w9);
-        if (leftRoom && !roomDeleted) {
-          for (const rSlotIdx of removedSlots) {
-            state.broadcastToRoom(leftRoom, () =>
-              buildPlayerLeftSlotPacket(rSlotIdx, leftRoom.chiefSlotNetId, 0)
-            );
-          }
-        }
+      // `sub_4D0627` is the recovered writer for C->S 96: `[u8 slotIdx, u8 delta]` -> S->C 108.
+      if (reader.remaining !== 2) {
+        logger.warn("Room", "Ignored malformed C->S 96 practice-handicap packet", {
+          sessionId: session.sessionId,
+          connectionKind: session.connectionKind,
+          stageId: formatStageId(session.stageId),
+          payloadBytes: reader.remaining,
+          expectedPayloadBytes: 2,
+          responseSent: false,
+          roomStateChanged: false,
+        });
+        break;
       }
+
+      const slotIdx = reader.readU8();
+      const delta = reader.readU8();
+      state.broadcastToRoom(room, () => buildPracticeHandicapPacket(slotIdx, delta));
       break;
     }
 
@@ -807,19 +828,22 @@ export function handlePrepareRoomPacket(
     }
 
     case ClientOpcode.LeaveRoom: {
-      // `sub_5AA580`: Leave room (`[]`) -> S->C 9 (Stage 11) + S->C 103
+      // `CPrepareStage::sub_4D1F0F` requests StageId.Lobby locally before sending empty C->S 78.
+      // Snapshot each local slot's identity before leaveRoom clears the server's slot records.
+      // Do not echo S->C 9: its generic GameServer fallback treats the u32 as a dump-file offset.
+      const removedSlotNetIds = new Map(
+        room.slots
+          .filter((slot) => slot.occupied && slot.session === session)
+          .map((slot) => [slot.slotIdx, slot.netSlotId] as const)
+      );
       const { room: leftRoom, removedSlots, roomDeleted } = state.leaveRoom(session);
-      const w9 = new PacketWriter(ServerOpcode.StageTransition);
-      w9.writeU32(StageId.Lobby);
-      session.sendPacket(w9);
 
       if (leftRoom && !roomDeleted) {
-        const chiefIdx =
-          leftRoom.slots.find((s) => s.occupied && s.netSlotId === leftRoom.chiefSlotNetId)
-            ?.slotIdx ?? 0;
-        for (const rSlotIdx of removedSlots) {
+        for (const removedSlotIdx of removedSlots) {
+          const removedSlotNetId = removedSlotNetIds.get(removedSlotIdx);
+          if (removedSlotNetId === undefined) continue;
           state.broadcastToRoom(leftRoom, () =>
-            buildPlayerLeftSlotPacket(rSlotIdx, leftRoom.chiefSlotNetId, 0, chiefIdx)
+            buildPlayerLeftSlotPacket(removedSlotIdx, removedSlotNetId, 0)
           );
         }
       }
