@@ -1,7 +1,13 @@
 import { ClientOpcode, ServerOpcode, StageId } from "../protocol/opcodes.ts";
 import { PacketReader, PacketWriter } from "../protocol/primitives.ts";
 import { SmartStreamWriter } from "../protocol/stream.ts";
-import { formatClientOpcode, formatServerOpcode, formatU32Hex, logger } from "../utils/logger.ts";
+import {
+  formatClientOpcode,
+  formatServerOpcode,
+  formatStageId,
+  formatU32Hex,
+  logger,
+} from "../utils/logger.ts";
 import {
   buildMultiSvrNSmartStream,
   buildMultiSvrSmartStream,
@@ -260,8 +266,16 @@ export function handleLogin(
     const tokenOrId = reader.readString().trim() || `twbean${session.sessionId}`;
     credentials.push({ username: tokenOrId, password: "" });
   } else {
-    const username = reader.remaining >= 2 ? reader.readString().trim() : `player${session.sessionId}`;
-    credentials.push({ username: username || `player${session.sessionId}`, password: "" });
+    logger.warn("Login", "Refused to parse an unverified Client packet as credentials", {
+      sessionId: session.sessionId,
+      connectionKind: session.connectionKind,
+      opcode: formatClientOpcode(opcode),
+      stageId: formatStageId(session.stageId),
+      payloadBytes: reader.remaining,
+      databaseMutation: false,
+      responseSent: false,
+    });
+    return;
   }
 
   logger.debug("Login", `Received ${formatClientOpcode(opcode)}`, {
@@ -418,12 +432,20 @@ export function handleAuthPacket(
     case ClientOpcode.PreLoginSsdCheck:
       handlePreLoginSsdCheck(state, session, reader);
       break;
+    case ClientOpcode.NewUserIdentifierCheck3:
+      // The two recovered C->S 3 writers use different bodies ([str, u8 selector] and [str]).
+      // Their Client response route is not established, so preserve the bytes and send no reply.
+      logger.info("Registration", "Observed C->S 3 new-user identifier check; response association UNKNOWN", {
+        sessionId: session.sessionId,
+        connectionKind: session.connectionKind,
+        stageId: formatStageId(session.stageId),
+        payloadBytes: reader.remaining,
+        responseSent: false,
+      });
+      break;
     case ClientOpcode.LoginCredentials:
     case ClientOpcode.LoginPassport:
-    case ClientOpcode.LoginVariant29:
-    case ClientOpcode.LoginVariant30:
     case ClientOpcode.LoginBeanfunToken:
-    case ClientOpcode.LoginVariant49:
       handleLogin(state, session, opcode, reader);
       break;
     case ClientOpcode.CheckIdOrNormalChat:
@@ -444,7 +466,7 @@ export function handleAuthPacket(
       w61.writeU8(0);
       session.sendPacket(w61);
 
-      const w34 = new PacketWriter(ServerOpcode.GuildOrUserStatus);
+      const w34 = new PacketWriter(ServerOpcode.StatusResult34);
       w34.writeU8(0); // 0 = success (`sub_46BBB1`)
       session.sendPacket(w34);
       break;
@@ -458,7 +480,7 @@ export function handleAuthPacket(
       w59.writeU8(existing ? 1 : 0);
       session.sendPacket(w59);
 
-      const w34 = new PacketWriter(ServerOpcode.GuildOrUserStatus);
+      const w34 = new PacketWriter(ServerOpcode.StatusResult34);
       w34.writeU8(existing ? 1 : 0);
       session.sendPacket(w34);
       break;
@@ -467,7 +489,7 @@ export function handleAuthPacket(
     case ClientOpcode.EKeyChallengeResponse:
     case ClientOpcode.ChangeAccountPassword: {
       // C->S 32 (`sub_55FB0B`), C->S 33 (`sub_561394`), C->S 46 (`sub_495C32`) -> S->C 34 (`sub_46BBB1`)
-      const w34 = new PacketWriter(ServerOpcode.GuildOrUserStatus);
+      const w34 = new PacketWriter(ServerOpcode.StatusResult34);
       w34.writeU8(0); // 0 = success (`sub_46BBB1`)
       session.sendPacket(w34);
       break;

@@ -1,7 +1,22 @@
 import { MTUDPPeer } from "../protocol/framing.ts";
-import { ClientOpcode, StageId, UdpOpcode } from "../protocol/opcodes.ts";
+import {
+  ClientOpcode,
+  ClientUdpOpcode,
+  ClientUdpPeerControlCode,
+  ReconstructedServerUdpPeerControlCode,
+  ReconstructedUdpInputOpcode,
+  ServerUdpOpcode,
+  StageId,
+  UdpPeerEnvelopeKind,
+} from "../protocol/opcodes.ts";
 import { PacketReader, ipv4ToUint32 } from "../protocol/primitives.ts";
-import { formatClientOpcode, formatStageId, formatUdpOpcode, logger } from "../utils/logger.ts";
+import {
+  formatClientOpcode,
+  formatClientUdpOpcode,
+  formatReconstructedUdpInputOpcode,
+  formatStageId,
+  logger,
+} from "../utils/logger.ts";
 import type { ClientSession, UdpEndpoint, WorldState } from "../state/worldState.ts";
 import { handleAuthPacket } from "./authHandler.ts";
 import { handleChannelPacket } from "./channelHandler.ts";
@@ -32,8 +47,7 @@ const AUTH_OPCODES = new Set<number>([
   ClientOpcode.LoginPassport,
   ClientOpcode.AcceptAgreement,
   ClientOpcode.RegisterAccount,
-  ClientOpcode.LoginVariant29,
-  ClientOpcode.LoginVariant30,
+  ClientOpcode.NewUserIdentifierCheck3,
   ClientOpcode.LoginBeanfunToken,
   ClientOpcode.EKeyVerify,
   ClientOpcode.EKeyChallengeResponse,
@@ -41,7 +55,6 @@ const AUTH_OPCODES = new Set<number>([
   ClientOpcode.SubmitRegistrationForm,
   ClientOpcode.VerifyAccountIdentity,
   ClientOpcode.ChangeAccountPassword,
-  ClientOpcode.LoginVariant49,
   ClientOpcode.CheckPackageMapLegacy,
   ClientOpcode.CheckNoticeUrl,
   ClientOpcode.CheckStringTableLegacy,
@@ -49,17 +62,14 @@ const AUTH_OPCODES = new Set<number>([
 ]);
 
 const CHANNEL_OPCODES = new Set<number>([
-  ClientOpcode.SelectChannelLegacy,
   ClientOpcode.SelectChannel,
   ClientOpcode.SessionHandoff,
   ClientOpcode.RequestChannelList,
-  ClientOpcode.RequestChannelList10,
 ]);
 
 const SHOP_OPCODES = new Set<number>([
   ClientOpcode.RequestShopConnection,
   ClientOpcode.AuthenticateShopConnection,
-  ClientOpcode.EnterShopMode,
   ClientOpcode.ShopEnter,
   ClientOpcode.ShopBuyItem,
   ClientOpcode.InventoryDeleteItem,
@@ -149,6 +159,9 @@ const ROOM_OPCODES = new Set<number>([
 ]);
 
 const COMMON_OPCODES = new Set<number>([
+  ClientOpcode.ClientSignal10,
+  ClientOpcode.NexonClubAuthRequest29,
+  ClientOpcode.LobbyConditionalSignal261,
   ClientOpcode.UploadCrashReport,
   ClientOpcode.UploadCrashDump,
   ClientOpcode.ClientReportOrLobbyEnter,
@@ -166,7 +179,7 @@ const COMMON_OPCODES = new Set<number>([
   ClientOpcode.QueryRankingPage,
   ClientOpcode.ModifyUserInfo,
   ClientOpcode.QueryUserInfo66,
-  ClientOpcode.QueryGuildInfo,
+  ClientOpcode.UserPagePacket68,
   ClientOpcode.QueryUserBrief,
   ClientOpcode.QueryUserInfo,
   ClientOpcode.UpdateUserOptions,
@@ -181,9 +194,9 @@ const COMMON_OPCODES = new Set<number>([
   ClientOpcode.CancelAction,
   ClientOpcode.RequestDynamicMapInfoSsd,
   ClientOpcode.UserDetailQuery,
-  ClientOpcode.CouplePartnerCheck,
+  ClientOpcode.UserPagePacket290,
   ClientOpcode.UserGuildModify,
-  ClientOpcode.UserPairStatsQuery,
+  ClientOpcode.UserPagePacket293,
   ClientOpcode.QueryTop3Rank,
   ClientOpcode.SmsSend,
   ClientOpcode.SmsQuery,
@@ -386,15 +399,17 @@ export function dispatchUdpDatagram(
 
   const opcodeForLog = inner.length >= 2 && inner[0] === 0 ? inner[1]! : inner[0]!;
   const messageKind =
-    inner.length === 6 && inner[0] === 0 && inner[1] === UdpOpcode.ServerKeepalive
-      ? "server-keepalive"
+    inner.length === 6 &&
+    inner[0] === 0 &&
+    inner[1] === ReconstructedUdpInputOpcode.KeepaliveProbe
+      ? "reconstructed-keepalive-probe"
       : inner.length >= 12 &&
           inner[0] === 0 &&
-          inner[1] === UdpOpcode.GameLoadRegistration
+          inner[1] === ClientUdpOpcode.GameLoadRegistration
         ? "game-load-registration"
-        : inner.length === 3 && inner[0] === 0
+        : inner.length === 3 && inner[0] === UdpPeerEnvelopeKind.Control
           ? "peer-route-probe/control"
-          : inner[0] === 1
+          : inner[0] === UdpPeerEnvelopeKind.GameData
             ? "peer-game-data"
             : "unclassified";
   logger.debug("UDPDispatcher", "Decoded MTUDPPeer datagram", {
@@ -402,16 +417,22 @@ export function dispatchUdpDatagram(
     remotePort,
     messageKind,
     udpOpcode:
-      messageKind === "server-keepalive" || messageKind === "game-load-registration"
-        ? formatUdpOpcode(opcodeForLog)
-        : undefined,
+      messageKind === "reconstructed-keepalive-probe"
+        ? formatReconstructedUdpInputOpcode(opcodeForLog)
+        : messageKind === "game-load-registration"
+          ? formatClientUdpOpcode(opcodeForLog)
+          : undefined,
     innerBytes: inner.length,
   });
   const out: UdpOutDatagram[] = [];
   const dv = new DataView(inner.buffer, inner.byteOffset, inner.byteLength);
 
-  // 1. Reconstructed UDP server keepalive `[u16(0), u32(userId)]` -> `[u8(4)]`; production cadence/reply is unverified.
-  if (inner.length === 6 && inner[0] === 0 && inner[1] === UdpOpcode.ServerKeepalive) {
+  // 1. Reconstructed inbound `[u16(0), u32(userId)]` candidate -> local `[u8(4)]` policy; sender/cadence and production reply remain unverified.
+  if (
+    inner.length === 6 &&
+    inner[0] === 0 &&
+    inner[1] === ReconstructedUdpInputOpcode.KeepaliveProbe
+  ) {
     const userId = dv.getUint32(2, false);
     for (const s of state.sessions.values()) {
       if (s.users.some((u) => u.id === userId) || s.remoteAddress === remoteAddress) {
@@ -422,15 +443,23 @@ export function dispatchUdpDatagram(
     out.push({
       address: remoteAddress,
       port: remotePort,
-      datagram: MTUDPPeer.encodeFrame(new Uint8Array([UdpOpcode.ServerKeepaliveAck])),
+      datagram: MTUDPPeer.encodeFrame(new Uint8Array([ServerUdpOpcode.KeepaliveAck])),
     });
     return out;
   }
 
   // 2. CUDPPeerClient::sub_5EC195 probe (`[0, 0, localPeerIdx]`) -> `[0, 1, localPeerIdx]`.
-  if (inner.length === 3 && inner[0] === 0 && inner[1] === 0) {
+  if (
+    inner.length === 3 &&
+    inner[0] === UdpPeerEnvelopeKind.Control &&
+    inner[1] === ClientUdpPeerControlCode.Probe
+  ) {
     const localPeerIdx = inner[2]!;
-    const pongPayload = new Uint8Array([0, 1, localPeerIdx]);
+    const pongPayload = new Uint8Array([
+      UdpPeerEnvelopeKind.Control,
+      ReconstructedServerUdpPeerControlCode.ProbeResponse,
+      localPeerIdx,
+    ]);
     logger.debug("UDPDispatcher", "Answered CUDPPeerClient route probe", {
       remoteAddress,
       remotePort,
@@ -445,7 +474,11 @@ export function dispatchUdpDatagram(
   }
 
   // 3. sub_4ED400 Game Load Registration (`[u16(1), u32(userId), u16(roomId), u32(roomGameKey), ...]`, 36 bytes)
-  if (inner.length >= 12 && inner[0] === 0 && inner[1] === UdpOpcode.GameLoadRegistration) {
+  if (
+    inner.length >= 12 &&
+    inner[0] === 0 &&
+    inner[1] === ClientUdpOpcode.GameLoadRegistration
+  ) {
     const userId = dv.getUint32(2, false);
     const roomId = dv.getUint16(6, false);
 
@@ -562,9 +595,11 @@ export function dispatchUdpDatagram(
       remotePort,
       messageKind,
       udpOpcode:
-        messageKind === "server-keepalive" || messageKind === "game-load-registration"
-          ? formatUdpOpcode(opcodeForLog)
-          : undefined,
+        messageKind === "reconstructed-keepalive-probe"
+          ? formatReconstructedUdpInputOpcode(opcodeForLog)
+          : messageKind === "game-load-registration"
+            ? formatClientUdpOpcode(opcodeForLog)
+            : undefined,
       senderSessionId: senderSession?.sessionId,
       roomNumber: senderSession?.currentRoomNumber,
     });

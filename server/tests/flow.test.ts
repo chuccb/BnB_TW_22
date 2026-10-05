@@ -200,6 +200,155 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(config.gameUdpPort).toBe(config.gameTcpPort + 1);
   });
 
+  test("C->S 3 is a new-user identifier check, not channel selection", () => {
+    clearRecentLogs();
+    const config = loadConfig({ dbPath: ":memory:" });
+    using state = new WorldState(config);
+    const client = new SimulatedClient();
+    const session = state.createSession(client.onWireBytes, "127.0.0.1", 51016, "0.0.0.0", 0, "game");
+    session.sendConnectHello(config);
+    session.stageId = StageId.SelectServer;
+
+    // CNewUserDlgChina::sub_496AA6 writes [str, u8 selector]; CNewUserDlg::sub_498367
+    // writes [str]. Keep both source-confirmed forms distinct and do not guess a reply.
+    client.sendToServer(
+      state,
+      session.sessionId,
+      new PacketWriter(ClientOpcode.NewUserIdentifierCheck3)
+        .writeString("ChinaUser")
+        .writeU8(0)
+    );
+    client.sendToServer(
+      state,
+      session.sessionId,
+      new PacketWriter(ClientOpcode.NewUserIdentifierCheck3).writeString("NewUser")
+    );
+
+    expect(client.receivedPackets).toHaveLength(0);
+    expect(session.stageId).toBe(StageId.SelectServer);
+    const trace = session.getPacketTraceSummary();
+    expect(trace.clientToServerDecodedPackets).toBe(2);
+    expect(trace.packetFlow).toContain("C->S [decoded] 3 (NewUserIdentifierCheck3)");
+    expect(trace.packetFlow).not.toContain("S->C 7");
+    const checks = getRecentLogs().filter(
+      (entry) =>
+        entry.category === "Registration" &&
+        entry.message.includes("response association UNKNOWN")
+    );
+    expect(checks).toHaveLength(2);
+    expect(checks.every((entry) => entry.data?.responseSent === false)).toBe(true);
+  });
+
+  test("C->S 10 contextual signal is not routed as a C->S 9 channel-cache request", () => {
+    clearRecentLogs();
+    const config = loadConfig({ dbPath: ":memory:" });
+    using state = new WorldState(config);
+    const client = new SimulatedClient();
+    const session = state.createSession(client.onWireBytes, "127.0.0.1", 51017, "0.0.0.0", 0, "game");
+    session.sendConnectHello(config);
+    session.stageId = StageId.Login;
+
+    client.sendToServer(state, session.sessionId, new PacketWriter(ClientOpcode.ClientSignal10));
+    client.sendToServer(
+      state,
+      session.sessionId,
+      new PacketWriter(ClientOpcode.ClientSignal10).writeString("opaque-client-value")
+    );
+
+    expect(client.receivedPackets).toHaveLength(0);
+    expect(session.stageId).toBe(StageId.Login);
+    const signals = getRecentLogs().filter(
+      (entry) =>
+        entry.category === "Protocol" &&
+        entry.message.includes("C->S 10 contextual Client signal")
+    );
+    expect(signals).toHaveLength(2);
+    expect(signals.every((entry) => entry.data?.responseSent === false)).toBe(true);
+  });
+
+  test("C->S 29 NexonClub credentials are not parsed as generic login credentials", () => {
+    clearRecentLogs();
+    const config = loadConfig({ dbPath: ":memory:" });
+    using state = new WorldState(config);
+    const client = new SimulatedClient();
+    const session = state.createSession(client.onWireBytes, "127.0.0.1", 51018, "0.0.0.0", 0, "game");
+    session.sendConnectHello(config);
+    session.stageId = StageId.Login;
+
+    client.sendToServer(
+      state,
+      session.sessionId,
+      new PacketWriter(ClientOpcode.NexonClubAuthRequest29)
+        .writeString("NexonClubUser")
+        .writeString("opaque-secret")
+    );
+
+    expect(client.receivedPackets).toHaveLength(0);
+    expect(session.users).toHaveLength(0);
+    expect(state.db.getUserByUsername("NexonClubUser")).toBeNull();
+    expect(JSON.stringify(getRecentLogs())).not.toContain("opaque-secret");
+    const request = getRecentLogs().find(
+      (entry) =>
+        entry.category === "NexonClub" &&
+        entry.message.includes("response association UNKNOWN")
+    );
+    expect(request?.data?.credentialValuesLogged).toBe(false);
+    expect(request?.data?.responseSent).toBe(false);
+  });
+
+  test("C->S 261 Lobby initialization signal does not trigger Shop entry", () => {
+    clearRecentLogs();
+    const config = loadConfig({ dbPath: ":memory:" });
+    using state = new WorldState(config);
+    const client = new SimulatedClient();
+    const session = state.createSession(client.onWireBytes, "127.0.0.1", 51019, "0.0.0.0", 0, "game");
+    session.sendConnectHello(config);
+    session.stageId = StageId.Lobby;
+
+    client.sendToServer(
+      state,
+      session.sessionId,
+      new PacketWriter(ClientOpcode.LobbyConditionalSignal261)
+    );
+
+    expect(client.receivedPackets).toHaveLength(0);
+    expect(session.stageId).toBe(StageId.Lobby);
+    const trace = session.getPacketTraceSummary();
+    expect(trace.packetFlow).toContain("C->S [decoded] 261 (LobbyConditionalSignal261)");
+    const signal = getRecentLogs().find(
+      (entry) =>
+        entry.category === "Lobby" &&
+        entry.message.includes("conditional Lobby signal")
+    );
+    expect(signal?.data?.emptyBodyObserved).toBe(true);
+    expect(signal?.data?.responseSent).toBe(false);
+    expect(getRecentLogs().some((entry) => entry.message.includes("Shop-flow candidate packet"))).toBe(false);
+  });
+
+  test("unresolved C->S 30 and 49 do not mutate Login state or use generic credentials", () => {
+    const config = loadConfig({ dbPath: ":memory:" });
+    using state = new WorldState(config);
+    const client = new SimulatedClient();
+    const session = state.createSession(client.onWireBytes, "127.0.0.1", 51020, "0.0.0.0", 0, "game");
+    session.sendConnectHello(config);
+    session.stageId = StageId.Login;
+
+    // This synthetic test payload is only chosen to catch accidental generic-login parsing;
+    // it does not claim that either unresolved opcode has a string wire schema.
+    for (const opcode of [ClientOpcode.UnresolvedClientPacket30, ClientOpcode.UnresolvedClientPacket49]) {
+      client.sendToServer(
+        state,
+        session.sessionId,
+        new PacketWriter(opcode).writeString("opaque-unresolved-value")
+      );
+    }
+
+    expect(client.receivedPackets).toHaveLength(0);
+    expect(session.users).toHaveLength(0);
+    expect(state.db.getUserByUsername("opaque-unresolved-value")).toBeNull();
+    expect(session.stageId).toBe(StageId.Login);
+  });
+
   test("C->S 14 periodic status is not misrouted as chat or an S->C 15 Lobby alert", () => {
     const config = loadConfig({ dbPath: ":memory:" });
     using state = new WorldState(config);
@@ -1034,7 +1183,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(peerSlots1.slice(2)).toEqual(Array(8).fill(null));
     expect(peerSlots2.slice(2)).toEqual(Array(8).fill(null));
 
-    // 12. Reconstructed UDP keepalive: 6B `[u16(0), u32(userId)]` -> 1B `[u8(4)]`; production cadence is unverified.
+    // 12. Local UDP keepalive candidate: 6B `[u16(0), u32(userId)]` -> 1B `[u8(4)]` policy; sender/direction and production behavior are unverified.
     const keepaliveInner = new Uint8Array(6);
     new DataView(keepaliveInner.buffer).setUint32(2, session1.users[0]!.id, false);
     const keepaliveReplies = dispatchUdpDatagram(
@@ -1794,6 +1943,23 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     const p244 = client2.popByOpcode(ServerOpcode.SmsDeleteResult)!;
     expect(p244.readU8()).toBe(1);
     expect(p244.remaining).toBe(0);
+    expect(state.db.getSmsByUser(session2.users[0]!.id).some((mail) => mail.id === smsId)).toBe(false);
+
+    client1.sendToServer(
+      state,
+      session1.sessionId,
+      new PacketWriter(ClientOpcode.SmsSend)
+        .writeString("bazzi_tw")
+        .writeString("dao_tw")
+        .writeString("Delete-all regression mail")
+    );
+    const p242Second = client1.popByOpcode(ServerOpcode.SmsSendResult)!;
+    expect(p242Second.readU8()).toBe(10);
+    expect(p242Second.remaining).toBe(0);
+    const p246Second = client2.popByOpcode(ServerOpcode.SmsNewNotice)!;
+    expect(p246Second.readU8()).toBe(1);
+    expect(p246Second.remaining).toBe(0);
+    expect(state.db.getSmsByUser(session2.users[0]!.id)).toHaveLength(1);
 
     client2.sendToServer(
       state,
@@ -1803,6 +1969,18 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     const p245 = client2.popByOpcode(ServerOpcode.SmsDeleteAllResult)!;
     expect(p245.readU8()).toBe(1);
     expect(p245.remaining).toBe(0);
+    expect(state.db.getSmsByUser(session2.users[0]!.id)).toHaveLength(0);
+
+    // CSmsDlg refreshes its list after the acknowledgement; model that follow-up query.
+    client2.sendToServer(
+      state,
+      session2.sessionId,
+      new PacketWriter(ClientOpcode.SmsQuery).writeString("dao_tw").writeU8(0)
+    );
+    const p243AfterDeleteAll = client2.popByOpcode(ServerOpcode.SmsList)!;
+    expect(p243AfterDeleteAll.readU8()).toBe(15);
+    expect(p243AfterDeleteAll.readU8()).toBe(0);
+    expect(p243AfterDeleteAll.remaining).toBe(0);
 
     // 18d. Couple Ring (`CCouple` `304..306` -> `S->C 251..254`)
     client1.sendToServer(
@@ -1888,6 +2066,21 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     const p248 = client1.popByOpcode(ServerOpcode.UserQuestAndSlotInfo248)!;
     expect(p248).toBeDefined();
     expect(p248.readU8()).toBe(0); // playerIdx = 0 (`sub_4B9DB6`)
+
+    // C->S 293 carries one string in `sub_53DEEA`. The local S->C 220 fallback below
+    // matches the observed Client reader's empty structure; the request/reply pairing is unverified.
+    client1.sendToServer(
+      state,
+      session1.sessionId,
+      new PacketWriter(ClientOpcode.UserPagePacket293).writeString("dao_tw")
+    );
+    const p220 = client1.popByOpcode(ServerOpcode.MyPageData220)!;
+    expect(p220.readU8()).toBe(0); // zero u8-counted [u8,u16] records
+    expect(p220.readU16()).toBe(0); // opaque u16
+    expect(p220.readU8()).toBe(0); // opaque u8
+    expect(p220.readU16()).toBe(0); // first u32 list is empty
+    expect(p220.readU16()).toBe(0); // second u32 list is empty
+    expect(p220.remaining).toBe(0);
 
     // Chat Macro (`C->S 40` -> `S->C 50`, `sub_4A27CB`)
     client1.sendToServer(
@@ -1983,7 +2176,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
         .writeString("newpass456")
         .writeString("newpass456")
     );
-    expect(client1.popByOpcode(ServerOpcode.GuildOrUserStatus)?.readU8()).toBe(0);
+    expect(client1.popByOpcode(ServerOpcode.StatusResult34)?.readU8()).toBe(0);
   });
 
   test("parses C->S 309's leading Nexon Pass string before the opaque u32 pair", () => {

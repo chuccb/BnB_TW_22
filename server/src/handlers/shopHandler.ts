@@ -566,27 +566,6 @@ export function handleShopPacket(
       break;
     }
 
-    case ClientOpcode.EnterShopMode: {
-      const mode = reader.remaining >= 1 ? reader.readU8() : 2;
-      const localIdx = reader.remaining >= 1 ? reader.readU8() : 0;
-
-      const w261 = new PacketWriter(ServerOpcode.ShopConnectionPermission);
-      w261.writeU8(1);
-      w261.writeU8(mode);
-      w261.writeU8(localIdx);
-      session.sendPacket(w261);
-
-      if (mode === 2) {
-        session.stageId = StageId.Shop;
-        session.sendPacket(buildShopInitPacket16(state, session));
-
-        const w9 = new PacketWriter(ServerOpcode.StageTransition);
-        w9.writeU32(StageId.Shop);
-        session.sendPacket(w9);
-      }
-      break;
-    }
-
     case ClientOpcode.StageAction323: {
       const fieldA = reader.readU8();
       const fieldB = reader.readU8();

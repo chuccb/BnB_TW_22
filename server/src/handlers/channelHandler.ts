@@ -529,7 +529,6 @@ export function handleChannelPacket(
   reader: PacketReader
 ): void {
   switch (opcode) {
-    case ClientOpcode.SelectChannelLegacy:
     case ClientOpcode.SelectChannel:
       handleChannelSelect(state, session, reader);
       break;
@@ -537,7 +536,6 @@ export function handleChannelPacket(
       handleSessionAuthHandoff(state, session, reader);
       break;
     case ClientOpcode.RequestChannelList:
-    case ClientOpcode.RequestChannelList10:
       handlePostLoginChannelRequest(state, session, reader);
       break;
   }

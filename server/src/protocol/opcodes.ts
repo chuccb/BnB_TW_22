@@ -5,8 +5,9 @@
  * Uses TypeScript's `as const satisfies` so callers get both literal numeric types
  * and self-documenting symbolic names across all stage handlers.
  *
- * Covers 100% (174/174) of all Client->Server opcodes emitted by `CA.exe` and
- * all Server->Client stage, sub-dispatcher, and UDP opcodes.
+ * This is a working symbolic inventory, not proof of exhaustive wire coverage.
+ * Numeric aliases, stage-dependent overloads, incomplete parser associations, and
+ * unresolved Client receive paths are tracked in `server/docs/unknowns.md` (RE-12).
  */
 
 export const StageId = {
@@ -31,14 +32,14 @@ export const ClientOpcode = {
   // Pre-Login & Authentication (CFxApp / CLoginStage / COnePageIDStage / CNCPasswordDlg / CEKeyDlg)
   PreLoginSsdCheck: 0, // sub_5A1E40: [u32 dynamic-img context, u32 csysstr, u32 multisvr, u32 filterstr, (opt u32 multisvrn)]
   LoginCredentials: 2, // sub_5D8BD8: 1P/2P keyed username (0x11223344) + password (0x44332211)
-  SelectChannelLegacy: 3, // Legacy channel select alias
+  NewUserIdentifierCheck3: 3, // CNewUserDlgChina::sub_496AA6 [str, u8 selector] or CNewUserDlg::sub_498367 [str]; response UNKNOWN, not channel selection
   CreateOrUpdateAccount: 4, // sub_496D15 / sub_4985CD: account creation / update form
   SelectChannel: 5, // CSelectServerStage::sub_56AF39
   SessionHandoff: 6, // sub_5D8879 / sub_5D893D / sub_5D8A3F
   UploadCrashReport: 7, // sub_5A885A / sub_5D090B: [str crashInfo] (CA_Crash_info.nfo / Crash_CA.dmp.log)
   UploadCrashDump: 8, // sub_5D06FA: flag=1 u32 byteCount + block; sub_5D137C sends flag=0 without a block (u32 meaning unknown)
   RequestChannelList: 9, // sub_5D3BFC: [u32 channel2_%03d%s.ssd checksum]
-  RequestChannelList10: 10, // Channel list refresh alias
+  ClientSignal10: 10, // sub_563721 / sub_567400 / sub_5B2878: empty or [str]; server association UNKNOWN (not C->S 9 channel-cache request)
   LoginPassport: 11, // sub_5D85A0: keyed passport (0xAABBCCDD)
   ClientReportOrLobbyEnter: 12, // CStage report or lobby enter alias
   ReturnToChannelSelect: 13, // CLobbyStage::sub_4C1944
@@ -52,8 +53,8 @@ export const ClientOpcode = {
   RoomEmotion: 22, // Emotion packet
   RequestDynI16Table: 27, // sub_59A700: [u32 crc, u16 count]
   RequestAvatarI16Table: 28, // sub_59B5A2: [u32 crc, u16 count]
-  LoginVariant29: 29,
-  LoginVariant30: 30,
+  NexonClubAuthRequest29: 29, // CNexonClubDlg::sub_46BABD: [str id, str password or feature-64 MD5-derived value]; response association UNKNOWN
+  UnresolvedClientPacket30: 30, // no direct Client writer found in CA.exe.c; payload/role UNKNOWN
   LoginBeanfunToken: 31, // sub_5D8494: Taiwan Beanfun / GASH token login
   EKeyVerify: 32, // CEKeyDlg::sub_55FB0B: PlaySafe / E-Key security token verification
   EKeyChallengeResponse: 33, // CEKeyDlg::sub_561394: E-Key challenge response
@@ -65,14 +66,14 @@ export const ClientOpcode = {
   MacroListQuery: 40, // sub_4A29A1: [u8(0)] -> S->C 50
   QuestAction: 44, // CQuestWnd::sub_551AE2 -> S->C 248
   ChangeAccountPassword: 46, // sub_495C32: [str oldPass, str newPass, str confirmPass] -> S->C 34
-  LoginVariant49: 49,
+  UnresolvedClientPacket49: 49, // no direct Client writer found in CA.exe.c; payload/role UNKNOWN
 
   // User Info, Ranking & Lobby (CLobbyStage / CStage / CRankMan)
   QueryRankingPage: 64, // sub_4A48F2: [u16 startRank] -> S->C 69 / S->C 66
   ModifyUserInfo: 65, // sub_5495CD
   QueryUserInfo66: 66, // CStage::sub_4BC236: [str username, u8(1), u8 localIdx] -> S->C 81 + S->C 248 + S->C 71
   RoomDetailOrUserInfo: 67, // sub_4C266D: [u16 roomIdx, u32 roomKey] -> S->C 83
-  QueryGuildInfo: 68, // sub_53DEEA -> S->C 34
+  UserPagePacket68: 68, // CUserPageDialog::sub_53DEEA emits [str stored name]; response route/schema UNKNOWN
   QueryUserBrief: 69, // sub_4A0321: [u32 userId] -> S->C 70
   QueryUserInfo: 70, // CChatStage::sub_4ABBDE: [u8(0), str username] -> S->C 81 + 70; distinct from S->C ServerOpcode 70 PUserInfoResult
   UpdateUserOptions: 71, // sub_4A63C9: [u8 optionFlags]
@@ -88,6 +89,7 @@ export const ClientOpcode = {
   QuickJoinShort: 81, // Quick join alias -> S->C 81
   ReturnToRoom: 82, // sub_536E2E -> S->C 80
   EnterLobby: 83, // CStage::sub_4B94A6 -> S->C 89 + S->C 186 + S->C 82
+  LobbyConditionalSignal261: 261, // CLobbyStage::sub_4C99DC: empty; feature 18 + sub_59DBD9()==79 + j[2013] gate; no Shop-click or reply association
 
   // Room / Prepare / Exchange Stage (CPrepareStage / CExchangeStage)
   UpdateRoomSettings: 84, // sub_4D6803 / sub_4D689B -> S->C 93
@@ -160,7 +162,6 @@ export const ClientOpcode = {
 
   // Config / Shop / Inventory / UserMarket / Couple / SMS Requests
   CheckPackageMapLegacy: 252, // -> S->C 157
-  EnterShopMode: 261, // -> S->C 261 + S->C 16 + S->C 9
   RoomAux266: 266,
   CheckNoticeUrl: 267, // -> S->C 163
   ShopEnter: 269, // CShopStageNew::sub_536555 / sub_589DB9: [u8 mode] -> S->C 198
@@ -188,9 +189,9 @@ export const ClientOpcode = {
   RedeemCouponCode: 286, // CCouponDlg::sub_5B6215: [u32 couponTypeOrId] -> S->C 204
   ShopSaveSlotOrder: 288, // sub_53809C: [u32 playerIdx, u32 count, count*(u32 pkgId, u32 a, u32 b)]
   UserDetailQuery: 289, // sub_549904: [str username] -> S->C 81
-  CouplePartnerCheck: 290, // sub_53DEEA: [str partnerName] -> S->C 242
+  UserPagePacket290: 290, // CUserPageDialog::sub_53DEEA emits [str stored name]; response opcode/schema UNKNOWN
   UserGuildModify: 292, // sub_5495CD: [u8 playerIdx, str guild]
-  UserPairStatsQuery: 293, // sub_53DEEA: [str userA, str userB] -> S->C 220
+  UserPagePacket293: 293, // CUserPageDialog::sub_53DEEA emits [str stored name] conditionally; response association UNKNOWN
   CheckStringTableLegacy: 294, // -> S->C 179
   ShopStateSync: 295, // sub_5365B3: [u8 state]
   QueryTop3Rank: 296, // sub_4A49D8: empty -> S->C 240 (sub_4A522B)
@@ -255,7 +256,7 @@ export const ServerOpcode = {
   WhisperDeliveryStatus: 24, // CChatStage::sub_4AE106
   DynamicI16Data: 32, // Stage-specific route to CStage::sub_4B8D5F -> sub_59D0D4: [u32 id, u16 version, u32 size, block(size)]
   SelectServerDynamicI16Data: 33, // CSelectServerStage root dispatch: slot 54 -> CStage::sub_4B8D5F; not the Lobby transition
-  GuildOrUserStatus: 34, // CMyInfoDlg::sub_54466F / CExchangeStage::sub_55B6DB
+  StatusResult34: 34, // Observed Client path: CNexonClubDlg::sub_46C2AD -> sub_46BBB1 reads a u8 status; other routes UNKNOWN
   ShopReturnHandoff: 41, // CShopConnectionMan::sub_52A23C: [u16, u16, u32 key, str, u8=11]
   ShopServerEndpoint: 48, // CShopConnectionMan::sub_529E8D: [u8 ok, if ok: u8 flag, u32 opaque, u32 ipHostLong, u16 portHostShort]
   MacroList: 50, // sub_4A27CB: repeat to EOF [u32 value, u8[15] fields]; empty body = 0 records
@@ -364,9 +365,9 @@ export const ServerOpcode = {
   ShopResellResult: 212, // CShopDlg::sub_546D3F: [u8 res=0, str itemName, u32 stockId, u32 0, u32 refundLucci]
   ShopQMarkResult: 214, // CShopStageNew::sub_5396F0: [u32 type, u32 reward, u32 unk]
   ShopEventNotice: 215, // CShopConnectionMan::sub_52A129 ([u8(0)]) / CShopStageNew::sub_53C550
-  PairStatsResult: 220, // CMyInfoDlg::sub_5447F0 -> sub_542D43
-  UserGuildAndRank221: 221, // CMyInfoDlg::sub_5447F0 -> sub_542F22
-  UserHistory222: 222, // CMyInfoDlg::sub_5447F0 -> sub_5431C7
+  MyPageData220: 220, // Client path `sub_5447F0` -> `sub_544049` -> `sub_49D0A6`; field meanings UNKNOWN
+  MyPageData221: 221, // Client path `sub_54055D` -> `sub_53E0E5`; extends the S->C 220 record with 2 u32, meanings UNKNOWN
+  MyPagePacket222: 222, // Client path `sub_54055D` -> `sub_53EC90`; reads one string, displayed meaning UNKNOWN
   ShopConfigCrc224: 224, // sub_5493B7 -> sub_546C6B: [u8(1), u32 fxCrc, u32 strCrc, u32 pkgCrc, str url, u32 banners]
   ShopSaleModifiers: 229, // CShopStageNew::sub_53AC96
   RoomPasswordChangeResult: 231, // sub_4D3FD6
@@ -376,7 +377,7 @@ export const ServerOpcode = {
   ShopGiftReceive: 238, // CShopStageNew::sub_537B1C: [str sender, u32 itemId, 8B vtime, sub_58EBFE]
   RankingTop3: 240, // sub_4A522B: [u8 count(<=3), count*sub_4A4FBD]
   ShopPurchaseDetail: 240, // CShopStageNew::sub_53B7D3
-  SmsSendResult: 242, // CSmsDlg::sub_4838E8: [u8 res=10] (or CMyInfoDlg::sub_544049 couple check)
+  SmsSendResult: 242, // SMS path `CSmsDlg::sub_4838E8` reads u8; C->S 290 response path remains UNKNOWN (sub_544049 is S->C 220)
   SmsList: 243, // CSmsDlg::sub_484465: [u8 status=15, u8 count, msgs...]
   SmsDeleteResult: 244, // CSmsDlg::sub_47F653: [u8 res=1]
   SmsDeleteAllResult: 245, // CSmsDlg::sub_47F66A: [u8 res=1]
@@ -416,10 +417,28 @@ export const ServerOpcode = {
   EventStateUpdate: 289, // CStage::sub_4BDBF5 -> sub_55F830
 } as const satisfies Record<string, number>;
 
-export const UdpOpcode = {
-  ServerKeepalive: 0, // reconstructed inner payload: [u16 BE(0), u32 BE(userId)]
-  GameLoadRegistration: 1, // sub_4ED400: 36-byte load registration
-  P2pPing: 2, // CUDPPeerManBase::sub_5EC6AD
-  P2pPong: 3, // CUDPPeer::sub_5ECD2B
-  ServerKeepaliveAck: 4, // CUDPPeerManBase::sub_5EC943 (1B [4]) or CGameStage::sub_4ECF93 (in-game frame)
+export const ClientUdpOpcode = {
+  GameLoadRegistration: 1, // `sub_4ED400`: u16 BE opcode in the 36-byte C->S registration
+} as const satisfies Record<string, number>;
+
+export const ServerUdpOpcode = {
+  KeepaliveAck: 4, // Client `CUDPPeerManBase::sub_5EC943` recognizes one-byte type 4; server use is reconstructed
+} as const satisfies Record<string, number>;
+
+export const UdpPeerEnvelopeKind = {
+  Control: 0, // one-byte peer envelope type; followed by a control code and peer index
+  GameData: 1, // one-byte peer envelope type; followed by sender index and opaque game payload
+} as const satisfies Record<string, number>;
+
+export const ClientUdpPeerControlCode = {
+  Probe: 0, // `CUDPPeerClient::sub_5EC195`: [0, 0, localPeerIdx]
+  AlternateProbe: 1, // `CUDPPeerClient::sub_5EC1FF`: [0, 1, localPeerIdx]
+} as const satisfies Record<string, number>;
+
+export const ReconstructedUdpInputOpcode = {
+  KeepaliveProbe: 0, // local-only `[u16 BE(0), u32 BE(userId)]` model; Client sender/cadence UNKNOWN
+} as const satisfies Record<string, number>;
+
+export const ReconstructedServerUdpPeerControlCode = {
+  ProbeResponse: 1, // local server response choice; same value as the Client's alternate probe
 } as const satisfies Record<string, number>;

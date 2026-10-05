@@ -10,6 +10,7 @@ import { computeAdler32Zero, computeCRC8, computeCRC32 } from "../src/protocol/c
 import {
   MTUDPPeer,
   PacketSocketState,
+  parseUdpPeerInnerPacket,
   decodeUdpDatagram,
   encodeUdpDatagram,
 } from "../src/protocol/framing.ts";
@@ -36,12 +37,22 @@ import {
 } from "../src/protocol/channelCache.ts";
 import { decodeClientText, encodeClientText } from "../src/protocol/textEncoding.ts";
 import { parseSessionHandoffPayload } from "../src/handlers/channelHandler.ts";
-import { ClientOpcode, ServerOpcode, StageId } from "../src/protocol/opcodes.ts";
+import {
+  ClientOpcode,
+  ClientUdpOpcode,
+  ReconstructedUdpInputOpcode,
+  ServerOpcode,
+  ServerUdpOpcode,
+  StageId,
+} from "../src/protocol/opcodes.ts";
 import { ClientSession } from "../src/state/worldState.ts";
 import {
   clearRecentLogs,
   formatClientOpcode,
+  formatClientUdpOpcode,
+  formatReconstructedUdpInputOpcode,
   formatServerOpcode,
+  formatServerUdpOpcode,
   formatStageId,
   getRecentLogs,
   getLogLevel,
@@ -452,7 +463,7 @@ describe("Protocol Layer — CRC, Cipher, Primitives, SmartStream & Framing", ()
       .toBe("sub_5D8879");
   });
 
-  test("Structured logs keep client opcodes, server opcodes, and StageIds in separate namespaces", () => {
+  test("Structured logs keep directional TCP/UDP opcodes and StageIds in separate namespaces", () => {
     expect(formatClientOpcode(5)).toBe("5 (SelectChannel)");
     expect(formatServerOpcode(7)).toBe("7 (ChannelSelectResult)");
     expect(formatClientOpcode(13)).toBe("13 (ReturnToChannelSelect)");
@@ -461,6 +472,15 @@ describe("Protocol Layer — CRC, Cipher, Primitives, SmartStream & Framing", ()
     expect(formatStageId(10)).toBe("10 (SelectServer)");
     expect(formatStageId(11)).toBe("11 (Lobby)");
     expect(formatStageId(13)).toBe("13 (Game)");
+    expect(formatClientUdpOpcode(ClientUdpOpcode.GameLoadRegistration)).toBe(
+      "1 (GameLoadRegistration)"
+    );
+    expect(formatServerUdpOpcode(ServerUdpOpcode.KeepaliveAck)).toBe("4 (KeepaliveAck)");
+    expect(formatClientUdpOpcode(4)).toBe("4 (UnknownClientUdpOpcode)");
+    expect(formatServerUdpOpcode(1)).toBe("1 (UnknownServerUdpOpcode)");
+    expect(
+      formatReconstructedUdpInputOpcode(ReconstructedUdpInputOpcode.KeepaliveProbe)
+    ).toBe("0 (KeepaliveProbe)");
   });
 
   test("TCP close trace summarizes direction, opcode, stage, sizes, and quiet time without bodies", () => {
@@ -883,6 +903,91 @@ describe("Protocol Layer — CRC, Cipher, Primitives, SmartStream & Framing", ()
     const singleDec = MTUDPPeer.decodeFrame(single);
     expect(singleDec).not.toBeNull();
     expect(Array.from(singleDec!)).toEqual(Array.from(inner1));
+  });
+
+  test("CGameStage UDP inner codes 0..4 follow Client dispatch widths", () => {
+    const code0Packed = new Uint8Array([0x12, 0x34, 0x56, 0x78]);
+    const code0 = new PacketWriter(0, 0).writeU8(0xA1).writeBlock(code0Packed).writeU8(9).toPayload();
+    const parsed0 = parseUdpPeerInnerPacket(code0)!;
+    expect(parsed0.innerOpcode).toBe(0);
+    if (parsed0.innerOpcode === 0) {
+      expect(parsed0.contextCheckByte).toBe(0xA1);
+      expect(parsed0.stateCode).toBe(0x78); // raw DWORD is interpreted on x86 little-endian
+      expect(parsed0.sequence).toBe(9);
+    }
+
+    const code1 = new PacketWriter(1, 0)
+      .writeU8(1)
+      .writeU8(2)
+      .writeU8(3)
+      .writeU8(4)
+      .writeU16(0x0506)
+      .writeU16(0x0708)
+      .writeU8(9)
+      .writeU8(10)
+      .writeU8(11)
+      .toPayload();
+    const parsed1 = parseUdpPeerInnerPacket(code1)!;
+    expect(parsed1.innerOpcode).toBe(1);
+    if (parsed1.innerOpcode === 1) {
+      expect(parsed1.fieldByte0).toBe(4);
+      expect(parsed1.fieldWord0).toBe(0x0506);
+      expect(parsed1.fieldWord1).toBe(0x0708);
+      expect(parsed1.fieldByte3).toBe(11);
+    }
+
+    const code2 = new PacketWriter(2, 0)
+      .writeU8(0x21)
+      .writeU8(0x22)
+      .writeU8(0x23)
+      .writeU16(0x2425)
+      .writeU16(0x2627)
+      .toPayload();
+    expect(code2).toHaveLength(9);
+    const parsed2 = parseUdpPeerInnerPacket(code2)!;
+    expect(parsed2.innerOpcode).toBe(2);
+    if (parsed2.innerOpcode === 2) {
+      expect(parsed2.contextCheckByte).toBe(0x21);
+      expect(parsed2.indexByte).toBe(0x22);
+      expect(parsed2.fieldByte0).toBe(0x23);
+      expect(parsed2.fieldWord0).toBe(0x2425);
+      expect(parsed2.fieldWord1).toBe(0x2627);
+    }
+
+    const code3 = new PacketWriter(3, 0)
+      .writeU8(0x41)
+      .writeBlock(new Uint8Array([0x12, 0x34, 0x56, 0x78]))
+      .writeBlock(Uint8Array.from({ length: 16 }, (_, index) => index))
+      .writeU8(0x51)
+      .writeU8(0x52)
+      .writeU8(0x53)
+      .toPayload();
+    expect(code3).toHaveLength(26);
+    const parsed3 = parseUdpPeerInnerPacket(code3)!;
+    expect(parsed3.innerOpcode).toBe(3);
+    if (parsed3.innerOpcode === 3) {
+      expect(parsed3.contextCheckByte).toBe(0x41);
+      expect(parsed3.stateCode).toBe(0x78);
+      expect(Array.from(parsed3.opaqueBlock)).toEqual(Array.from({ length: 16 }, (_, i) => i));
+      expect(parsed3.sequence).toBe(0x53);
+    }
+
+    const code4 = new PacketWriter(4, 0)
+      .writeU8(0x51)
+      .writeU16(0x5253)
+      .writeBlock(new Uint8Array([0x61, 0x62]))
+      .toPayload();
+    const parsed4 = parseUdpPeerInnerPacket(code4)!;
+    expect(parsed4.innerOpcode).toBe(4);
+    if (parsed4.innerOpcode === 4) {
+      expect(parsed4.stageContextByte).toBe(0x51);
+      expect(parsed4.objectKey).toBe(0x5253);
+      expect(Array.from(parsed4.opaqueTail)).toEqual([0x61, 0x62]);
+    }
+
+    expect(parseUdpPeerInnerPacket(new PacketWriter(2, 0).writeU8(0).toPayload())).toBeNull();
+    expect(parseUdpPeerInnerPacket(new PacketWriter(3, 0).writeU8(0).toPayload())).toBeNull();
+    expect(parseUdpPeerInnerPacket(new PacketWriter(4, 0).writeU8(0).writeU8(0).toPayload())).toBeNull();
   });
 
   test("OLE DATE VariantTime (sub_697640) and Win32 SYSTEMTIME (sub_5C7EAE) round-trip via block scrambler", () => {

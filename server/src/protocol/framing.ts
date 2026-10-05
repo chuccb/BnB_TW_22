@@ -29,8 +29,9 @@ const REDACTED_CLIENT_PAYLOAD_OPCODES = new Set<number>([
   ClientOpcode.CreateOrUpdateAccount,
   ClientOpcode.RegisterAccount,
   ClientOpcode.LoginBeanfunToken,
-  ClientOpcode.LoginVariant29,
-  ClientOpcode.LoginVariant30,
+  ClientOpcode.NexonClubAuthRequest29,
+  ClientOpcode.UnresolvedClientPacket30,
+  ClientOpcode.UnresolvedClientPacket49,
   ClientOpcode.EKeyVerify,
   ClientOpcode.EKeyChallengeResponse,
   ClientOpcode.SubmitRegistrationForm,
@@ -766,20 +767,21 @@ export function decodeUdpDatagram(datagram: Uint8Array): Uint8Array[] {
 }
 
 /**
- * Builds the 6-byte plain-BE UDP keepalive payload `[u16 BE(0), u32 BE(userId)]`.
- * The checked-in decompilation does not establish the client's send cadence.
+ * Reconstructed 6-byte BE input shape `[u16 BE(0), u32 BE(userId)]`.
+ * No Client sender or cadence is established in the checked-in decompilation.
  */
-export function buildUdpServerKeepalive(userId: number): Uint8Array {
+export function buildReconstructedUdpKeepaliveProbe(userId: number): Uint8Array {
   const w = new PacketWriter(0, 0);
   w.writeU32(userId >>> 0);
   return MTUDPPeer.encodeFrame(w.toPayload());
 }
 
 /**
- * CUDPPeerManBase::sub_5EC943 (`0x005EC943`) case `4`:
- * Server replies 1-byte inner payload `[u8(4)]` (`MTUDPPeer` frame `[0x02, 0x04, crc8]`).
+ * Local server response policy for the Client's `CUDPPeerManBase::sub_5EC943` case `4`:
+ * one-byte inner payload `[u8(4)]` (`MTUDPPeer` frame `[0x02, 0x04, crc8]`).
+ * The decompilation proves the Client reader, not that a production server sends this reply.
  */
-export function buildUdpServerKeepaliveAck(): Uint8Array {
+export function buildReconstructedUdpKeepaliveAck(): Uint8Array {
   return MTUDPPeer.encodeFrame(new Uint8Array([4]));
 }
 
@@ -887,55 +889,56 @@ export function buildUdpPeerData(
 export type ParsedUdpPeerInner =
   | {
       innerOpcode: 0;
-      roundXorSubSlot: number;
+      contextCheckByte: number;
       slot: number;
       x: number;
       y: number;
-      dir: number;
-      seq: number;
+      stateCode: number;
+      sequence: number;
     }
   | {
       innerOpcode: 1;
-      stageRound: number;
+      contextCheckByte: number;
       slot: number;
-      subSlot: number;
-      dir: number;
-      x: number;
-      y: number;
-      f28: number;
-      f32: number;
-      f36: number;
+      stateCheckByte: number;
+      fieldByte0: number;
+      fieldWord0: number;
+      fieldWord1: number;
+      fieldByte1: number;
+      fieldByte2: number;
+      fieldByte3: number;
     }
   | {
       innerOpcode: 2;
-      stageRound: number;
-      packedSlot: number;
-      anim: number;
-      x: number;
-      y: number;
+      contextCheckByte: number;
+      indexByte: number;
+      fieldByte0: number;
+      fieldWord0: number;
+      fieldWord1: number;
     }
   | {
       innerOpcode: 3;
-      roundXorSubSlot: number;
+      contextCheckByte: number;
       slot: number;
       x: number;
       y: number;
-      dir: number;
-      velocityBlock: Uint8Array;
-      f64: number;
-      f68: number;
-      seq: number;
+      stateCode: number;
+      opaqueBlock: Uint8Array;
+      fieldByte0: number;
+      fieldByte1: number;
+      sequence: number;
     }
   | {
       innerOpcode: 4;
-      entityNetId: number;
-      tick: number;
-      syncData: Uint8Array;
+      stageContextByte: number;
+      objectKey: number;
+      opaqueTail: Uint8Array;
     };
 
 /**
- * CGameStage::sub_4ECF93 (`0x004ECF93`):
+ * Client `CGameStage::sub_4ECF93` (`0x004ECF93`):
  * Parses the inner P2P payload after `CUDPPeerManBase::sub_5EC943` strips `[u8(1), u8(senderSlot)]`.
+ * The code/length pairs below follow the Client dispatcher; opaque fields stay uninterpreted.
  */
 export function parseUdpPeerInnerPacket(p2pBody: Uint8Array): ParsedUdpPeerInner | null {
   if (p2pBody.length < 2) {
@@ -944,89 +947,91 @@ export function parseUdpPeerInnerPacket(p2pBody: Uint8Array): ParsedUdpPeerInner
   const r = new PacketReader(p2pBody, 0, true);
   switch (r.opcode) {
     case 0: {
-      // 8 bytes total (`sub_6974A0(v2) == 8`): [u16 BE(0), u8(round^subSlot), 4B LE(packedPos), u8(seq)]
+      // 8 bytes total: [u16(0), u8 contextCheck, 4B LE packed state/position, u8 sequence].
       if (p2pBody.length !== 8) return null;
-      const roundXorSubSlot = r.readU8();
+      const contextCheckByte = r.readU8();
       const posBlock = r.readBlock(4);
       const packed = new DataView(
         posBlock.buffer,
         posBlock.byteOffset,
         posBlock.byteLength
       ).getUint32(0, true);
-      const seq = r.readU8();
+      const sequence = r.readU8();
       return {
         innerOpcode: 0,
-        roundXorSubSlot,
+        contextCheckByte,
         slot: packed & 0x0f,
         x: (packed >>> 4) & 0x3ff,
         y: (packed >>> 14) & 0x3ff,
-        dir: (packed >>> 24) & 0xff,
-        seq,
+        stateCode: (packed >>> 24) & 0xff,
+        sequence,
       };
     }
     case 1: {
-      // 13 bytes total (`sub_6974A0(v2) == 13`)
+      // 13 bytes total; exact scalar widths follow the `sub_4ECF93` reads.
       if (p2pBody.length !== 13) return null;
       return {
         innerOpcode: 1,
-        stageRound: r.readU8(),
+        contextCheckByte: r.readU8(),
         slot: r.readU8(),
-        subSlot: r.readU8(),
-        dir: r.readU8(),
-        x: r.readU16(),
-        y: r.readU16(),
-        f28: r.readU8(),
-        f32: r.readU8(),
-        f36: r.readU8(),
+        stateCheckByte: r.readU8(),
+        fieldByte0: r.readU8(),
+        fieldWord0: r.readU16(),
+        fieldWord1: r.readU16(),
+        fieldByte1: r.readU8(),
+        fieldByte2: r.readU8(),
+        fieldByte3: r.readU8(),
       };
     }
     case 2: {
-      // 9 bytes total (`sub_6974A0(v2) == 9`)
+      // 9 bytes total: [u16(2), u8 contextCheck, u8 index, u8 field, u16 field, u16 field].
       if (p2pBody.length !== 9) return null;
       return {
         innerOpcode: 2,
-        stageRound: r.readU8(),
-        packedSlot: r.readU8(),
-        anim: r.readU8(),
-        x: r.readU16(),
-        y: r.readU16(),
+        contextCheckByte: r.readU8(),
+        indexByte: r.readU8(),
+        fieldByte0: r.readU8(),
+        fieldWord0: r.readU16(),
+        fieldWord1: r.readU16(),
       };
     }
     case 3: {
-      // 26 bytes total (`sub_6974A0(v2) == 26`)
+      // 26 bytes total: [u16(3), u8 context, 4B LE packed state/position, 16B, 3*u8].
       if (p2pBody.length !== 26) return null;
-      const roundXorSubSlot = r.readU8();
+      const contextCheckByte = r.readU8();
       const posBlock = r.readBlock(4);
       const packed = new DataView(
         posBlock.buffer,
         posBlock.byteOffset,
         posBlock.byteLength
       ).getUint32(0, true);
-      const velocityBlock = r.readBlock(16);
-      const f64 = r.readU8();
-      const f68 = r.readU8();
-      const seq = r.readU8();
+      const opaqueBlock = r.readBlock(16);
+      const fieldByte0 = r.readU8();
+      const fieldByte1 = r.readU8();
+      const sequence = r.readU8();
       return {
         innerOpcode: 3,
-        roundXorSubSlot,
+        contextCheckByte,
         slot: packed & 0x0f,
         x: (packed >>> 4) & 0x3ff,
         y: (packed >>> 14) & 0x3ff,
-        dir: (packed >>> 24) & 0xff,
-        velocityBlock,
-        f64,
-        f68,
-        seq,
+        stateCode: (packed >>> 24) & 0xff,
+        opaqueBlock,
+        fieldByte0,
+        fieldByte1,
+        sequence,
       };
     }
     case 4: {
-      // CNetSyncMan::sub_57A288 (`0x0057A288`): [u16 BE(4), u16 BE(entityNetId), u32 BE(tick), ...]
-      if (p2pBody.length < 8) return null;
+      // The Client reads a context byte and u16 object key, then delegates an opaque tail by object.
+      if (p2pBody.length < 5) return null;
+      const stageContextByte = r.readU8();
+      const objectKey = r.readU16();
       return {
         innerOpcode: 4,
-        entityNetId: r.readU16(),
-        tick: r.readU32(),
-        syncData: r.readBlock(r.remaining),
+        stageContextByte,
+        objectKey,
+        opaqueTail: r.readBlock(r.remaining),
       };
     }
     default:

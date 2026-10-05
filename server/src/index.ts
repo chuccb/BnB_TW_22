@@ -4,7 +4,17 @@ import { logger } from "./utils/logger.ts";
 export { CrazyArcadeServer } from "./network/server.ts";
 export { WorldState, ClientSession } from "./state/worldState.ts";
 export { loadConfig, DEFAULT_CONFIG, TW_ENABLED_FEATURES } from "./config/index.ts";
-export { ClientOpcode, ServerOpcode, UdpOpcode, StageId } from "./protocol/opcodes.ts";
+export {
+  ClientOpcode,
+  ServerOpcode,
+  StageId,
+  ClientUdpOpcode,
+  ServerUdpOpcode,
+  UdpPeerEnvelopeKind,
+  ClientUdpPeerControlCode,
+  ReconstructedUdpInputOpcode,
+  ReconstructedServerUdpPeerControlCode,
+} from "./protocol/opcodes.ts";
 
 if (import.meta.main) {
   const server = new CrazyArcadeServer();

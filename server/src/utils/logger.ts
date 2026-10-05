@@ -1,4 +1,11 @@
-import { ClientOpcode, ServerOpcode, StageId, UdpOpcode } from "../protocol/opcodes.ts";
+import {
+  ClientOpcode,
+  ClientUdpOpcode,
+  ReconstructedUdpInputOpcode,
+  ServerOpcode,
+  ServerUdpOpcode,
+  StageId,
+} from "../protocol/opcodes.ts";
 
 export type LogLevel = "debug" | "info" | "warn" | "error" | "silent";
 
@@ -32,7 +39,9 @@ function makeOpcodeNameMap(table: object): Map<number, string> {
 
 const CLIENT_OPCODE_NAMES = makeOpcodeNameMap(ClientOpcode);
 const SERVER_OPCODE_NAMES = makeOpcodeNameMap(ServerOpcode);
-const UDP_OPCODE_NAMES = makeOpcodeNameMap(UdpOpcode);
+const CLIENT_UDP_OPCODE_NAMES = makeOpcodeNameMap(ClientUdpOpcode);
+const SERVER_UDP_OPCODE_NAMES = makeOpcodeNameMap(ServerUdpOpcode);
+const RECONSTRUCTED_UDP_INPUT_OPCODE_NAMES = makeOpcodeNameMap(ReconstructedUdpInputOpcode);
 const STAGE_ID_NAMES = makeOpcodeNameMap(StageId);
 
 const LEVEL_PRIORITY: Record<LogLevel, number> = {
@@ -110,9 +119,19 @@ export function formatServerOpcode(opcode: number): string {
   return name ? `${opcode} (${name})` : `${opcode} (UnknownServerOpcode)`;
 }
 
-export function formatUdpOpcode(opcode: number): string {
-  const name = UDP_OPCODE_NAMES.get(opcode);
-  return name ? `${opcode} (${name})` : `${opcode} (UnknownUdpOpcode)`;
+export function formatClientUdpOpcode(opcode: number): string {
+  const name = CLIENT_UDP_OPCODE_NAMES.get(opcode);
+  return name ? `${opcode} (${name})` : `${opcode} (UnknownClientUdpOpcode)`;
+}
+
+export function formatServerUdpOpcode(opcode: number): string {
+  const name = SERVER_UDP_OPCODE_NAMES.get(opcode);
+  return name ? `${opcode} (${name})` : `${opcode} (UnknownServerUdpOpcode)`;
+}
+
+export function formatReconstructedUdpInputOpcode(opcode: number): string {
+  const name = RECONSTRUCTED_UDP_INPUT_OPCODE_NAMES.get(opcode);
+  return name ? `${opcode} (${name})` : `${opcode} (UnknownReconstructedUdpInputOpcode)`;
 }
 
 export function formatStageId(stageId: number): string {

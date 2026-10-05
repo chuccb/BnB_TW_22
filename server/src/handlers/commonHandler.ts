@@ -433,6 +433,52 @@ export function handleCommonPacket(
   reader: PacketReader
 ): void {
   switch (opcode) {
+    case ClientOpcode.ClientSignal10: {
+      // CA.exe.c has empty and string-bearing Client writers for opcode 10, but no server-side
+      // association is established here. In particular, do not treat it as C->S 9's cache query.
+      logger.info("Protocol", "Observed C->S 10 contextual Client signal; handler/reply UNKNOWN", {
+        sessionId: session.sessionId,
+        connectionKind: session.connectionKind,
+        stageId: formatStageId(session.stageId),
+        payloadBytes: reader.remaining,
+        responseSent: false,
+      });
+      break;
+    }
+
+    case ClientOpcode.NexonClubAuthRequest29: {
+      // The body may contain a password or a feature-64 MD5-derived value. Never parse or log it
+      // as generic LoginCredentials; no response association is established for this request.
+      logger.info("NexonClub", "Observed C->S 29 CNexonClubDlg auth request; response association UNKNOWN", {
+        sessionId: session.sessionId,
+        connectionKind: session.connectionKind,
+        stageId: formatStageId(session.stageId),
+        payloadBytes: reader.remaining,
+        credentialValuesLogged: false,
+        responseSent: false,
+      });
+      break;
+    }
+
+    case ClientOpcode.LobbyConditionalSignal261: {
+      // CLobbyStage::sub_4C99DC constructs an empty opcode-261 packet under local feature/state
+      // gates. Do not interpret it as Shop entry or emit the distinct S->C 261 reply.
+      const details = {
+        sessionId: session.sessionId,
+        connectionKind: session.connectionKind,
+        stageId: formatStageId(session.stageId),
+        payloadBytes: reader.remaining,
+        emptyBodyObserved: reader.remaining === 0,
+        responseSent: false,
+      };
+      if (reader.remaining === 0) {
+        logger.info("Lobby", "Observed C->S 261 conditional Lobby signal; response association UNKNOWN", details);
+      } else {
+        logger.warn("Lobby", "C->S 261 conditional Lobby signal had an unexpected body", details);
+      }
+      break;
+    }
+
     case ClientOpcode.UploadCrashDump: {
       // `CStage::sub_4B8D42` -> `sub_5D06FA` sends flag=1 chunks from Crash_CA.dmp:
       // `[u8 flag, u32 byteCount, block(byteCount)]`. `sub_5D137C` uses flag=0 without a block.
@@ -845,20 +891,24 @@ export function handleCommonPacket(
       break;
     }
 
-    case ClientOpcode.QueryGuildInfo: {
-      // C->S 68 (`sub_53DEEA`) -> S->C 34 (`sub_54466F`)
+    case ClientOpcode.UserPagePacket68: {
+      // C->S 68 (`sub_53DEEA`) emits one stored-name string. Its Client response route/schema is
+      // UNKNOWN; the local S->C 34 `u8 + string` below is reconstruction policy, not binary evidence.
+      // The observed Client S->C 34 route is the context-dependent NexonClub status reader.
       const targetName = reader.remaining >= 2 ? reader.readString() : "";
       const targetUser =
         (targetName ? state.db.getUserByUsername(targetName) : null) ?? session.users[0];
-      const w34 = new PacketWriter(ServerOpcode.GuildOrUserStatus);
+      const w34 = new PacketWriter(ServerOpcode.StatusResult34);
       w34.writeU8(1);
       w34.writeString(targetUser?.guildName ?? "");
       session.sendPacket(w34);
       break;
     }
 
-    case ClientOpcode.CouplePartnerCheck: {
-      // C->S 290 (`sub_53DEEA`: `[str partnerName]`) -> S->C 242 (`sub_544049` -> `sub_49D0A6`)
+    case ClientOpcode.UserPagePacket290: {
+      // C->S 290 (`sub_53DEEA`: `[str partnerName]`). The Client's response opcode/schema is
+      // UNKNOWN here; sub_544049 is called from the S->C 220 path, not established as 290's reply.
+      // The following S->C 242 fields are local reconstruction policy, not a verified Client contract.
       const partnerName = reader.remaining >= 2 ? reader.readString() : "";
       const partner = partnerName ? state.db.getUserByUsername(partnerName) : null;
       const w242 = new PacketWriter(ServerOpcode.SmsSendResult);
@@ -868,14 +918,16 @@ export function handleCommonPacket(
       break;
     }
 
-    case ClientOpcode.UserPairStatsQuery: {
-      // C->S 293 (`sub_53DEEA`: `[str userA, str userB]`) -> S->C 220 (`sub_54466F`)
-      const _userA = reader.remaining >= 2 ? reader.readString() : "";
-      const _userB = reader.remaining >= 2 ? reader.readString() : "";
-      const w220 = new PacketWriter(ServerOpcode.PairStatsResult);
-      w220.writeU32(0); // wins together
-      w220.writeU32(0); // losses together
-      w220.writeU32(0); // draws together
+    case ClientOpcode.UserPagePacket293: {
+      // `sub_53DEEA` emits one string for C->S 293. The Client's S->C 220 parser is known, but
+      // a 293->220 response association is not proven. Keep the local response empty and valid.
+      if (reader.remaining >= 2) reader.readString();
+      const w220 = new PacketWriter(ServerOpcode.MyPageData220);
+      w220.writeU8(0); // zero entries in the first u8-counted index/value table
+      w220.writeU16(0); // opaque u16 field
+      w220.writeU8(0); // opaque u8 field
+      w220.writeU16(0); // empty first u32 list
+      w220.writeU16(0); // empty second u32 list
       session.sendPacket(w220);
       break;
     }
