@@ -315,7 +315,8 @@ export function handleLobbyPacket(
         session.pendingStageId = null;
         session.lobbyEntryPacketSeen = true;
       }
-      // Send S->C 89 (Exp sync) and S->C 186 (Lucci sync) for logged-in user
+      // Send S->C 89 (experience) and the local S->C 186 dynamic-field candidate for a logged-in user.
+      // The Client parser for 186 narrows its second u32 to a char; the field mapping is UNKNOWN.
       const user = session.users[0];
       if (user) {
         const w89 = new PacketWriter(ServerOpcode.ExpSync);
@@ -323,7 +324,7 @@ export function handleLobbyPacket(
         w89.writeU32(user.exp);
         session.sendPacket(w89);
 
-        const w186 = new PacketWriter(ServerOpcode.LucciSync);
+        const w186 = new PacketWriter(ServerOpcode.UserDynamicInfoFieldSync186);
         w186.writeU32(0);
         w186.writeU32(user.lucci);
         session.sendPacket(w186);
@@ -357,7 +358,7 @@ export function handleLobbyPacket(
       const lobbyServerOpcodes: number[] = user
         ? [
             ServerOpcode.ExpSync,
-            ServerOpcode.LucciSync,
+            ServerOpcode.UserDynamicInfoFieldSync186,
             ServerOpcode.InventoryData,
             ServerOpcode.EquippedAvatarData,
             ServerOpcode.InventoryExpansionSlots,

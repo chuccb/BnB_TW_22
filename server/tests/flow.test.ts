@@ -1142,7 +1142,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(handoffSendLog?.data?.loginSessionId).toBe(loginSession1.sessionId);
     expect(handoffSendLog?.data?.lobbyEntrySignalObserved).toBe(false);
     expect(handoffSendLog?.data?.serverOpcodes).toEqual([
-      "13 (LobbyStageTransition)",
+      "13 (StageSpecificRoute13)",
       "75 (QuestConfigSync)",
     ]);
     expect(handoffSendLog?.data?.opcode13PayloadBytes).toBe(1);
@@ -1197,7 +1197,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
 
     // 6. Consume the Lobby sync frames queued after the earlier C->S 83, then query User Info.
     expect(client1.popByOpcode(89)).toBeDefined();
-    expect(client1.popByOpcode(186)).toBeDefined();
+    expect(client1.popByOpcode(ServerOpcode.UserDynamicInfoFieldSync186)).toBeDefined();
     const p194_init = client1.popByOpcode(ServerOpcode.InventoryData)!;
     expect(p194_init).toBeDefined();
     expect(p194_init.readU8()).toBe(1); // playerCount = 1
@@ -1215,7 +1215,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(lobbyInitLog?.data?.playerCount).toBe(1);
     expect(lobbyInitLog?.data?.serverOpcodes).toEqual([
       "89 (ExpSync)",
-      "186 (LucciSync)",
+      "186 (UserDynamicInfoFieldSync186)",
       "194 (InventoryData)",
       "196 (EquippedAvatarData)",
       "268 (InventoryExpansionSlots)",
@@ -1341,7 +1341,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(client2StageConfig.remaining).toBe(0);
     for (const opcode of [
       ServerOpcode.ExpSync,
-      ServerOpcode.LucciSync,
+      ServerOpcode.UserDynamicInfoFieldSync186,
       ServerOpcode.InventoryData,
       ServerOpcode.EquippedAvatarData,
       ServerOpcode.InventoryExpansionSlots,
@@ -1350,15 +1350,16 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
       client2.popByOpcode(opcode);
     }
 
-    // C->S 303 has multiple Client writers: this Lobby/Prepare caller includes a byte,
-    // while CShopStage::sub_5382EA sends only the opcode.
+    // Local reconstruction policy only: C->S 303 has multiple Client writers, this Lobby/Prepare
+    // caller includes a byte, while CShopStage::sub_5382EA sends only the opcode. These tests do not
+    // establish an official S->C 186 response association or the meaning of either field.
     const lobbyUser = session2.users[0]!;
     client2.sendToServer(
       state,
       session2.sessionId,
-      new PacketWriter(ClientOpcode.QueryAvatarLucciSync).writeU8(0)
+      new PacketWriter(ClientOpcode.ContextualClientPacket303).writeU8(0)
     );
-    const p186Indexed = client2.popByOpcode(ServerOpcode.LucciSync)!;
+    const p186Indexed = client2.popByOpcode(ServerOpcode.UserDynamicInfoFieldSync186)!;
     expect(p186Indexed.readU32()).toBe(0);
     expect(p186Indexed.readU32()).toBe(lobbyUser.lucci);
     expect(p186Indexed.remaining).toBe(0);
@@ -1366,9 +1367,9 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     client2.sendToServer(
       state,
       session2.sessionId,
-      new PacketWriter(ClientOpcode.QueryAvatarLucciSync)
+      new PacketWriter(ClientOpcode.ContextualClientPacket303)
     );
-    const p186Empty = client2.popByOpcode(ServerOpcode.LucciSync)!;
+    const p186Empty = client2.popByOpcode(ServerOpcode.UserDynamicInfoFieldSync186)!;
     expect(p186Empty.readU32()).toBe(0);
     expect(p186Empty.readU32()).toBe(lobbyUser.lucci);
     expect(p186Empty.remaining).toBe(0);
@@ -1423,7 +1424,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     client1.sendToServer(
       state,
       session1.sessionId,
-      new PacketWriter(20).writeString("dao_tw").writeString("GLHF!")
+      new PacketWriter(ClientOpcode.Whisper).writeString("dao_tw").writeString("GLHF!")
     );
     expect(client1.popByOpcode(24)?.readU8()).toBe(1); // delivered
     expect(client2.popByOpcode(23)?.readString()).toBe("bazzi_tw : GLHF!");
@@ -1960,7 +1961,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
       new PacketWriter(ClientOpcode.ShopAction).writeU8(1).writeU32(2005).writeU8(0).writeU32(500)
     );
     expect(client1.popByOpcode(ServerOpcode.ShopBuyResult)).toBeDefined();
-    expect(client1.popByOpcode(ServerOpcode.ShopUserStockList)).toBeDefined();
+    expect(client1.popByOpcode(ServerOpcode.ShopLocalStockList198)).toBeDefined();
 
     client1.sendToServer(
       state,
@@ -2078,7 +2079,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(p199).toBeDefined();
     expect(p199.readU8()).toBe(0); // result = 0 (`sub_52DA5E` success)
     expect(p199.readVariantTime()).toBeGreaterThan(45000);
-    expect(client1.popByOpcode(ServerOpcode.ShopUserStockList)).toBeDefined();
+    expect(client1.popByOpcode(ServerOpcode.ShopLocalStockList198)).toBeDefined();
 
     // Equip slot (`C->S 274`, `sub_541682`: `[u8 playerIdx, u8 slotIdx, u32 stockId, str text]`)
     client1.sendToServer(
@@ -2106,7 +2107,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
         .writeU32(3001)
         .writeString("Updated Text")
     );
-    expect(client1.popByOpcode(ServerOpcode.ShopUserStockList)).toBeDefined();
+    expect(client1.popByOpcode(ServerOpcode.ShopLocalStockList198)).toBeDefined();
 
     // Send Gift (`C->S 279`, `sub_52C5A2`: `[u32 packageId, str receiverName, str title, str message, u8 flag]`)
     client1.sendToServer(
@@ -2541,7 +2542,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(p50).toBeDefined();
     expect(p50.remaining).toBe(0); // Empty body means zero 19-byte records; macro persistence is unsupported.
 
-    // Shop Coupon Code (`C->S 286` -> `S->C 204`, `CCouponDlg::sub_5B6215`) & NexonClub (`C->S 284` -> `S->C 232`, `CStage::sub_4BC337`)
+    // Coupon-code behavior below is local.
     client1.sendToServer(
       state,
       session1.sessionId,
@@ -2549,6 +2550,8 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     );
     expect(client1.popByOpcode(ServerOpcode.ShopCouponResult)?.readU8()).toBe(1);
 
+    // The Client has S->C 213 as an NXClub result parser, but this local C->S 284 -> S->C 213
+    // response is not proven as official behavior.
     client1.sendToServer(
       state,
       session1.sessionId,
@@ -2557,11 +2560,11 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
         .writeString("bazzi_club")
         .writeString("club_pass")
     );
-    const p232 = client1.popByOpcode(ServerOpcode.NexonClubAuthResult)!;
-    expect(p232).toBeDefined();
-    expect(p232.readU8()).toBe(1);
-    expect(p232.readU8()).toBe(0);
-    expect(p232.readString()).toBe("bazzi_club");
+    const p213 = client1.popByOpcode(ServerOpcode.NexonClubAuthResult)!;
+    expect(p213).toBeDefined();
+    expect(p213.readU8()).toBe(1);
+    expect(p213.readU8()).toBe(0);
+    expect(p213.readString()).toBe("bazzi_club");
 
     // Dynamic .I16 Table Request (`C->S 27 / 28` -> `S->C 32`, `CStage::sub_4B8D5F`)
     client1.sendToServer(
@@ -2697,7 +2700,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(state.db.getUserById(user.id)?.lucci).toBe(0);
     expect(state.db.getUserById(user.id)?.cash).toBe(0);
     expect(client.popByOpcode(ServerOpcode.InventoryUpdate)).toBeUndefined();
-    expect(client.popByOpcode(ServerOpcode.ShopLucciBalance190)).toBeUndefined();
+    expect(client.popByOpcode(ServerOpcode.ShopLocalUpdate190)).toBeUndefined();
   });
 
   test("rejects an unknown GameServer handoff token without creating a user or entering Lobby", () => {
@@ -2982,7 +2985,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
       );
       expect(lobbyInitPackets.map((entry) => entry.data?.opcode)).toEqual([
         ServerOpcode.ExpSync,
-        ServerOpcode.LucciSync,
+        ServerOpcode.UserDynamicInfoFieldSync186,
         ServerOpcode.InventoryData,
         ServerOpcode.EquippedAvatarData,
         ServerOpcode.InventoryExpansionSlots,
@@ -2998,7 +3001,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
       expect(lobbyInitLog?.data?.clientModalDismissalVerified).toBe(false);
       expect(lobbyInitLog?.data?.serverOpcodes).toEqual([
         "89 (ExpSync)",
-        "186 (LucciSync)",
+        "186 (UserDynamicInfoFieldSync186)",
         "194 (InventoryData)",
         "196 (EquippedAvatarData)",
         "268 (InventoryExpansionSlots)",

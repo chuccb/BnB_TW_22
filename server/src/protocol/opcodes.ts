@@ -7,7 +7,8 @@
  * Uses `as const satisfies` for literal numeric types and readable handler names.
  * This working inventory is not proof of exhaustive wire coverage.
  * Numeric aliases, stage-dependent overloads, incomplete parser associations, and
- * unresolved Client receive paths are tracked in `server/docs/unknowns.md` (RE-12).
+ * unresolved Client writer candidates and incomplete S->C receive dispatch coverage are tracked
+ * in `server/docs/unknowns.md` (RE-12, RE-19).
  */
 
 export const StageId = {
@@ -48,7 +49,7 @@ export const ClientOpcode = {
   UnresolvedClientPacket17: 17, // No direct writer recovered in the current CA.exe census; former CAgreementStage citation is an interior address, not a writer.
   UnresolvedClientPacket18: 18, // No direct writer recovered in checked CA.exe.c; former sub_516FA7 attribution withdrawn.
   UnresolvedClientPacket19: 19, // No direct writer recovered in the current CA.exe census; sub_4AD598 writes 16, 20, and 97, not 19.
-  PingReplyOrWhisper: 20, // CPacketDispatcher::sub_5D7CA5 (8B ping) or CChatStage::sub_4AD598 (whisper)
+  Whisper: 20, // CChatStage::sub_4AD598: [str targetUsername, str message]; no TCP ping writer confirmed
   MessengerInviteUser: 21, // sub_4B4F83 / sub_4DB16C / sub_55AAF0 / sub_5E9F86: [u16 roomNum, u32 key, str targetUser, u8 flag]
   RoomEmotion: 22, // Emotion packet
   RequestDynI16Table: 27, // sub_59A700: [u32 crc, u16 count]
@@ -88,7 +89,7 @@ export const ClientOpcode = {
   RoomListScrollOrDetail: 80, // sub_4A496F -> S->C 83
   QuickJoinShort: 81, // Quick join alias -> S->C 81
   ReturnToRoom: 82, // sub_536E2E -> S->C 80
-  EnterLobby: 83, // CStage::sub_4B94A6 -> S->C 89 + S->C 186 + S->C 82
+  EnterLobby: 83, // CStage::sub_4B94A6 -> S->C 89 + local S->C 186 candidate + S->C 82
   LobbyConditionalSignal261: 261, // CLobbyStage::sub_4C99DC: empty; feature 18 + sub_59DBD9()==79 + j[2013] gate; no Shop-click or reply association
 
   // Room / Prepare / Exchange Stage (CPrepareStage / CExchangeStage)
@@ -183,7 +184,7 @@ export const ClientOpcode = {
   RequestPackageMapIni: 281, // sub_5943FB: request packagemap.ini SmartStream -> S->C 210 (sub_4B966A)
   RequestDynamicMapInfoSsd: 282, // sub_4DD5D3: request fxdynmapinfo.ssd SmartStream -> S->C 205 (sub_4E0131)
   ShopResellItem: 283, // sub_58BFE0: [u32 selected-object +8, u32 caller value] -> S->C 212 (sub_546D3F), DB mapping unverified
-  NexonClubAuth: 284, // sub_4BCB70 (CNexonClubDlg): [u8 playerIdx, str clubId, str clubPass]
+  NexonClubAuth: 284, // sub_4BCB70 (CNexonClubDlg): [u8, str, str]; field meanings and S->C association UNKNOWN
   ShopLeave: 285, // CShopStageNew::sub_536DB3 / sub_5B76C2 -> S->C 214 / S->C 99
   ShopIdentifyQMark: 285,
   RedeemCouponCode: 286, // CCouponDlg::sub_5B6215: [u32 couponTypeOrId] -> S->C 204
@@ -201,7 +202,7 @@ export const ClientOpcode = {
   SmsDeleteAll: 300, // CSmsDlg::sub_47F5F7: [str username] -> S->C 245
   LobbyInitQuery: 301, // CLobbyStage::sub_4C99DC: empty
   MyPagePreOpen: 302, // CStage::sub_4BC236: empty
-  QueryAvatarLucciSync: 303, // sub_4BB107: [u8 loop index]; sub_55195E: [u8 a2, meaning UNKNOWN]; sub_5382EA: empty -> S->C 186
+  ContextualClientPacket303: 303, // sub_4BB107: [u8 loop index]; sub_55195E: [u8 a2]; sub_5382EA: empty; reply association/meaning UNKNOWN
   CouplePropose: 304, // sub_5BA82D writes [u8 playerIdx, str partnerName, str message]; official reply association UNKNOWN
   CoupleRespond: 305, // CCouple::sub_5B9FD6 writes [u8 playerIdx, u8 accept]; no current-build FxStock-check writer/reply recovered.
   CoupleBreakup: 306, // sub_5BA899 writes [u8 playerIdx]; official reply/fan-out policy UNKNOWN
@@ -236,34 +237,68 @@ export const ClientOpcode = {
 
 export const ServerOpcode = {
   // Pre-Login & Auth Responses
+  StageSlot45Route0: 0, // On typed-registry miss, CStage::sub_4BDBF5 forwards S->C 0 to current root-vtable slot 45 (+0xB4); payload/meaning UNKNOWN
   MultiServerSsd: 1, // sub_5D7E8E: multisvr.ssd (+ multisvrn.ssd if feature 68)
   SystemStringSsd: 2, // sub_5D00B9: csysstr.ssd
-  LoginResult: 4, // CLoginStage::sub_567400 -> sub_566E08
+  LoginVariantRoute4: 4, // Normal Login -> sub_567400; China Login -> sub_563721; layouts are not equated
+  LoginResult: 4, // Normal CLoginStage::sub_567400 -> sub_566E08; China Login has a separate case-4 parser
+  LoginStageRoute5: 5, // Normal Login -> sub_566975; China Login -> sub_5628E2; conditional/result fields and request meaning UNKNOWN
+  LoginStageRoute6: 6, // Normal Login -> sub_5690F0; China Login -> sub_562B2C; conditional/result fields and request meaning UNKNOWN
+  ChinaLoginStageRoute40: 40, // CLoginStageChina::sub_5654E8 -> sub_5643A0; schema/meaning UNKNOWN
+  ChinaLoginStageRoute44: 44, // CLoginStageChina::sub_5654E8 -> sub_562D42; schema/meaning UNKNOWN
+  ChinaLoginStageRoute45: 45, // CLoginStageChina::sub_5654E8 -> sub_562F8E; schema/meaning UNKNOWN
+  ChinaLoginStageRoute46: 46, // CLoginStageChina::sub_5654E8 -> sub_563359; schema/meaning UNKNOWN
+  StageSpecificRoute7: 7, // SelectServer channel result; Chatting -> sub_4B3BF9 and Exchange -> sub_4B7B3E are separate routes
   ChannelSelectResult: 7, // CSelectServerStage::sub_56C0C8
   // Generic CStage::sub_4BDBF5 routes S->C 9 to a Crash_CA.dmp offset request (-> C->S 8);
   // it is not a generic stage transition in the recovered SelectServer/Shop dispatch paths.
   CrashDumpChunkRequest: 9,
   ChannelListSsd: 10, // sub_5D42CF -> sub_5D3E91: channel2_%03d%s.ssd
-  MessengerHandoff: 11, // CLoginStage::sub_567B0F
-  ChannelLoads: 12, // sub_5D4139: [u16 count, u16[count] load]
+  LoginStageRoute11: 11, // Normal Login -> sub_567B0F; China Login -> sub_56442A; distinct parsers, schema equivalence UNKNOWN
+  MessengerHandoff: 11, // Normal CLoginStage::sub_567B0F; China Login has a separate case-11 parser
+  StageSpecificRoute12: 12, // Base/normal Login/China Login/SelectServer have separate parsers; all read a u16 count and u16 entries via sub_697510, then narrow entries to char for sub_5D4025
+  ChannelLoads: 12, // Descriptive local alias; do not infer field meaning from the name
+  SelectServerStageRoute52: 52, // CSelectServerStage::sub_56D2FB -> sub_4B9D05: [u32, u32], second value narrowed to char; meanings UNKNOWN
+  LoginStageRoute59: 59, // CLoginStage::sub_569420 -> sub_565F02; conditional [u8, str] or no field read; request association UNKNOWN
+  LoginStageRoute61: 61, // CLoginStage::sub_569420 -> sub_567CCD; feature-gated [u8 result, if 0: 2*str]; request association UNKNOWN
+  StageSpecificRoute13: 13, // CStage fallback dispatches through current root slot 48; SelectServer routes this value to Lobby via sub_56A9DA; stage context matters
   LobbyStageTransition: 13, // CSelectServerStage root dispatch: slot 48 -> sub_56A9DA -> CStage::sub_4B96B1; requests StageId.Lobby (11)
+  StageSlot50Route14: 14, // CStage::sub_4BDBF5 case 14 -> current root-vtable slot 50 (+0xC8); stage-specific handlers, common payload/meaning UNKNOWN
   LobbyGuildUserOnlyNotice: 15, // CLobbyStage::sub_4C86A2 -> sub_4C5DE7; modal + PostQuitMessage
+  StageSpecificRoute16: 16, // CStage fallback parses Shop init; CGameStage has a distinct immediate-return case 16
   ShopInitAndStage14: 16, // sub_4BB82A: shop checksums (fxstock, stringtable, packagemap) + qmarksfn.ssd + banners
+  StageSpecificRoute17: 17, // CStage::sub_4BDBF5 -> sub_4B96E5 -> sub_5AAA5C(..., 16); this branch reads no payload; outcome/meaning UNKNOWN
+  StageId16TransitionRequest17: 17, // Descriptive alias for the observed Client call only; no StageId-16 factory branch found
   UnresolvedServerPacket18: 18, // CStage::sub_4BDBF5 reads [u32, u32] then dispatches; semantics UNKNOWN
   UserDynamicInfoSync: 19, // Stage-root fallback case 19 -> root +0xDC -> sub_4BA3BA -> sub_5ED779 (Login root included); current server sends no S->C 19
+  StageRecordList20: 20, // CStage::sub_4BDBF5 -> sub_4B9D2B: [u8 count, count*(u32, u16)] updates the global object at dword_92A1BC; record meanings UNKNOWN, not a confirmed ping
   NormalChat: 21, // CChatStage::sub_4B070C / CGameStage::sub_4F4D49
+  StageSlot53Route22: 22, // CStage::sub_4BDBF5 case 22 -> current root-vtable slot 53 (+0xD4); base CStage::sub_4BB98F has a mode-dependent parser; stage-specific
   WhisperOrEmotion: 23, // CChatStage::sub_4A8727 / CGameStage::sub_4F4F4B
   WhisperDeliveryStatus: 24, // CChatStage::sub_4AE106
-  DynamicI16Data: 32, // Stage-specific route to CStage::sub_4B8D5F -> sub_59D0D4: [u32 id, u16 version, u32 size, block(size)]
+  LobbyStageRoute25: 25, // CLobbyStage::sub_4C86A2 case 25 -> sub_4C7D37 when sub_5ED6AA(n0xB, 7) == 0; payload semantics/schema not fully mapped
+  ChatStageRoute26: 26, // CChatStage::sub_4B0A63 -> sub_4AC937: [str, u8], field meanings UNKNOWN; the common epilogue then calls CStage fallback
+  ChatStageRoute27: 27, // CChatStage::sub_4B0A63 -> sub_4AC9BE: [u8, str], field meanings UNKNOWN; the common epilogue then calls CStage fallback
+  ChatStageRoute28: 28, // CChatStage::sub_4B0A63 -> sub_4AA81D; field mapping/meaning UNKNOWN
+  LobbyStageRoute29: 29, // CLobbyStage::sub_4C86A2 -> sub_4C5EB3; payload semantics/schema not fully mapped
+  ChatStageRoute31: 31, // CChatStage::sub_4B0A63 -> sub_4AE20E; field mapping/meaning UNKNOWN
+  StageSpecificRoute32: 32, // CStage fallback -> dynamic-I16 parser; CLobbyStage case 32 instead dispatches root slot 56 (+0xE0)
+  DynamicI16Data: 32, // CStage fallback -> sub_4B8D5F -> sub_59D0D4; CLobbyStage also has an independent case 32 -> root slot 56 (+0xE0)
+  LobbyStageRoute32: 32, // CLobbyStage::sub_4C86A2 case 32 -> root slot 56 (+0xE0); do not assume it is the CStage DynamicI16 parser
   SelectServerDynamicI16Data: 33, // CSelectServerStage root dispatch: slot 54 -> CStage::sub_4B8D5F; not the Lobby transition
-  NexonClubDialogStatus34: 34, // CNexonClubDlg::sub_46C2AD -> sub_46BBB1 reads a u8; no request association confirmed
+  StageSpecificRoute34: 34, // Base-fallback observer -> CNexonClubDlg::sub_46C2AD; CExchangeStage has a separate direct case -> sub_55B6DB
+  NexonClubDialogStatus34: 34, // Base-fallback CNexonClubDlg::sub_46C2AD -> sub_46BBB1 reads a u8; no request association confirmed
   ShopReturnHandoff: 41, // CShopConnectionMan::sub_52A23C: [u16, u16, u32 key, str, u8=11]
-  ShopServerEndpoint: 48, // CShopConnectionMan::sub_529E8D: [u8 ok, if ok: u8 flag, u32 opaque, u32 ipHostLong, u16 portHostShort]
+  StageSpecificRoute48: 48, // CShopConnectionMan has an endpoint parser; Lobby/Session/Prepare/Chatting also dispatch 48 through stage-specific slot 57 (+0xE4)
+  ShopServerEndpoint: 48, // CShopConnectionMan::sub_529E8D parser; Lobby/Session/Prepare/Chatting stages also dispatch S->C 48 through stage-specific slot 57 (+0xE4)
+  ChatStageRoute49: 49, // CChatStage::sub_4B0A63 -> sub_4ABB7B; field mapping/meaning UNKNOWN
+  LobbyStageRoute48: 48, // CLobbyStage::sub_4C86A2 case 48 -> root slot 57 (+0xE4); distinct stage context from Shop endpoint 48
   MacroList: 50, // sub_4A27CB: repeat to EOF [u32 value, u8[15] fields]; empty body = 0 records
   FilterStringSsd: 53, // sub_5C8BE3: filterstr.ssd
-  UnresolvedServerPacket59: 59, // No Client receive route or source-supported C->S ID-check association recovered in this build.
+  ChatStageRoute57: 57, // CChatStage::sub_4B0A63 -> sub_4A9D9E; field mapping/meaning UNKNOWN
+  ChatStageRoute58: 58, // CChatStage::sub_4B0A63 -> sub_4A8537; field mapping/meaning UNKNOWN
+  StageFallbackNoOp55: 55, // CStage::sub_4BDBF5 returns immediately for 55 without reading the body or running the observer fan-out
   MapNameOverrides: 60, // sub_5D9F0B -> sub_5C578E: [i32 count, count*(u32 mapId, str name)]
-  UnresolvedServerPacket61: 61, // No Client receive route/request association confirmed in checked CA.exe.c
   UserItemsSyncLegacy: 63, // Project label only; Client routes via sub_4BDBF5 -> sub_4B9654 and sub_5B2B2D both reach sub_598BEC(dword_929C70) -> sub_597611; same reader as S->C 197, trigger/meaning UNKNOWN
 
   // Lobby, Ranking, Room & Exchange Responses
@@ -271,8 +306,13 @@ export const ServerOpcode = {
   RankingListAlt: 66, // sub_4A51B5: [u16 startRank, u8 count, count*sub_4A4FBD]
   RankingList: 69, // sub_4A5114: [u16 startRank, u8 count, count*sub_4A4FBD]
   UserInfoModal70: 70, // PUserInfoResult -> Lobby sub_4C128B clears stage+6180, then sub_4A6379 -> sub_4BBCA8; modal may re-enter the +380-gated Shop helper, but does not set +380
-  UserStats71: 71, // CMyInfoDlg::sub_541F65
+  StageSpecificRoute71: 71, // CMyInfoDlg profile parser and state-gated CChatStage case -> sub_4ACB63 are distinct; schema/meaning not equated
+  UserStats71: 71, // CMyInfoDlg::sub_541F65; CChatStage also has a separate state-gated case 71 -> sub_4ACB63
+  ChatStageRoute73: 73, // CChatStage::sub_4B0A63 -> root slot 80 (+0x140); field mapping/meaning UNKNOWN
+  ChatStageRoute77: 77, // CChatStage::sub_4B0A63 -> sub_4A9245; field mapping/meaning UNKNOWN
   QuestConfigSync: 75, // CStage::sub_4B94A6 -> C->S 83 + empty C->S 338 when feature 32 is enabled
+  StageChannelCacheValidation76: 76, // CStage::sub_4BDBF5 -> sub_4B945F: conditional [u32] cache comparison/reload path; meaning/request association UNKNOWN
+  StageRecordList78: 78, // CStage::sub_4BDBF5 -> sub_4B990D -> sub_5935DC: [u32 count, count*(u8, u32, str)]; record meanings UNKNOWN
   CreateRoomResult: 79, // CNormalLobbyStrategy::sub_4CCE53
   JoinRoomResult: 80, // CLobbyStage::sub_4C455D
   QuickJoinOrUserProfile: 81, // CLobbyStage::sub_4C4635 (QuickJoin) / CStage::sub_4BCDFF (UserProfile)
@@ -281,9 +321,12 @@ export const ServerOpcode = {
   LobbyRoomListEntryCompact: 84, // CLobbyStage::sub_4C1E90 -> sub_4C1C0A
   LobbyRoomSlotUpdate: 85, // CLobbyStage::sub_4C1F02 -> sub_4C32E4
   LobbyRoomSlotRemove: 86, // CLobbyStage::sub_4C1EC9
+  LobbyStageRoute67: 67, // CLobbyStage::sub_4C86A2 -> sub_4C192A; payload semantics/schema not fully mapped
+  LobbyStageRoute88: 88, // CLobbyStage::sub_4C86A2 -> sub_4C4B28; payload semantics/schema not fully mapped
   ExpSync: 89, // CStage::sub_4B992F
   RoomSettingsSync: 93, // CPrepareStage::sub_4D6BC2
-  ShopLeaveReturnStage: 99, // CShopConnectionMan::sub_529EB2: [u16 targetStageId] -> C->S 82 or 78
+  StageSpecificRoute99: 99, // CStage fallback, Shop connection manager, and UserMarket have separate S->C 99 paths
+  ShopLeaveReturnStage: 99, // CShopConnectionMan::sub_529EB2: [u16 targetStageId] -> C->S 82 or 78; separate from CStage fallback case 99 -> sub_4B9D81
   SetPlayerOnPrepare: 102, // CSlotStage::sub_4B89E4 (CSetPlayerOnPreparePacket)
   PlayerLeftSlot: 103, // CSessionStage::sub_4B789B [u8 slotIdx, u32 removedNetId, u8 flag] -> CPrepareStage::sub_4D4154
   SlotStateSync: 104, // CPrepareStage::sub_4D9D08
@@ -296,15 +339,30 @@ export const ServerOpcode = {
   StartGameError: 112, // CPrepareStage::sub_4D9F26
   StartGameTransition: 113, // CPrepareStage::sub_4D9F8A + optional esfn.ssd (sub_5CA65A)
   TeamChatBroadcast: 114, // CPrepareStage::sub_4DD1F5
-  QuickSlotEquipSync: 115, // CPrepareStage::sub_4D2190
+  StageSpecificRoute115: 115, // CPrepareStage -> sub_4D2190; CGameStage has a separate case 115 -> sub_4EA184
+  QuickSlotEquipSync: 115, // CPrepareStage::sub_4D2190; not generalized to the CGameStage case-115 route
+  StageSpecificRoute110: 110, // CPrepareStage -> sub_4D54B1 and CChattingStage -> sub_4B3310; stage-specific payloads/meanings UNKNOWN
+  StageSpecificRoute116: 116, // Direct cases in CPrepareStage, CChattingStage, CExchangeStage, and CShopStageNew; no common schema/meaning assumed
+  StageSpecificRoute117: 117, // Direct cases in CPrepareStage and CChattingStage; stage-specific payloads/meanings UNKNOWN
+  PrepareStageRoute118: 118, // CPrepareStage::sub_4DCF07 -> sub_4D62E7; payload semantics/schema not fully mapped
+  PrepareStageRoute119: 119, // CPrepareStage::sub_4DCF07 -> sub_4D639F; payload semantics/schema not fully mapped
+  ChattingStageRoute121: 121, // CChattingStage::sub_4B6418 -> sub_4B4780; payload semantics/schema not fully mapped
+  PrepareStageRoute124: 124, // CPrepareStage::sub_4DCF07 -> sub_4D645F; payload semantics/schema not fully mapped
+  StageSlot47Route122: 122, // CStage::sub_4BDBF5 -> sub_4BB3AE [u8, u32, str] -> current root slot 47; field meanings/stage overrides UNKNOWN
+  UserDynamicInfoBytePairs123: 123, // CStage::sub_4BDBF5 -> sub_4B956B: [u8 count, count*(u8, u8)] -> sub_5ED2DC; field meanings UNKNOWN
   ExchangeState: 126, // CExchangeStage::sub_55C14B: [u8 state, u8 msgId, (opt str)]
   ExchangeMessage: 127, // CExchangeStage::sub_559DCC: [u8 msgId, (opt str)]
   ExchangeItems: 128, // CExchangeStage::sub_5578FF -> sub_55D805: [u8 slot, u32 lucci, u8 count, count*(u32 stockId, 16B SYSTEMTIME)]
   ExchangeAccessories: 129, // CExchangeStage::sub_55AA90: maxPlayers * CSlotAccessoryPacket
   ExchangePassResult: 130, // CExchangeStage::sub_55B611: [u8 ok]
+  SessionStageRoute133: 133, // CSessionStage::sub_4B7DF2 -> sub_4B722D; payload semantics/schema not fully mapped
+  SessionStageRoute134: 134, // CSessionStage::sub_4B7DF2 stores one u8 in j[2014]; meaning UNKNOWN
+  SessionStageRoute187: 187, // CSessionStage::sub_4B7DF2 -> sub_4B72A9; payload semantics/schema not fully mapped
 
   // In-Game Match Responses (CGameStage::sub_4F672F — 0x004F672F)
   UdpRelayFallback: 125, // CUDPPeerManBase::sub_5ECBF0
+  GameStageRoute164: 164, // CGameStage::sub_4F672F -> sub_4EE5E6; payload semantics/schema not fully mapped
+  StageSpecificRoute165: 165, // CGameStage -> sub_4EAC12 and CPrepareStage -> sub_4D2C53; distinct stage handlers, meanings UNKNOWN
   AllPlayersLoadedStart: 135, // CGameStage::sub_4F2065
   PlayerLoadedAck: 136, // CGameStage::sub_4EA206
   BombExplodeBroadcast: 137, // CGameStage::sub_4EC8CB
@@ -321,6 +379,9 @@ export const ServerOpcode = {
   SpawnMapItemsBroadcast: 151, // CGameStage::sub_4F24A6
   ReturnToPrepareStage: 153, // CGameStage::sub_4F2D1A
   SpecialTileEffect: 154, // CGameStage::sub_4ECD11: [u8 x, u8 y, u8 (bomberIdx<<4)|type]
+  GameStageRoute167: 167, // CGameStage::sub_4F672F -> sub_4EE4DF; payload semantics/schema not fully mapped
+  GameStageRoute168: 168, // CGameStage::sub_4F672F -> sub_4F4461; payload semantics/schema not fully mapped
+  GameStageRoute169: 169, // CGameStage::sub_4F672F -> sub_4F65C3; payload semantics/schema not fully mapped
   BomberRevived: 156, // CGameStage::sub_4ECDDB: [u8 bomberIdx, u8 slotIdx]
   BomberEliminated: 157, // CGameStage::sub_4ECEF0: [u8 bomberIdx]
   BomberRebirthGhost: 158, // CGameStage::sub_4F13F5: [u8 slotIdx]
@@ -330,6 +391,12 @@ export const ServerOpcode = {
   SyncObjectCreate: 175, // CSyncGameObjectMan::sub_5F11FE
   SyncObjectUpdate: 176, // CSyncGameObjectMan::sub_5F11FE
   SyncObjectRemove: 177, // CSyncGameObjectMan::sub_5F11FE
+  GameStageRoute171: 171, // CGameStage::sub_4F672F -> sub_4EC561; payload semantics/schema not fully mapped
+  GameStageRoute173: 173, // CGameStage::sub_4F672F -> sub_4EE764; payload semantics/schema not fully mapped
+  GameStageRoute174: 174, // CGameStage::sub_4F672F -> sub_4EA592; payload semantics/schema not fully mapped
+  ChatStageRoute120: 120, // CChatStage::sub_4B0A63 -> sub_4AA868; field mapping/meaning UNKNOWN
+  StageSpecificRoute184: 184, // Direct cases in CGameStage, CPrepareStage, and CChattingStage; stage-specific payloads/meanings UNKNOWN
+  StageSpecificRoute191: 191, // CGameStage -> sub_4F0621 and CChatStage -> sub_4AD3CA; distinct stage handlers
   BombThrownBroadcast: 180, // CGameStage::sub_4EAC86: [u8 bombId, u8 bomberIdx, u8 x, u8 y]
   SpecialBombBroadcast: 181, // CGameStage::sub_4EEC85
   InGameAliveCheck: 182, // CGameStage::sub_4EA141 -> triggers C->S 145
@@ -337,43 +404,62 @@ export const ServerOpcode = {
   // Config / Shop / Inventory / UserMarket / Couple / SMS Responses
   UnresolvedServerPacket163: 163, // No current Client receive route or request association recovered; prior C->S 267 notice-URL guess withdrawn.
   UnresolvedServerPacket179: 179, // No current Client receive route or request association recovered; prior C->S 294 stringtable-ack guess withdrawn.
-  LucciSync: 186, // CStage::sub_4BDBF5 -> sub_4B93FD -> sub_5ED36F: [u32 playerIdx, u32 value narrowed to char]; field meaning needs validation
-  InventoryUpdate: 188, // CUserInventoryMan::sub_5953FE
+  GameServerTypedRoute183: 183, // CTimebombComponent registers PTimebombServer through the GameServer typed registry; payload meaning/schema UNKNOWN
+  UserRestrictionNotice185: 185, // CStage::sub_4BDBF5 -> current root slot 74 -> sub_4BC508: [u16 restrictionId, u8 restrictionValue]; stage/context effects may vary
+  StageDynamicFieldRoute235: 235, // CStage fallback -> sub_4B9D05: [u32, u32], second narrowed to char; same helper is also selected by S->C 52, field meanings UNKNOWN
+  UserDynamicInfoFieldSync186: 186, // CStage::sub_4BDBF5 -> sub_4B93FD -> sub_5ED36F: [u32 opaqueA, u32 opaqueB narrowed to char]; field meaning/request association UNKNOWN
+  InventoryUpdate: 188, // CStage case 188 -> sub_4B9DAB -> CUserInventoryMan::sub_5953FE; [u8 playerCount, per player: u32 itemCount, itemCount*sub_594ECF]
   DynamicImgInfoSsd: 189, // sub_49E093: fxdynimginfo.ssd
-  ShopLucciBalance190: 190, // CShopDlg::sub_546BE3: [u32 lucci]
+  StageSpecificRoute190: 190, // CGameStage case 190 -> sub_4F054D reads no packet fields; CStage/ShopStage have no direct 190 case in the inspected switches
+  ShopLocalUpdate190: 190, // Local Shop purchase path emits one u32 from user.lucci; no Client Shop receive schema/field meaning or official trigger is established
   FxStockIniStream: 193, // sub_4B95B0 -> sub_593FF6: fxstock.ini SmartStream
-  InventoryData: 194, // CUserInventoryMan::sub_595272: [u8 playerCount, i32 itemCount, items...]
+  InventoryData: 194, // CStage case 194 -> sub_4B963E -> CUserInventoryMan::sub_595272; [u8 playerCount, per player: u32 itemCount, itemCount*sub_594ECF]
   EquippedAvatarData: 196, // CUserInventoryMan::sub_597040: [u8 playerCount, 8 * (u32 stockId, str text)]
   UserItemsData: 197, // Client CStage fallback -> sub_4B9654 -> sub_598BEC(dword_929C70) -> sub_597611; [u16 count, repeated offset-based UserItem fields, optional feature-28 u8]; trigger/meaning UNKNOWN
-  ShopUserStockList: 198, // CShopStageNew::sub_53885C: [u32 cash, u8 flag=1]
+  StageSpecificRoute198: 198, // CShopStageNew case 198 -> sub_53885C reads [u32, u8]; local builders using this ID have distinct, reconstruction-only bodies
+  ShopLocalStockList198: 198, // Reconstruction-only stock-list builder; this body is not established by the direct Client case-198 parser
   ShopCashBalance198: 198,
   ShopBuyResult: 199, // CShopStageNew::sub_5382EA -> sub_58EBFE: [u8 result, 8B f64 LE vtime]
   StringTableIniStream: 200, // sub_4B95F7 -> sub_594136: stringtable.ini SmartStream
   ShopGiftResult: 201, // sub_58C8EA: [u8 result, u32 val1, u32 val2]
+  StageSpecificRoute202: 202, // Shop result parser sub_547038 is used in multiple local Shop action contexts; do not infer one C->S association
   ShopUseOrEquipResult202: 202, // CShopDlg::sub_547038: [u8 result=2, u32 stockId, u32 unk=0]
   InventoryDeleteResult: 202,
   ShopGiftList: 203, // CStage case 203 -> sub_4B965F -> CUserInventoryMan::sub_5954D2: u8 playerCount, per-player u8 recordCount, records
+  StageSpecificRoute204: 204, // CShopStageNew case 204 -> sub_53A6F1; local request associations are not proof of official response policy
   ShopEquipResult: 204, // CShopStageNew::sub_53A6F1: [u8 res, u32 count, 8B f64 LE vtime, items...]
   ShopCouponResult: 204,
   DynamicMapInfoSsdStream: 205, // sub_4E0131 -> sub_4DFE20: fxdynmapinfo.ssd SmartStream
   StageClearTreeStream: 206, // sub_5180A6: SmartStream [u16 LE count, count*(u32, u32, u32, str)]
+  ChatStageRoute226: 226, // CChatStage::sub_4B0A63 -> sub_4A83B3; field mapping/meaning UNKNOWN
+  ChatStageRoute227: 227, // CChatStage::sub_4B0A63 -> sub_4A7C9F; field mapping/meaning UNKNOWN
+  ChatStageRoute228: 228, // CChatStage::sub_4B0A63 -> sub_4A7DA0; field mapping/meaning UNKNOWN
   DynamicMapAndStageConfig: 207, // sub_4BCABF -> sub_4E0207: [u8 flag, u32 fxdynmapinfoChecksum, ...]
   ShopConfigSync: 208, // CShopStageNew::sub_53660B / sub_5493B7
   PackageMapIniStream: 210, // sub_4B966A -> sub_59426D: packagemap.ini SmartStream
+  CStageStockContainerUpdate211: 211, // CStage::sub_4BDBF5 -> sub_4B987B -> CStockContainer; field mapping/trigger UNKNOWN
   ShopResellResult: 212, // CShopDlg::sub_546D3F: [u8 res=0, str itemName, u32 stockId, u32 0, u32 refundLucci]
+  NexonClubAuthResult: 213, // CStage::sub_4BDBF5 case 213 -> slot 60 (+0xF0) -> sub_4BC337: [u8 ok, u8 playerIdx, (if ok: str clubId)]
   ShopQMarkResult: 214, // CShopStageNew::sub_5396F0: [u32 type, u32 reward, u32 unk]
   ShopEventNotice: 215, // CShopConnectionMan::sub_52A129 ([u8(0)]) / CShopStageNew::sub_53C550
   MyPageData220: 220, // Client path `sub_5447F0` -> `sub_544049` -> `sub_49D0A6`; field meanings UNKNOWN
   MyPageData221: 221, // Client path `sub_54055D` -> `sub_53E0E5`; extends the S->C 220 record with 2 u32, meanings UNKNOWN
   MyPagePacket222: 222, // Client path `sub_54055D` -> `sub_53EC90`; reads one string, displayed meaning UNKNOWN
-  ShopConfigCrc224: 224, // sub_5493B7 -> sub_546C6B: [u8(1), u32 fxCrc, u32 strCrc, u32 pkgCrc, str url, u32 banners]
-  ShopSaleModifiers: 229, // CShopStageNew::sub_53AC96
+  StageSpecificRoute224: 224, // ShopStage reads a config/CRC record; CStage fallback case 224 -> sub_4B9918 reads no packet fields
+  ShopConfigCrc224: 224, // ShopStage: [u8(1), u32 fxCrc, u32 strCrc, u32 pkgCrc, str url, u32 banners]; distinct from generic CStage fallback case 224 -> sub_4B9918
+  StageSpecificRoute229: 229, // CChatStage::sub_4B0A63 -> sub_4A7F72 and CShopStageNew::sub_53AC96; stage-specific meaning/schema not equated
+  ShopSaleModifiers: 229, // Descriptive alias for the ShopStage route only; do not apply its meaning to other stages
+  ChatStageRoute230: 230, // CChatStage::sub_4B0A63 -> sub_4A8144; field mapping/meaning UNKNOWN
+  ChatStageRoute233: 233, // CChatStage::sub_4B0A63 -> sub_4A8CBB; field mapping/meaning UNKNOWN
+  ChatStageRoute234: 234, // CChatStage::sub_4B0A63 -> sub_4A84B5; field mapping/meaning UNKNOWN
   RoomPasswordChangeResult: 231, // sub_4D3FD6
-  NexonClubAuthResult: 232, // CStage::sub_4BC337: [u8 ok, u8 playerIdx, (if ok: str clubId)]
-  PremiumSlotDuration: 235, // sub_4B9D05: [u32 slotMask, u32 duration]
+  StageSlot62Route232: 232, // CStage::sub_4BDBF5 case 232 -> current root slot 62 (+0xF8) -> sub_4B9423: [u32 opaqueA, u32 opaqueB narrowed to char]; distinct from NexonClub route 213
   ItemLimitCounts: 237, // sub_4BA3ED: [u16 count, count*(u16 id, u16 a, u16 b, u16 c)]
   ShopStagePacket238: 238, // sub_53C550 -> sub_537B1C: str, u32, 8 raw bytes, then sub_58EBFE status/conditional tail; full schema UNKNOWN
+  LobbyStageRoute239: 239, // CLobbyStage::sub_4C86A2 -> sub_4C12AD; payload semantics/schema not fully mapped
+  StageSpecificRoute240: 240, // CStage fallback parses RankingTop3; CShopStageNew has a separate purchase-detail case 240
   RankingTop3: 240, // sub_4A522B: [u8 count(<=3), count*sub_4A4FBD]
+  LobbyStageRoute241: 241, // CLobbyStage::sub_4C86A2 -> sub_4C5FB4; payload semantics/schema not fully mapped
   ShopPurchaseDetail: 240, // CShopStageNew::sub_53B7D3
   SmsSendResult: 242, // SMS path `CSmsDlg::sub_4838E8` reads u8; C->S 290 response path remains UNKNOWN (sub_544049 is S->C 220)
   SmsList: 243, // CSmsDlg::sub_484465: [u8 status=15, u8 count, msgs...]
@@ -381,6 +467,7 @@ export const ServerOpcode = {
   SmsDeleteAllResult: 245, // CSmsDlg::sub_47F66A: [u8 res=1]
   SmsNewNotice: 246, // sub_5E3AC9 -> sub_5E369D: [u8 hasNewMail]
   UserQuestAndSlotInfo248: 248, // CStage::sub_4B9DB6
+  ChatStageRoute249: 249, // CChatStage::sub_4B0A63 -> sub_4A743C; field mapping/meaning UNKNOWN
   CoupleInfoSync: 250, // CCouple::sub_5BBF91
   CoupleProposeIncoming: 251, // CCouple::sub_5BAA90 reads [u8 playerIdx, str proposer, str message, u8 grade]
   CoupleStatus252: 252, // CCouple::sub_5BBD3E reads [u8 playerIdx, u8 status, str, str, (if status==12: u8 grade)]; status/request association UNKNOWN
@@ -392,8 +479,12 @@ export const ServerOpcode = {
   BasketInfo258: 258, // sub_5C279C -> sub_5C261E: [u8 flag, u16 count, items..., str notice]
   BasketInfo: 259, // CBasketDlg::sub_5C0289 / sub_5C261E
   BasketCouponCounts: 260, // CBasketDlg::sub_5C0289
-  ShopConnectionPermission: 261, // CShopConnectionMan::sub_52A129 / CUserMarketStage::sub_57224C
+  StageSpecificRoute261: 261, // Shop connection/UserMarket permission paths; CLobbyStage also has a separate direct case 261
+  ShopConnectionPermission: 261, // CShopConnectionMan::sub_52A129 / CUserMarketStage::sub_57224C; distinct Lobby route not equated
   UserMarketPermission: 262, // CShopConnectionMan::sub_52A129 reads the one-byte connection permission
+  LobbyStageRoute263: 263, // CLobbyStage::sub_4C86A2 reads a u8 then a stream-like value; fields/meaning UNKNOWN
+  ChatStageRoute264: 264, // CChatStage reads [u8, u8], then sub_4AC937 reads [str, u8]; field meanings UNKNOWN
+  ChatStageRoute267: 267, // CChatStage::sub_4B0A63 reads a status u8 and conditionally a count/list; field meanings UNKNOWN
   UserMarketFeeInfo: 265, // CStage::sub_4BB408: [u32 feeRate, str notice, u32 minPrice] -> C->S 320
   InventoryExpansionSlots: 268, // CStage::sub_4B9E20 -> sub_5832DB
   UserMarketEnterResult: 269, // CStage::sub_4BC642: [u8 result] -> transitions to Stage 20 on success
@@ -405,9 +496,14 @@ export const ServerOpcode = {
   UserMarketMySalesList: 275, // CUserMarketStage::sub_574380 -> sub_57175A -> sub_570E5B: [u16 count, count * entry]
   UserMarketTransferResult: 276, // CUserMarketStage::sub_574380 -> sub_57388F: [u16 result, u32, u32]
   UserMarketPurchaseResult: 277, // CUserMarketStage::sub_574380 -> sub_573991: [u16 result, u32, u32, 8B f64 LE]
-  MarketExpiredReturns: 278, // CUserMarketStage::sub_574380 -> CShopStageNew::sub_539A17
-  MarketSoldNotifications: 279, // CUserMarketStage::sub_574380 -> CShopStageNew::sub_539C8B
+  StageSpecificRoute278: 278, // CUserMarketStage and CLobbyStage have direct receive routes; schema/meaning are not equated
+  MarketExpiredReturns: 278, // CUserMarketStage::sub_574380 -> CShopStageNew::sub_539A17; not generalized to the Lobby case
+  StageSpecificRoute279: 279, // CUserMarketStage and CLobbyStage have direct receive routes; schema/meaning are not equated
+  MarketSoldNotifications: 279, // CUserMarketStage::sub_574380 -> CShopStageNew::sub_539C8B; not generalized to the Lobby case
   UserMarketTradeableItems: 280, // CUserMarketStage::sub_574380 -> sub_572277: [i32 count, count * u32]
+  ChatStageRoute286: 286, // CChatStage::sub_4B0A63 -> sub_4A9B50; field mapping/meaning UNKNOWN
+  ChatStageRoute287: 287, // CChatStage::sub_4B0A63 -> feature-gated CNexonClub dialog path; payload meaning/request association UNKNOWN
+  ChatStageRoute288: 288, // CChatStage::sub_4B0A63 -> item-unlimited UI toggle path; payload meaning UNKNOWN
   SecurityChallenge1: 281, // CStage::sub_4BDBF5 -> sub_4B8F3F (sends C->S 332)
   SecurityChallenge2: 282, // CStage::sub_4BDBF5 -> sub_4BAD83
   SecurityChallenge3: 283, // CStage::sub_4BDBF5 -> sub_4BDA18

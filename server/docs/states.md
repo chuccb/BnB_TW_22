@@ -20,7 +20,7 @@ The Taiwan login path uses a bootstrap connection, a LoginServer connection, and
      ├── Connect Hello, then C->S 2 / 11 / 31 login variant
      ├── S->C 4: account/player data + session token
      ├── C->S 9: request channel cache
-     ├── S->C 10 + 12 + 11: CChannelCache, population values, messenger handoff
+     ├── S->C 10 + 12 + 11: channel cache/list, route values UNKNOWN, messenger handoff
      ├── C->S 5: category + category-relative ordinal
      └── S->C 7: result=1 + category + ordinal + GameServer IPv4/TCP port
           client closes LoginServer socket and connects to the advertised endpoint
@@ -60,7 +60,7 @@ The default Taiwan peer ports are LoginServer TCP/UDP `3838/3839` and GameServer
 │  1: CLoginStage  ├─────────────────────►│  S->C 4 (Login Result)  │
 └──────────────────┘                      │  C->S 9 (Channel Req)   │
                                           │  S->C 10 (Channel List) │
-                                          │  S->C 12 (Populations)  │
+                                          │  S->C 12 (Channel data) │
                                           │  S->C 11 (Enter Stage)  │
                                           └────────────┬────────────┘
                                                        │
@@ -120,7 +120,7 @@ The field belongs to the App-global `CUserDynamicInfo`, not a Stage/session obje
 
 By contrast, typed S->C GameServer 70 (`PUserInfoResult`) dispatches via `sub_4B92F3` to the Lobby embedded-handler secondary vtable (`0x007B4084`) slot `+0x0C` -> `sub_4C128B`. That delegate first calls main LobbyStage slot `+0xFC` (`sub_4C1201(this, 0)`, setting separate `CLobbyStage+6180=0`), then calls `sub_4A6379 -> sub_4BBCA8`; it does not reach `sub_4BA3BA`/`sub_5ED779`. `sub_4BBCA8` may call `sub_4BAACB(-1)` after a profile-modal result 4 outside stage 14, but the helper still gates on `CUserDynamicInfo+380` and does not set it. S->C 70 therefore cannot substitute for S->C 19; it remains distinct from C->S `ClientOpcode.QueryUserInfo` 70.
 
-The current server's handoff/Lobby bootstrap sends S->C 13/75 and, after C->S 83, S->C 89/186/194/196/268/250/207—not S->C 19. Its S->C 70 sends are profile-query replies. This missing S->C 19 send path, combined with the Client's constructor-zero and no known per-Stage reset, is a strong conditional candidate for a false gate and no Client-originated Shop packet. It is not proof of the reported Client's runtime `+380` value, receipt/dispatch, or exact click path. `PUserInfoResult::sub_4368BF` and the local S->C 70 builder both begin with a `u32`, but their full schema remains unreconciled. S->C 207 and periodic C->S 14 do not write `+380`. No payload or send timing has been changed.
+The current server's handoff/Lobby bootstrap sends S->C 13/75 and, after C->S 83, S->C 89/186/194/196/268/250/207—not S->C 19. The S->C 186 frame has the Client fallback's `[u32 opaqueA, u32 opaqueB]` dynamic-field shape (the second value is narrowed to `char`), but both field meanings and any C->S 303 association remain UNKNOWN; the local value source is a reconstruction choice. Its S->C 70 sends are profile-query replies. This missing S->C 19 send path, combined with the Client's constructor-zero and no known per-Stage reset, is a strong conditional candidate for a false gate and no Client-originated Shop packet. It is not proof of the reported Client's runtime `+380` value, receipt/dispatch, or exact click path. `PUserInfoResult::sub_4368BF` and the local S->C 70 builder both begin with a `u32`, but their full schema remains unreconciled. S->C 207 and periodic C->S 14 do not write `+380`. No payload or send timing has been changed.
 
 Once reached, `sub_529AFB` constructs one of three C->S packet objects: opcode `316` with `u8 a3` (caller-supplied; meaning not established) when `dword_929D6C + 228 != 0`, submitted by `CSendPacket::sub_57B757` -> `sub_5D842A`; opcode `269` with `u8(0)` through `sub_589DB9` -> `sub_5AA68F` on the `dword_929D6C` connection-manager path when its nested connection-state predicate passes; otherwise opcode `37` with `u8(11), u32(0)` (the values' field meanings are not established), again through `CSendPacket::sub_57B757` -> `sub_5D842A`. Thus C->S 269 does not use the same submission path as 37/316. These are statically reachable packet-submission calls, not proof of bytes reaching a socket or of server receipt. The reconstruction dispatches these opcodes to `handleShopPacket` (`37`/`316` currently produce S->C `261`/`48`; `269` currently produces S->C `198`, with further sync for mode `1`). The current 261-then-48 response ordering is local reconstruction policy, not an official-server trace.
 

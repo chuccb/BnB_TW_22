@@ -675,7 +675,7 @@ export function handleCommonPacket(
       break;
     }
 
-    case ClientOpcode.PingReplyOrWhisper: {
+    case ClientOpcode.Whisper: {
       if (reader.remaining >= 4) {
         const savedOffset = reader.offset;
         const firstLen = reader.readU16();
@@ -694,9 +694,10 @@ export function handleCommonPacket(
         reader.offset = savedOffset;
       }
 
-      if (reader.remaining >= 4) {
-        session.lastPingTick = reader.readU32();
-      }
+      logger.warn("Protocol", "C->S opcode 20 did not match the confirmed whisper schema", {
+        sessionId: session.sessionId,
+        payloadBytes: reader.remaining,
+      });
       break;
     }
 

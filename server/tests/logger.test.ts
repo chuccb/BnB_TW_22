@@ -22,7 +22,7 @@ describe("human-readable server logs", () => {
         remoteAddress: "127.0.0.1",
         remotePort: 51003,
         candidateRole: "initial-state candidate",
-        serverOpcodes: ["261 (ShopConnectionPermission)", "48 (ShopServerEndpoint)"],
+        serverOpcodes: ["261 (StageSpecificRoute261)", "48 (StageSpecificRoute48)"],
         parserDetails: { payloadBytes: 5, payloadContents: "omitted" },
         longNote: "x".repeat(150),
       },
@@ -33,7 +33,7 @@ describe("human-readable server logs", () => {
     expect(plain).toContain("sessionId=7");
     expect(plain).toContain("connectionKind=game");
     expect(plain).toContain('candidateRole="initial-state candidate"');
-    expect(plain).toContain('serverOpcodes=["261 (ShopConnectionPermission)", "48 (ShopServerEndpoint)"]');
+    expect(plain).toContain('serverOpcodes=["261 (StageSpecificRoute261)", "48 (StageSpecificRoute48)"]');
     expect(plain).toContain("parserDetails={2 fields}");
     expect(plain).toContain("…");
     expect(plain).not.toContain('"sessionId":');

@@ -211,12 +211,15 @@ export function buildCashBalancePacket198(session: ClientSession): PacketWriter 
 }
 
 /**
- * Builds S->C 190 (`CShopDlg::sub_546BE3` at `0x00546BE3`):
- *   u32 lucciBalance (`sub_697580`)
+ * Local reconstruction-only S->C 190 body emitted after Shop purchase success:
+ *   u32 value (currently copied from `user.lucci`; Client field meaning/Shop receive path UNKNOWN)
+ *
+ * The inspected CGameStage case 190 calls `sub_4F054D` without reading packet fields;
+ * this local Shop send is not evidence of official behavior or a matching Shop parser.
  */
-export function buildLucciBalancePacket190(session: ClientSession): PacketWriter {
+export function buildShopLocalUpdatePacket190(session: ClientSession): PacketWriter {
   const user = session.users[0];
-  const w190 = new PacketWriter(ServerOpcode.ShopLucciBalance190);
+  const w190 = new PacketWriter(ServerOpcode.ShopLocalUpdate190);
   w190.writeU32(user?.lucci ?? 0);
   return w190;
 }
@@ -252,7 +255,7 @@ export function buildUserStockPacket(state: WorldState, session: ClientSession):
   const user = session.users[0];
   const stock = user ? state.db.getUserStock(user.id) : [];
 
-  const w198 = new PacketWriter(ServerOpcode.ShopUserStockList);
+  const w198 = new PacketWriter(ServerOpcode.ShopLocalStockList198);
   w198.writeU16(stock.length);
   for (const item of stock) {
     w198.writeU32(item.id);
@@ -653,7 +656,7 @@ export function handleShopPacket(
 
       session.sendPacket(buildInventoryPacket(state, session, ServerOpcode.InventoryUpdate));
       session.sendPacket(buildCashBalancePacket198(session));
-      session.sendPacket(buildLucciBalancePacket190(session));
+      session.sendPacket(buildShopLocalUpdatePacket190(session));
       break;
     }
 
@@ -943,14 +946,17 @@ export function handleShopPacket(
     }
 
     case ClientOpcode.NexonClubAuth: {
-      // C->S 284 (`CNexonClubDlg::sub_4BCB70`: `[u8 playerIdx, str clubId, str clubPass]`) -> S->C 232 (`CStage::sub_4BC337`)
-      const playerIdx = reader.remaining >= 1 ? reader.readU8() : 0;
-      const clubId = reader.remaining >= 2 ? reader.readString() : (user?.username ?? "nx_club");
-      const w232 = new PacketWriter(ServerOpcode.NexonClubAuthResult);
-      w232.writeU8(1); // 1 = success (`sub_4BC337`)
-      w232.writeU8(playerIdx);
-      w232.writeString(clubId);
-      session.sendPacket(w232);
+      // C->S 284 (`CNexonClubDlg::sub_4BCB70`) writes `[u8, str, str]`; field meanings are UNKNOWN.
+      // The Client has an S->C 213 NXClub result parser, but no dataflow or official trace proves it answers 284.
+      // This local reconstruction policy copies the first string into S->C 213 and ignores the second.
+      const inputByte = reader.remaining >= 1 ? reader.readU8() : 0;
+      const inputFieldA = reader.remaining >= 2 ? reader.readString() : (user?.username ?? "nx_club");
+      if (reader.remaining >= 2) reader.readString(); // field B is consumed but its meaning is UNKNOWN
+      const w213 = new PacketWriter(ServerOpcode.NexonClubAuthResult);
+      w213.writeU8(1); // local success value only; official result mapping/policy are UNKNOWN
+      w213.writeU8(inputByte);
+      w213.writeString(inputFieldA);
+      session.sendPacket(w213);
       break;
     }
 
@@ -1343,13 +1349,15 @@ export function handleShopPacket(
       break;
     }
 
-    case ClientOpcode.QueryAvatarLucciSync: {
-      // Client emits either one u8 (a loop index in sub_4BB107; sub_55195E's a2
-      // semantics are UNKNOWN) or an empty request (sub_5382EA). Empty defaults to player 0.
+    case ClientOpcode.ContextualClientPacket303: {
+      // The Client writers vary by caller (u8 index or empty); response association is not proven.
+      // Keep this as a local reconstruction policy using the base S->C 186 parser's two-u32 shape;
+      // the fields' meanings and any C->S 303 association are UNKNOWN. This local handler treats a byte
+      // as a user selector and copies user.lucci, neither of which is official Client/Server evidence.
       const requestValue = reader.remaining >= 1 ? reader.readU8() : 0;
       const u = session.users[requestValue] ?? session.users[0];
       if (u) {
-        const w186 = new PacketWriter(ServerOpcode.LucciSync);
+        const w186 = new PacketWriter(ServerOpcode.UserDynamicInfoFieldSync186);
         w186.writeU32(requestValue);
         w186.writeU32(u.lucci);
         session.sendPacket(w186);

@@ -138,7 +138,6 @@ export class ClientSession {
   public roomSlotIndices: number[] = [];
   public udpEndpoint: { address: string; port: number } | null = null;
 
-  public lastPingTick = 0;
   public lastAntiHackStatus = 0;
 
   /** Explicit server-initiated close request, if one was made before TCP close. */

@@ -64,6 +64,71 @@ import {
   setLogLevel,
 } from "../src/utils/logger.ts";
 
+describe("Client-backed S->C opcode audit", () => {
+  test("maps explicit base and derived-stage receive routes without guessing unresolved semantics", () => {
+    const explicitRootFallbackIds = [
+      0, 9, 10, 12, 13, 14, 16, 17, 18, 19, 20, 22, 32, 33, 50, 55, 60, 63, 65, 66,
+      69, 75, 76, 78, 89, 99, 122, 123, 185, 186, 188, 189, 193, 194, 196, 197, 200,
+      203, 205, 206, 207, 210, 211, 213, 224, 232, 235, 237, 240, 248, 250, 251, 252,
+      253, 254, 256, 260, 265, 268, 269, 281, 282, 283, 284, 289,
+    ];
+    const explicitDerivedStageIds = [
+      5, 6, 7, 11, 25, 26, 27, 28, 29, 31, 34, 40, 44, 45, 46, 48, 49, 52, 57, 58, 59, 61,
+      67, 71, 73, 77, 88, 110, 115, 116, 117, 118, 119, 120, 121, 124, 133, 134, 164, 165,
+      167, 168, 169, 171, 173, 174, 183, 184, 187, 190, 191, 226, 227, 228, 229, 230, 233,
+      234, 239, 241, 249, 261, 263, 264, 267, 278, 279, 286, 287, 288,
+    ];
+    expect(explicitRootFallbackIds).toContain(188);
+    expect(explicitRootFallbackIds).not.toContain(190);
+    expect(explicitDerivedStageIds).toContain(190);
+    for (const opcode of [...explicitRootFallbackIds, ...explicitDerivedStageIds]) {
+      expect(formatServerOpcode(opcode)).not.toContain("UnknownServerOpcode");
+    }
+
+    expect(formatServerOpcode(4)).toBe("4 (LoginVariantRoute4)");
+    expect(formatServerOpcode(7)).toBe("7 (StageSpecificRoute7)");
+    expect(formatServerOpcode(11)).toBe("11 (LoginStageRoute11)");
+    expect(formatServerOpcode(12)).toBe("12 (StageSpecificRoute12)");
+    expect(formatServerOpcode(13)).toBe("13 (StageSpecificRoute13)");
+    expect(formatServerOpcode(14)).toBe("14 (StageSlot50Route14)");
+    expect(formatServerOpcode(16)).toBe("16 (StageSpecificRoute16)");
+    expect(formatServerOpcode(17)).toBe("17 (StageSpecificRoute17)");
+    expect(formatServerOpcode(20)).toBe("20 (StageRecordList20)");
+    expect(formatServerOpcode(22)).toBe("22 (StageSlot53Route22)");
+    expect(formatServerOpcode(25)).toBe("25 (LobbyStageRoute25)");
+    expect(formatServerOpcode(26)).toBe("26 (ChatStageRoute26)");
+    expect(formatServerOpcode(27)).toBe("27 (ChatStageRoute27)");
+    expect(formatServerOpcode(32)).toBe("32 (StageSpecificRoute32)");
+    expect(formatServerOpcode(34)).toBe("34 (StageSpecificRoute34)");
+    expect(formatServerOpcode(48)).toBe("48 (StageSpecificRoute48)");
+    expect(formatServerOpcode(99)).toBe("99 (StageSpecificRoute99)");
+    expect(formatServerOpcode(59)).toBe("59 (LoginStageRoute59)");
+    expect(formatServerOpcode(71)).toBe("71 (StageSpecificRoute71)");
+    expect(formatServerOpcode(115)).toBe("115 (StageSpecificRoute115)");
+    expect(formatServerOpcode(61)).toBe("61 (LoginStageRoute61)");
+    expect(formatServerOpcode(185)).toBe("185 (UserRestrictionNotice185)");
+    expect(formatServerOpcode(186)).toBe("186 (UserDynamicInfoFieldSync186)");
+    expect(formatServerOpcode(188)).toBe("188 (InventoryUpdate)");
+    expect(formatServerOpcode(190)).toBe("190 (StageSpecificRoute190)");
+    expect(formatServerOpcode(198)).toBe("198 (StageSpecificRoute198)");
+    expect(formatServerOpcode(202)).toBe("202 (StageSpecificRoute202)");
+    expect(formatServerOpcode(204)).toBe("204 (StageSpecificRoute204)");
+    expect(formatServerOpcode(183)).toBe("183 (GameServerTypedRoute183)");
+    expect(formatServerOpcode(213)).toBe("213 (NexonClubAuthResult)");
+    expect(formatServerOpcode(229)).toBe("229 (StageSpecificRoute229)");
+    expect(formatServerOpcode(224)).toBe("224 (StageSpecificRoute224)");
+    expect(formatServerOpcode(232)).toBe("232 (StageSlot62Route232)");
+    expect(formatServerOpcode(235)).toBe("235 (StageDynamicFieldRoute235)");
+    expect(formatServerOpcode(240)).toBe("240 (StageSpecificRoute240)");
+    expect(formatServerOpcode(261)).toBe("261 (StageSpecificRoute261)");
+    expect(formatServerOpcode(278)).toBe("278 (StageSpecificRoute278)");
+    expect(formatServerOpcode(279)).toBe("279 (StageSpecificRoute279)");
+
+    // Direct Client routes establish receive dispatch only. They do not prove
+    // official-server send policy, cross-stage semantic equivalence, or request association.
+  });
+});
+
 describe("S->C UserItem-record packet builder", () => {
   const record = {
     field0x08U32: 0x01020304,
@@ -568,9 +633,9 @@ describe("Protocol Layer — CRC, Cipher, Primitives, SmartStream & Framing", ()
 
   test("Structured logs keep directional TCP/UDP opcodes and StageIds in separate namespaces", () => {
     expect(formatClientOpcode(5)).toBe("5 (SelectChannel)");
-    expect(formatServerOpcode(7)).toBe("7 (ChannelSelectResult)");
+    expect(formatServerOpcode(7)).toBe("7 (StageSpecificRoute7)");
     expect(formatClientOpcode(13)).toBe("13 (ReturnToChannelSelect)");
-    expect(formatServerOpcode(13)).toBe("13 (LobbyStageTransition)");
+    expect(formatServerOpcode(13)).toBe("13 (StageSpecificRoute13)");
     expect(formatServerOpcode(33)).toBe("33 (SelectServerDynamicI16Data)");
     expect(formatStageId(10)).toBe("10 (SelectServer)");
     expect(formatStageId(11)).toBe("11 (Lobby)");
@@ -625,7 +690,7 @@ describe("Protocol Layer — CRC, Cipher, Primitives, SmartStream & Framing", ()
     expect(summary.packetFlow).toBe(
       "#01 +4ms S->C [write-call] ConnectHello 48B @1 (Login)\n" +
         "#02 +101ms C->S [decoded] 6 (SessionHandoff) 29B @10 (SelectServer)\n" +
-        "#03 +102ms S->C [write-call] 13 (LobbyStageTransition) 3B @10 (SelectServer)"
+        "#03 +102ms S->C [write-call] 13 (StageSpecificRoute13) 3B @10 (SelectServer)"
     );
     expect(summary.packetFlow).not.toContain("sessionKey");
   });
