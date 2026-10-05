@@ -1,4 +1,13 @@
-import { closeSync, mkdtempSync, openSync, readFileSync, readSync, rmSync, writeFileSync } from "fs";
+import {
+  closeSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  readSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "fs";
 import { tmpdir } from "os";
 import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
@@ -47,6 +56,19 @@ describe("Client Resource Archives — Fx.idx, .i16 Tables, Maps & All 12 .ssd/.
     expect(resources.fxEntries.length).toBe(3948);
     expect(resources.charTeEntries.length).toBe(3046);
     expect(resources.emoTeEntries.length).toBe(3005);
+
+    // Every decrypted .idx slice must fit within its paired .idd archive.
+    for (const [iddFile, entries] of [
+      ["Fx.idd", resources.fxEntries],
+      ["CharTE.idd", resources.charTeEntries],
+      ["EmoTE.idd", resources.emoTeEntries],
+    ] as const) {
+      const iddBytes = statSync(resolve(CLIENT_RESOURCE_ROOT, iddFile)).size;
+      const outOfBounds = entries.filter(
+        (entry) => entry.offset > iddBytes || entry.size > iddBytes - entry.offset
+      );
+      expect(outOfBounds).toEqual([]);
+    }
 
     // Cross-verify all 325 encrypted (.idd maskId != 0) entries across Fx.idd, CharTE.idd, and EmoTE.idd via CData::sub_674590 CRC32
     let verifiedMaskedCount = 0;
