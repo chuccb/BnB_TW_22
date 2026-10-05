@@ -232,11 +232,12 @@ export function buildUserProfilePacket81(
  * Builds this reconstruction's S->C 70 profile-query response.
  * The typed PUserInfoResult marshaller (sub_4368BF) also begins with a u32,
  * but its full field mapping is not yet reconciled with this builder. The
- * identified S->C 19 stage-root fallback sets the Lobby readiness field
- * through CStage case 19 -> root slot 55 (+0xDC) -> sub_4BA3BA -> sub_5ED779.
- * Normal and China Login root paths also reach this setter on a typed-registry
- * miss. S->C 70's registered profile-result route instead first clears a
- * separate LobbyStage+6180 field, then enters the profile delegate. A modal
+ * Login sends S->C 19 after successful S->C 4; its Client stage-root fallback
+ * sets the Lobby readiness field through CStage case 19 -> root slot 55 (+0xDC)
+ * -> sub_4BA3BA -> sub_5ED779. Normal and China Login root paths also reach
+ * this setter on a typed-registry miss. S->C 70's registered profile-result
+ * route instead first clears a separate LobbyStage+6180 field, then enters the
+ * profile delegate. A modal
  * result can call sub_4BAACB(-1), but that helper still checks +380 and does
  * not set it. Do not treat this response as the readiness update or a
  * validated bootstrap payload.

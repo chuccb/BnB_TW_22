@@ -270,7 +270,7 @@ export const ServerOpcode = {
   StageSpecificRoute17: 17, // CStage::sub_4BDBF5 -> sub_4B96E5 -> sub_5AAA5C(..., 16); this branch reads no payload; outcome/meaning UNKNOWN
   StageId16TransitionRequest17: 17, // Descriptive alias for the observed Client call only; no StageId-16 factory branch found
   UnresolvedServerPacket18: 18, // CStage::sub_4BDBF5 reads [u32, u32] then dispatches; semantics UNKNOWN
-  UserDynamicInfoSync: 19, // Stage-root fallback case 19 -> root +0xDC -> sub_4BA3BA -> sub_5ED779 (Login root included); current server sends no S->C 19
+  UserDynamicInfoSync: 19, // CStage fallback -> sub_4BA3BA -> sub_5ED779: u8 count + per-user records; authHandler sends after S->C 4 with only level mapped and opaque defaults for other fields.
   StageRecordList20: 20, // CStage::sub_4BDBF5 -> sub_4B9D2B: [u8 count, count*(u32, u16)] updates the global object at dword_92A1BC; record meanings UNKNOWN, not a confirmed ping
   NormalChat: 21, // CChatStage::sub_4B070C / CGameStage::sub_4F4D49
   StageSlot53Route22: 22, // CStage::sub_4BDBF5 case 22 -> current root-vtable slot 53 (+0xD4); base CStage::sub_4BB98F has a mode-dependent parser; stage-specific

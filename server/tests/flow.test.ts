@@ -1015,6 +1015,10 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
         .writeBlock(new Uint8Array(16))
         .writeU32(0)
     );
+    expect(client1.receivedPackets.slice(-2).map((packet) => packet.opcode)).toEqual([
+      ServerOpcode.LoginResult,
+      ServerOpcode.UserDynamicInfoSync,
+    ]);
     const p4 = client1.popByOpcode(4)!;
     expect(p4).toBeDefined();
     expect(p4.readU8()).toBe(0); // errCode = 0
@@ -1036,6 +1040,28 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(loggedInUser.level).toBe(1);
     expect(loggedInUser.rankFlag).toBe(0);
     expect(loginResultGateLevel).toBe(loggedInUser.level);
+
+    // S->C 19 follows LoginResult while LoginStage is active; its Client fallback parser
+    // initializes the dynamic-info record and sets the App-global +380 readiness gate.
+    const p19 = client1.popByOpcode(ServerOpcode.UserDynamicInfoSync)!;
+    expect(p19.readU8()).toBe(1);
+    expect(p19.readU16()).toBe(loggedInUser.level);
+    expect(p19.readU8()).toBe(0);
+    expect(p19.readU32()).toBe(0);
+    expect(p19.readU8()).toBe(0);
+    expect(p19.readU8()).toBe(0);
+    expect(p19.readU32()).toBe(0);
+    expect(p19.readU32()).toBe(0);
+    expect(p19.readU8()).toBe(0);
+    expect(p19.readU32()).toBe(0);
+    expect(p19.readU8()).toBe(0);
+    expect(p19.readU16()).toBe(0);
+    expect(p19.readU8()).toBe(0);
+    expect(p19.readU8()).toBe(0);
+    expect(p19.readString()).toBe("");
+    expect(p19.readU8()).toBe(0);
+    expect(p19.readU8()).toBe(0);
+    expect(p19.remaining).toBe(0);
 
     // 4. Post-login Channel List Request (C->S 9 -> S->C 10 `channel2_001.ssd`, 12, 11)
     client1.sendToServer(state, session1.sessionId, new PacketWriter(9).writeU32(0));
@@ -2852,6 +2878,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
 
     const loginClient = await LiveTcpClient.connect(ports.tcpPort);
     const loginResult = loginClient.waitForOpcode(ServerOpcode.LoginResult);
+    const userDynamicInfo = loginClient.waitForOpcode(ServerOpcode.UserDynamicInfoSync);
     loginClient.send(
       new PacketWriter(ClientOpcode.LoginBeanfunToken).writeU8(0).writeString("live_tester")
     );
@@ -2864,6 +2891,9 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     p4.readU32(); // Losses
     const authToken = p4.readU32();
     expect(authToken).toBeGreaterThan(0);
+    const p19 = await userDynamicInfo;
+    expect(p19.readU8()).toBe(1);
+    expect(p19.readU16()).toBe(1); // source-mapped `user.level` for this new account
 
     const channelList = loginClient.waitForOpcode(ServerOpcode.ChannelListSsd);
     const channelLoads = loginClient.waitForOpcode(ServerOpcode.ChannelLoads);

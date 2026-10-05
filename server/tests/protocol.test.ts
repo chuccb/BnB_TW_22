@@ -40,6 +40,7 @@ import {
   normalizeCChannelCategory,
 } from "../src/protocol/channelCache.ts";
 import { decodeClientText, encodeClientText } from "../src/protocol/textEncoding.ts";
+import { buildUserDynamicInfoSyncPacket } from "../src/handlers/authHandler.ts";
 import { parseSessionHandoffPayload } from "../src/handlers/channelHandler.ts";
 import { buildUserItemRecordsPacket } from "../src/handlers/shopHandler.ts";
 import {
@@ -93,6 +94,7 @@ describe("Client-backed S->C opcode audit", () => {
     expect(formatServerOpcode(14)).toBe("14 (StageSlot50Route14)");
     expect(formatServerOpcode(16)).toBe("16 (StageSpecificRoute16)");
     expect(formatServerOpcode(17)).toBe("17 (StageSpecificRoute17)");
+    expect(formatServerOpcode(19)).toBe("19 (UserDynamicInfoSync)");
     expect(formatServerOpcode(20)).toBe("20 (StageRecordList20)");
     expect(formatServerOpcode(22)).toBe("22 (StageSlot53Route22)");
     expect(formatServerOpcode(25)).toBe("25 (LobbyStageRoute25)");
@@ -126,6 +128,40 @@ describe("Client-backed S->C opcode audit", () => {
 
     // Direct Client routes establish receive dispatch only. They do not prove
     // official-server send policy, cross-stage semantic equivalence, or request association.
+  });
+});
+
+describe("S->C UserDynamicInfoSync packet builder", () => {
+  test("writes the Client's exact per-user widths and source-mapped level for one or two local users", () => {
+    const packet = buildUserDynamicInfoSyncPacket([{ level: 300 }, { level: 129 }]);
+    const reader = new PacketReader(packet.toPayload(), packet.degree, true);
+
+    expect(reader.opcode).toBe(ServerOpcode.UserDynamicInfoSync);
+    expect(reader.readU8()).toBe(2);
+    for (const level of [300, 129]) {
+      expect(reader.readU16()).toBe(level);
+      expect(reader.readU8()).toBe(0);
+      expect(reader.readU32()).toBe(0);
+      expect(reader.readU8()).toBe(0);
+      expect(reader.readU8()).toBe(0);
+      expect(reader.readU32()).toBe(0);
+      expect(reader.readU32()).toBe(0);
+      expect(reader.readU8()).toBe(0);
+      expect(reader.readU32()).toBe(0);
+      expect(reader.readU8()).toBe(0);
+      expect(reader.readU16()).toBe(0);
+      expect(reader.readU8()).toBe(0);
+      expect(reader.readU8()).toBe(0);
+      expect(reader.readString()).toBe("");
+      expect(reader.readU8()).toBe(0);
+      expect(reader.readU8()).toBe(0);
+    }
+    expect(reader.remaining).toBe(0);
+
+    expect(() => buildUserDynamicInfoSyncPacket([])).toThrow(RangeError);
+    expect(() => buildUserDynamicInfoSyncPacket([{ level: 1 }, { level: 2 }, { level: 3 }])).toThrow(
+      RangeError
+    );
   });
 });
 

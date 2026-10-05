@@ -13,6 +13,7 @@ import {
   buildMultiSvrSmartStream,
   type SsdCacheEntry,
 } from "../resources/archive.ts";
+import type { UserRecord } from "../db/database.ts";
 import type { ClientSession, WorldState } from "../state/worldState.ts";
 import { sendChannelListAndLoads } from "./channelHandler.ts";
 
@@ -240,6 +241,50 @@ export function buildLoginSuccessPacket(state: WorldState, session: ClientSessio
 }
 
 /**
+ * Builds the Client's S->C 19 `CUserDynamicInfo` update.
+ *
+ * The Client reads one `u8` player count followed by a fixed-width record and a string for each
+ * local player. `level` is source-mapped: the Client stores this `u16` through `sub_5ED30E` and
+ * later reads it through `sub_5ED43B` for channel-level checks. The remaining fields are read by
+ * `sub_5ED779`, but their meanings are not established in this reconstruction; they are emitted
+ * as neutral zero/empty defaults rather than guessed from similarly named database columns.
+ * The Client then sets its App-global readiness wrapper (`CUserDynamicInfo+380`) to logical 1.
+ *
+ * Client read order per record:
+ * `u16 level, u8, u32, u8, u8, u32, u32, u8, u32, u8, u16, u8, u8, str, u8, u8`.
+ * The Client narrows some `u16/u32` values while storing them; wire widths remain as read above.
+ */
+export function buildUserDynamicInfoSyncPacket(
+  users: readonly Pick<UserRecord, "level">[]
+): PacketWriter {
+  if (users.length < 1 || users.length > 2) {
+    throw new RangeError(`S->C 19 supports one or two local users, got ${users.length}`);
+  }
+
+  const packet = new PacketWriter(ServerOpcode.UserDynamicInfoSync);
+  packet.writeU8(users.length);
+  for (const user of users) {
+    packet.writeU16(user.level);
+    packet.writeU8(0); // Client ladder/profile byte; meaning UNKNOWN.
+    packet.writeU32(0); // Client ladder/profile value; meaning UNKNOWN.
+    packet.writeU8(0); // Client ladder/profile byte; meaning UNKNOWN.
+    packet.writeU8(0); // Client normalizes zero to one in sub_58BF04; field meaning UNKNOWN.
+    packet.writeU32(0); // Client clamps this field in sub_5ED522; meaning UNKNOWN.
+    packet.writeU32(0); // Client stores this value and value/24 in sub_5ED327; meaning UNKNOWN.
+    packet.writeU8(0); // Same sub_561F62 destination as the opaque LoginResult byte.
+    packet.writeU32(0); // Client narrows this u32 to char in sub_5ED36F; meaning UNKNOWN.
+    packet.writeU8(0); // Client applies a lookup/special case in sub_5ED3A3; meaning UNKNOWN.
+    packet.writeU16(0); // Client narrows this u16 to char in sub_58A56C; meaning UNKNOWN.
+    packet.writeU8(0); // Client profile byte; meaning UNKNOWN.
+    packet.writeU8(0); // Client profile byte; meaning UNKNOWN.
+    packet.writeString(""); // Client-owned string field; mapping UNKNOWN.
+    packet.writeU8(0); // Client per-user trailing byte; meaning UNKNOWN.
+    packet.writeU8(0); // Client per-user trailing byte; meaning UNKNOWN.
+  }
+  return packet;
+}
+
+/**
  * Handles Login requests (`C->S 2`, `C->S 11`, `C->S 31`).
  */
 export function handleLogin(
@@ -310,6 +355,9 @@ export function handleLogin(
   }
 
   session.sendPacket(buildLoginSuccessPacket(state, session));
+  // LoginStage forwards S->C 19 to the common CStage fallback. The Client parser initializes
+  // the per-user dynamic-info records and sets its App-global readiness gate before channel selection.
+  session.sendPacket(buildUserDynamicInfoSyncPacket(session.users));
   logger.info("Login", "Authentication succeeded", {
     sessionId: session.sessionId,
     playerCount: session.users.length,
