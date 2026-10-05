@@ -18,6 +18,7 @@ import {
   buildMultiSvrSmartStream,
   decryptIddEntry,
   loadClientResources,
+  parseDecryptedIdx,
   loadSsdEntry,
   transcodeDynamicMapInfoToV22,
   verifySmartStreamSchema,
@@ -49,6 +50,54 @@ describe("Client Resource Archives — Fx.idx, .i16 Tables, Maps & All 12 .ssd/.
     expect(isFeatureEnabledTW(26)).toBe(false);
     expect(isFeatureEnabledTW(32)).toBe(false);
   });
+
+  test("parses legacy and CRC-bearing .idx records with checked bounds", () => {
+    const legacy = new Uint8Array(21);
+    const legacyView = new DataView(legacy.buffer);
+    legacyView.setUint32(0, 1, true);
+    legacyView.setUint32(4, 1, true);
+    legacy[8] = 0x61; // "a"
+    legacyView.setUint32(9, 0x20, true);
+    legacyView.setUint32(13, 7, true);
+    legacyView.setUint32(17, 0x1234, true);
+    expect(parseDecryptedIdx(legacy)).toMatchObject([
+      { index: 0, path: "a", offset: 0x20, size: 7, maskId: 0x1234, crc32: 0 },
+    ]);
+
+    const crcFormat = new Uint8Array(33);
+    const crcView = new DataView(crcFormat.buffer);
+    crcView.setUint32(0, 0, true);
+    crcView.setUint32(4, 15, true);
+    crcView.setUint32(8, 1, true);
+    crcView.setUint32(12, 1, true);
+    crcFormat[16] = 0x62; // "b"
+    crcView.setUint32(17, 0x30, true);
+    crcView.setUint32(21, 9, true);
+    crcView.setUint32(25, 0x5678, true);
+    crcView.setUint32(29, 0x9abcdef0, true);
+    expect(parseDecryptedIdx(crcFormat)).toMatchObject([
+      {
+        index: 0,
+        path: "b",
+        offset: 0x30,
+        size: 9,
+        maskId: 0x5678,
+        crc32: 0x9abcdef0,
+      },
+    ]);
+
+    expect(() => parseDecryptedIdx(new Uint8Array(7))).toThrow(/expected at least 8 bytes/);
+    const shortCrcHeader = new Uint8Array(8);
+    new DataView(shortCrcHeader.buffer).setUint32(4, 15, true);
+    expect(() => parseDecryptedIdx(shortCrcHeader)).toThrow(/CRC format requires 12 bytes/);
+    expect(() => parseDecryptedIdx(crcFormat.subarray(0, 29))).toThrow(
+      /buffer can contain at most 0 CRC record/
+    );
+    const truncatedRecord = crcFormat.slice();
+    new DataView(truncatedRecord.buffer).setUint32(12, 0x7f, true);
+    expect(() => parseDecryptedIdx(truncatedRecord)).toThrow(/Truncated \.idx entry 0/);
+  });
+
   test("Decrypts Fx.idx (sub_673110), loads CGameMapInfoList, BomberAttr, ItemAttr, and verifies all 12 .ssd/.ini streams", () => {
     const resources = loadClientResources();
 
@@ -193,6 +242,21 @@ describe("Client Resource Archives — Fx.idx, .i16 Tables, Maps & All 12 .ssd/.
     expect(loadingChannelInfo).toBe("頻道連線中請稍候…");
     expect(connectingToSvr).toBe("登入頻道中，請稍候！");
     expect(systemStrings.remaining()).toBe(0);
+  });
+
+  test("scopes the resource cache to the resolved client root", () => {
+    const resources = loadClientResources(CLIENT_RESOURCE_ROOT);
+    const sameRootAlias = join(CLIENT_RESOURCE_ROOT, ".", "unused", "..");
+    expect(loadClientResources(sameRootAlias)).toBe(resources);
+
+    const otherRoot = mkdtempSync(join(tmpdir(), "bnb-client-cache-root-"));
+    try {
+      writeFileSync(join(otherRoot, "Fx.idx"), readFileSync(resolve(CLIENT_RESOURCE_ROOT, "Fx.idx")));
+      writeFileSync(join(otherRoot, "Fx.idd"), new Uint8Array(1));
+      expect(() => loadClientResources(otherRoot)).toThrow(/Fx\.idd entry/);
+    } finally {
+      rmSync(otherRoot, { recursive: true, force: true });
+    }
   });
 
   test("reloads v22 ssi1 caches in the Client's disk format without widening them a second time", () => {

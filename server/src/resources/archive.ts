@@ -1,4 +1,4 @@
-import { closeSync, existsSync, openSync, readFileSync, readSync } from "fs";
+import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync } from "fs";
 import { dirname, resolve } from "path";
 import { fileURLToPath } from "url";
 import { computeCRC32, computeCRC8 } from "../protocol/crc.ts";
@@ -239,22 +239,31 @@ export function decryptPackEntry(src: Uint8Array, _isCompressed: boolean = false
 
 /**
  * CPackSysMan::sub_6749C0 (0x006749C0):
- * Parses decrypted .idx buffer into IdxEntry records.
+ * Parses decrypted `.idx` records in either legacy `[u32 count, ...]` form
+ * (`nameLen + path + [offset, size, maskId]`) or CRC-bearing `[0, 15, u32 count, ...]`
+ * form (`nameLen + path + [offset, size, maskId, crc32]`).
  */
 export function parseDecryptedIdx(plainIdx: Uint8Array): IdxEntry[] {
+  if (plainIdx.byteLength < 8) {
+    throw new Error(`Invalid .idx header: expected at least 8 bytes, got ${plainIdx.byteLength}`);
+  }
+
   const dv = new DataView(plainIdx.buffer, plainIdx.byteOffset, plainIdx.byteLength);
   const w0 = dv.getUint32(0, true);
   const w1 = dv.getUint32(4, true);
 
-  let entryCount = 0;
-  let pos = 0;
-  let hasCrc = false;
+  let entryCount: number;
+  let pos: number;
+  let hasCrc: boolean;
 
   if (w0 !== 0) {
     entryCount = w0;
     pos = 4;
     hasCrc = false;
   } else if (w1 === 15) {
+    if (plainIdx.byteLength < 12) {
+      throw new Error(`Invalid .idx header: CRC format requires 12 bytes, got ${plainIdx.byteLength}`);
+    }
     entryCount = dv.getUint32(8, true);
     pos = 12;
     hasCrc = true;
@@ -262,29 +271,45 @@ export function parseDecryptedIdx(plainIdx: Uint8Array): IdxEntry[] {
     throw new Error(`Invalid .idx header: w0=${w0}, w1=${w1}`);
   }
 
+  const fixedRecordBytes = hasCrc ? 16 : 12;
+  const minimumRecordBytes = 4 + 1 + fixedRecordBytes; // name length + at least one path byte + fields
+  const maximumPossibleCount = Math.floor((plainIdx.byteLength - pos) / minimumRecordBytes);
+  if (entryCount > maximumPossibleCount) {
+    throw new Error(
+      `Invalid .idx entry count ${entryCount}: buffer can contain at most ${maximumPossibleCount} ${hasCrc ? "CRC" : "legacy"} record(s)`
+    );
+  }
+
   const decoder = new TextDecoder("utf-8", { fatal: false });
   const entries: IdxEntry[] = [];
 
   for (let i = 0; i < entryCount; i++) {
+    if (pos + 4 > plainIdx.byteLength) {
+      throw new Error(`Truncated .idx entry ${i}: missing path length at byte ${pos}`);
+    }
+
     const nameLen = dv.getUint32(pos, true);
-    const v20 = pos + 4;
-    if (nameLen <= 0 || nameLen >= 0x80 || v20 + nameLen + 12 > plainIdx.length) {
+    const pathStart = pos + 4;
+    if (nameLen <= 0 || nameLen >= 0x80) {
       throw new Error(`Invalid .idx entry nameLen=${nameLen} at entry ${i}`);
     }
-    const rawPath = decoder.decode(plainIdx.subarray(v20, v20 + nameLen));
+
+    const recordEnd = pathStart + nameLen + fixedRecordBytes;
+    if (recordEnd > plainIdx.byteLength) {
+      throw new Error(
+        `Truncated .idx entry ${i}: nameLen=${nameLen} requires ${fixedRecordBytes} fixed byte(s), buffer ends at ${plainIdx.byteLength}`
+      );
+    }
+
+    const rawPath = decoder.decode(plainIdx.subarray(pathStart, pathStart + nameLen));
     const path = rawPath.replace(/\\/g, "/");
 
-    const iddOffset = dv.getUint32(v20 + nameLen, true);
-    const v22 = v20 + nameLen + 4;
-    const size = dv.getUint32(v22, true);
-    const maskId = dv.getUint32(v22 + 4, true);
-    let crc32 = 0;
-    if (hasCrc) {
-      crc32 = dv.getUint32(v22 + 8, true);
-      pos = v22 + 12;
-    } else {
-      pos = v22 + 8;
-    }
+    const iddOffset = dv.getUint32(pathStart + nameLen, true);
+    const sizeOffset = pathStart + nameLen + 4;
+    const size = dv.getUint32(sizeOffset, true);
+    const maskId = dv.getUint32(sizeOffset + 4, true);
+    const crc32 = hasCrc ? dv.getUint32(sizeOffset + 8, true) : 0;
+    pos = sizeOffset + (hasCrc ? 12 : 8);
 
     entries.push({
       index: i,
@@ -299,6 +324,58 @@ export function parseDecryptedIdx(plainIdx: Uint8Array): IdxEntry[] {
   }
 
   return entries;
+}
+
+/** Rejects corrupt `.idx` ranges before entry bytes are read. */
+function assertIdxEntryFitsArchive(
+  entry: IdxEntry,
+  archiveName: string,
+  archiveSize: number
+): void {
+  if (entry.offset > archiveSize || entry.size > archiveSize - entry.offset) {
+    throw new Error(
+      `${archiveName} entry ${entry.index} (${entry.path}) range [${entry.offset}, ${entry.offset + entry.size}) exceeds the ${archiveSize}-byte archive`
+    );
+  }
+}
+
+function assertIdxEntriesFitArchive(
+  entries: readonly IdxEntry[],
+  archiveName: string,
+  archiveSize: number
+): void {
+  for (const entry of entries) {
+    assertIdxEntryFitsArchive(entry, archiveName, archiveSize);
+  }
+}
+
+/** Bounds-checks and fully reads an `.idd` slice, retrying if `readSync` returns a short read. */
+function readIddEntry(
+  fd: number,
+  archiveName: string,
+  archiveSize: number,
+  entry: IdxEntry
+): Uint8Array {
+  assertIdxEntryFitsArchive(entry, archiveName, archiveSize);
+
+  const bytes = new Uint8Array(entry.size);
+  let bytesRead = 0;
+  while (bytesRead < bytes.byteLength) {
+    const count = readSync(
+      fd,
+      bytes,
+      bytesRead,
+      bytes.byteLength - bytesRead,
+      entry.offset + bytesRead
+    );
+    if (count === 0) {
+      throw new Error(
+        `Unexpected end of ${archiveName} while reading entry ${entry.index} (${entry.path}) at byte ${entry.offset + bytesRead}`
+      );
+    }
+    bytesRead += count;
+  }
+  return bytes;
 }
 
 /**
@@ -1205,32 +1282,34 @@ export function loadSsdEntry(repoRoot: string, filename: string): SsdCacheEntry 
   };
 }
 
-let cachedResources: ClientResources | null = null;
+const cachedResourcesByRoot = new Map<string, ClientResources>();
 
 export function loadClientResources(
   repoRoot: string = DEFAULT_CLIENT_RESOURCE_ROOT
 ): ClientResources {
+  const resourceRoot = resolve(repoRoot);
+  const cachedResources = cachedResourcesByRoot.get(resourceRoot);
   if (cachedResources) {
     return cachedResources;
   }
 
-  const fxIdxPath = resolve(repoRoot, "Fx.idx");
+  const fxIdxPath = resolve(resourceRoot, "Fx.idx");
   const rawIdx = new Uint8Array(readFileSync(fxIdxPath));
   const plainIdx = decryptIdxBuffer(rawIdx, 0x719cab30);
   const fxEntries = parseDecryptedIdx(plainIdx);
 
   // sub_5A3257 (0x005A3257): CharTE.idx and EmoTE.idx use seed 0x05B201FC
-  const charTeIdxPath = resolve(repoRoot, "CharTE.idx");
+  const charTeIdxPath = resolve(resourceRoot, "CharTE.idx");
   const charTeEntries = existsSync(charTeIdxPath)
     ? parseDecryptedIdx(decryptIdxBuffer(new Uint8Array(readFileSync(charTeIdxPath)), 0x05b201fc))
     : [];
 
-  const emoTeIdxPath = resolve(repoRoot, "EmoTE.idx");
+  const emoTeIdxPath = resolve(resourceRoot, "EmoTE.idx");
   const emoTeEntries = existsSync(emoTeIdxPath)
     ? parseDecryptedIdx(decryptIdxBuffer(new Uint8Array(readFileSync(emoTeIdxPath)), 0x05b201fc))
     : [];
 
-  const fxIddPath = resolve(repoRoot, "Fx.idd");
+  const fxIddPath = resolve(resourceRoot, "Fx.idd");
   const iddFd = openSync(fxIddPath, "r");
 
   const maps: MapInfo[] = [];
@@ -1246,12 +1325,14 @@ export function loadClientResources(
   let initXml = "";
 
   try {
+    const fxIddSize = fstatSync(iddFd).size;
+    assertIdxEntriesFitArchive(fxEntries, "Fx.idd", fxIddSize);
+
     for (const entry of fxEntries) {
       if (entry.path.startsWith("Map/")) {
         const mapId = maps.length;
         const shortName = entry.path.slice(4);
-        const rawMap = new Uint8Array(entry.size);
-        readSync(iddFd, rawMap, 0, entry.size, entry.offset);
+        const rawMap = readIddEntry(iddFd, "Fx.idd", fxIddSize, entry);
         const plainMap = decryptIddEntry(rawMap, entry.maskId, entry.crc32);
         const crc32 = computeCRC32(0, plainMap, plainMap.length);
         const crc8 = computeCRC8(0, plainMap, plainMap.length);
@@ -1302,24 +1383,21 @@ export function loadClientResources(
 
     const bomberEntry = fxEntries.find((e) => e.path === "Attr/BomberAttr");
     if (bomberEntry) {
-      const rawBomber = new Uint8Array(bomberEntry.size);
-      readSync(iddFd, rawBomber, 0, bomberEntry.size, bomberEntry.offset);
+      const rawBomber = readIddEntry(iddFd, "Fx.idd", fxIddSize, bomberEntry);
       const plainBomber = decryptIddEntry(rawBomber, bomberEntry.maskId, bomberEntry.crc32);
       bombers = parseBomberAttrBuffer(plainBomber);
     }
 
     const itemEntry = fxEntries.find((e) => e.path === "Attr/ItemAttr");
     if (itemEntry) {
-      const rawItem = new Uint8Array(itemEntry.size);
-      readSync(iddFd, rawItem, 0, itemEntry.size, itemEntry.offset);
+      const rawItem = readIddEntry(iddFd, "Fx.idd", fxIddSize, itemEntry);
       const plainItem = decryptIddEntry(rawItem, itemEntry.maskId, itemEntry.crc32);
       items = parseItemAttrBuffer(plainItem);
     }
 
     const mapGroupEntry = fxEntries.find((e) => e.path === "Attr/MapGroup");
     if (mapGroupEntry) {
-      const rawMapGroup = new Uint8Array(mapGroupEntry.size);
-      readSync(iddFd, rawMapGroup, 0, mapGroupEntry.size, mapGroupEntry.offset);
+      const rawMapGroup = readIddEntry(iddFd, "Fx.idd", fxIddSize, mapGroupEntry);
       const plainMapGroup = decryptIddEntry(
         rawMapGroup,
         mapGroupEntry.maskId,
@@ -1330,8 +1408,7 @@ export function loadClientResources(
 
     const objTableEntry = fxEntries.find((e) => e.path === "ObjectTable/ObjectTable");
     if (objTableEntry) {
-      const rawObjTable = new Uint8Array(objTableEntry.size);
-      readSync(iddFd, rawObjTable, 0, objTableEntry.size, objTableEntry.offset);
+      const rawObjTable = readIddEntry(iddFd, "Fx.idd", fxIddSize, objTableEntry);
       const plainObjTable = decryptIddEntry(
         rawObjTable,
         objTableEntry.maskId,
@@ -1342,8 +1419,7 @@ export function loadClientResources(
 
     const tileInfoEntry = fxEntries.find((e) => e.path === "TileInfo/TileInfoList");
     if (tileInfoEntry) {
-      const rawTileInfo = new Uint8Array(tileInfoEntry.size);
-      readSync(iddFd, rawTileInfo, 0, tileInfoEntry.size, tileInfoEntry.offset);
+      const rawTileInfo = readIddEntry(iddFd, "Fx.idd", fxIddSize, tileInfoEntry);
       const plainTileInfo = decryptIddEntry(
         rawTileInfo,
         tileInfoEntry.maskId,
@@ -1354,8 +1430,7 @@ export function loadClientResources(
 
     const xmlInitEntry = fxEntries.find((e) => e.path === "XML/init");
     if (xmlInitEntry) {
-      const rawXml = new Uint8Array(xmlInitEntry.size);
-      readSync(iddFd, rawXml, 0, xmlInitEntry.size, xmlInitEntry.offset);
+      const rawXml = readIddEntry(iddFd, "Fx.idd", fxIddSize, xmlInitEntry);
       const plainXml = decryptIddEntry(rawXml, xmlInitEntry.maskId, xmlInitEntry.crc32);
       if (plainXml.length >= 4) {
         initXml = new TextDecoder("utf-8", { fatal: false }).decode(plainXml.subarray(4));
@@ -1365,47 +1440,45 @@ export function loadClientResources(
     closeSync(iddFd);
   }
 
-  const charTeIddPath = resolve(repoRoot, "CharTE.idd");
-  if (existsSync(charTeIddPath)) {
-    const charTeObjEntry = charTeEntries.find((e) => e.path === "ObjectTable/CharTEObjectTable");
-    if (charTeObjEntry) {
-      const fd = openSync(charTeIddPath, "r");
-      try {
-        const raw = new Uint8Array(charTeObjEntry.size);
-        readSync(fd, raw, 0, charTeObjEntry.size, charTeObjEntry.offset);
-        const plain = decryptIddEntry(raw, charTeObjEntry.maskId, charTeObjEntry.crc32);
-        charTeObjectTable = parseObjectTableBuffer(plain);
-      } finally {
-        closeSync(fd);
-      }
+  const charTeIddPath = resolve(resourceRoot, "CharTE.idd");
+  const charTeObjEntry = charTeEntries.find((e) => e.path === "ObjectTable/CharTEObjectTable");
+  if (existsSync(charTeIddPath) && charTeObjEntry) {
+    const fd = openSync(charTeIddPath, "r");
+    try {
+      const archiveSize = fstatSync(fd).size;
+      assertIdxEntriesFitArchive(charTeEntries, "CharTE.idd", archiveSize);
+      const raw = readIddEntry(fd, "CharTE.idd", archiveSize, charTeObjEntry);
+      const plain = decryptIddEntry(raw, charTeObjEntry.maskId, charTeObjEntry.crc32);
+      charTeObjectTable = parseObjectTableBuffer(plain);
+    } finally {
+      closeSync(fd);
     }
   }
 
-  const emoTeIddPath = resolve(repoRoot, "EmoTE.idd");
-  if (existsSync(emoTeIddPath)) {
-    const emoTeObjEntry = emoTeEntries.find((e) => e.path === "ObjectTable/EmoTEObjectTable");
-    if (emoTeObjEntry) {
-      const fd = openSync(emoTeIddPath, "r");
-      try {
-        const raw = new Uint8Array(emoTeObjEntry.size);
-        readSync(fd, raw, 0, emoTeObjEntry.size, emoTeObjEntry.offset);
-        const plain = decryptIddEntry(raw, emoTeObjEntry.maskId, emoTeObjEntry.crc32);
-        emoTeObjectTable = parseObjectTableBuffer(plain);
-      } finally {
-        closeSync(fd);
-      }
+  const emoTeIddPath = resolve(resourceRoot, "EmoTE.idd");
+  const emoTeObjEntry = emoTeEntries.find((e) => e.path === "ObjectTable/EmoTEObjectTable");
+  if (existsSync(emoTeIddPath) && emoTeObjEntry) {
+    const fd = openSync(emoTeIddPath, "r");
+    try {
+      const archiveSize = fstatSync(fd).size;
+      assertIdxEntriesFitArchive(emoTeEntries, "EmoTE.idd", archiveSize);
+      const raw = readIddEntry(fd, "EmoTE.idd", archiveSize, emoTeObjEntry);
+      const plain = decryptIddEntry(raw, emoTeObjEntry.maskId, emoTeObjEntry.crc32);
+      emoTeObjectTable = parseObjectTableBuffer(plain);
+    } finally {
+      closeSync(fd);
     }
   }
 
   // 8 Disk .ssd / .ini streams (with automatic v22 transcoding for fxstock, fxdynmapinfo, esfn)
-  const fxdynimginfo = loadSsdEntry(repoRoot, "fxdynimginfo.ssd");
-  const csysstr = loadSsdEntry(repoRoot, "csysstr.ssd");
-  const esfn = loadSsdEntry(repoRoot, "esfn.ssd");
-  const filterstr = loadSsdEntry(repoRoot, "filterstr.ssd");
-  const fxdynmapinfo = loadSsdEntry(repoRoot, "fxdynmapinfo.ssd");
-  const packagemap = loadSsdEntry(repoRoot, "packagemap.ini");
-  const stringtable = loadSsdEntry(repoRoot, "stringtable.ini");
-  const fxstock = loadSsdEntry(repoRoot, "fxstock.ini");
+  const fxdynimginfo = loadSsdEntry(resourceRoot, "fxdynimginfo.ssd");
+  const csysstr = loadSsdEntry(resourceRoot, "csysstr.ssd");
+  const esfn = loadSsdEntry(resourceRoot, "esfn.ssd");
+  const filterstr = loadSsdEntry(resourceRoot, "filterstr.ssd");
+  const fxdynmapinfo = loadSsdEntry(resourceRoot, "fxdynmapinfo.ssd");
+  const packagemap = loadSsdEntry(resourceRoot, "packagemap.ini");
+  const stringtable = loadSsdEntry(resourceRoot, "stringtable.ini");
+  const fxstock = loadSsdEntry(resourceRoot, "fxstock.ini");
 
   // 4 Server-synthesized .ssd streams (multisvr.ssd, multisvrn.ssd, channel2_001.ssd, qmarksfn.ssd)
   const multisvr = buildSynthesizedSsdEntry(
@@ -1460,7 +1533,7 @@ export function loadClientResources(
     qmarksfn,
   }) as SsdFileCollection;
 
-  cachedResources = {
+  const resources: ClientResources = {
     fxEntries,
     charTeEntries,
     emoTeEntries,
@@ -1480,8 +1553,8 @@ export function loadClientResources(
     initXml,
     ssdFiles,
   };
-
-  return cachedResources;
+  cachedResourcesByRoot.set(resourceRoot, resources);
+  return resources;
 }
 
 export const loadAllResources = loadClientResources;
