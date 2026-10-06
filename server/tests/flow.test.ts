@@ -378,6 +378,441 @@ describe("C->S 21 MessengerInviteUser writer variants", () => {
   });
 });
 
+describe("Lobby room writers are parsed as exact, distinct Client layouts", () => {
+  test("handles 75/76/77/79/81 variants without guessing counts, password markers, or tails", () => {
+    const config = loadConfig({ dbPath: ":memory:" });
+    using state = new WorldState(config);
+
+    const makeLobbySession = (username: string, count = 1) => {
+      const client = new SimulatedClient();
+      const session = state.createSession(
+        client.onWireBytes,
+        "203.0.113.150",
+        51150 + state.sessions.size,
+        "0.0.0.0",
+        0,
+        "game"
+      );
+      session.users = Array.from({ length: count }, (_, index) =>
+        state.db.createUser(`${username}_${index}`, "password")
+      );
+      session.netSlotIds = session.users.map(() => state.allocateNetSlotId());
+      session.equippedCharIds = session.users.map(() => 0);
+      session.channelSelected = true;
+      session.channelIndex = 0;
+      session.stageId = StageId.Lobby;
+      session.sendConnectHello(config);
+      return { client, session };
+    };
+
+    const creator = makeLobbySession("exact_create", 2);
+    // A truncated 75 with a two-local count must not synthesize a missing char ID/default.
+    creator.client.sendToServer(
+      state,
+      creator.session.sessionId,
+      new PacketWriter(ClientOpcode.CreateRoom)
+        .writeString("Truncated")
+        .writeString("")
+        .writeU8(0)
+        .writeU8(2)
+        .writeU8(0)
+    );
+    expect(state.rooms.size).toBe(0);
+    expect(creator.session.currentRoomNumber).toBeNull();
+    expect(creator.client.receivedPackets).toHaveLength(0);
+
+    creator.client.sendToServer(
+      state,
+      creator.session.sessionId,
+      new PacketWriter(ClientOpcode.CreateRoom)
+        .writeString("Exact public room")
+        .writeString("")
+        .writeU8(0) // opaque prefix byte
+        .writeU8(2)
+        .writeU8(0)
+        .writeU8(1)
+        .writeU8(2) // opaque one-byte tail candidate
+        .writeU32(0x1234_5607) // opaque four-byte tail candidate
+    );
+    const publicRoom = state.rooms.get(creator.session.currentRoomNumber!)!;
+    expect(publicRoom.name).toBe("Exact public room");
+    expect(publicRoom.hasPassword).toBe(false);
+    expect(publicRoom.gameMode).toBe(2); // local mapping only
+    expect(publicRoom.mapTheme).toBe(7); // local low-byte mapping only
+    expect(creator.session.roomSlotIndices.map((idx) => publicRoom.slots[idx]!.charId)).toEqual([0, 1]);
+    expect(creator.client.popByOpcode(ServerOpcode.CreateRoomResult)).toBeDefined();
+
+    const emptyPasswordJoiner = makeLobbySession("empty_password_join");
+    // The normal 76 writer always includes an empty length-prefixed string. After room/context,
+    // that valid one-user body is exactly four bytes; do not infer a string from total length.
+    emptyPasswordJoiner.client.sendToServer(
+      state,
+      emptyPasswordJoiner.session.sessionId,
+      new PacketWriter(ClientOpcode.JoinRoom)
+        .writeU16(publicRoom.roomNumber)
+        .writeU32(0x1122_3344)
+        .writeString("")
+        .writeU8(1)
+        .writeU8(3)
+    );
+    expect(emptyPasswordJoiner.session.currentRoomNumber).toBe(publicRoom.roomNumber);
+    expect(publicRoom.slots[emptyPasswordJoiner.session.roomSlotIndices[0]!]!.charId).toBe(3);
+    expect(emptyPasswordJoiner.client.popByOpcode(ServerOpcode.JoinRoomResult)).toBeDefined();
+
+    const inviteMarkerJoiner = makeLobbySession("invite_marker_join");
+    inviteMarkerJoiner.client.sendToServer(
+      state,
+      inviteMarkerJoiner.session.sessionId,
+      new PacketWriter(ClientOpcode.JoinRoom)
+        .writeU16(publicRoom.roomNumber)
+        .writeU32(0x5566_7788)
+        .writeU8(0) // separate invite-writer marker; no password string
+        .writeU8(1)
+        .writeU8(2)
+    );
+    expect(inviteMarkerJoiner.session.currentRoomNumber).toBe(publicRoom.roomNumber);
+    expect(publicRoom.slots[inviteMarkerJoiner.session.roomSlotIndices[0]!]!.charId).toBe(2);
+
+    const mismatchedLocalCount = makeLobbySession("count_mismatch_join", 2);
+    const occupiedBeforeMismatch = publicRoom.slots.filter((slot) => slot.occupied).length;
+    mismatchedLocalCount.client.sendToServer(
+      state,
+      mismatchedLocalCount.session.sessionId,
+      new PacketWriter(ClientOpcode.JoinRoom)
+        .writeU16(publicRoom.roomNumber)
+        .writeU32(0)
+        .writeString("")
+        .writeU8(1)
+        .writeU8(0)
+    );
+    expect(mismatchedLocalCount.session.currentRoomNumber).toBeNull();
+    expect(publicRoom.slots.filter((slot) => slot.occupied)).toHaveLength(occupiedBeforeMismatch);
+    expect(mismatchedLocalCount.client.receivedPackets).toHaveLength(0);
+
+    const passwordCreator = makeLobbySession("password_create");
+    passwordCreator.client.sendToServer(
+      state,
+      passwordCreator.session.sessionId,
+      new PacketWriter(ClientOpcode.CreateRoom)
+        .writeString("Password room")
+        .writeString("local-pass")
+        .writeU8(1)
+        .writeU8(1)
+        .writeU8(0)
+        .writeU8(0)
+        .writeU32(0)
+    );
+    const passwordRoom = state.rooms.get(passwordCreator.session.currentRoomNumber!)!;
+    expect(passwordRoom.hasPassword).toBe(true);
+
+    const unverifiedInvite = makeLobbySession("unverified_invite");
+    unverifiedInvite.client.sendToServer(
+      state,
+      unverifiedInvite.session.sessionId,
+      new PacketWriter(ClientOpcode.JoinRoom)
+        .writeU16(passwordRoom.roomNumber)
+        .writeU32(0)
+        .writeU8(0)
+        .writeU8(1)
+        .writeU8(0)
+    );
+    expect(unverifiedInvite.session.currentRoomNumber).toBeNull();
+    expect(unverifiedInvite.client.popByOpcode(ServerOpcode.JoinRoomResult)?.readU8()).toBe(1);
+
+    const regionalPasswordJoiner = makeLobbySession("regional_password_join");
+    regionalPasswordJoiner.client.sendToServer(
+      state,
+      regionalPasswordJoiner.session.sessionId,
+      new PacketWriter(ClientOpcode.JoinRoom)
+        .writeU16(passwordRoom.roomNumber)
+        .writeU32(0x99)
+        .writeU8(1) // region-128 writer prefix; runtime region is not inferred here
+        .writeString("local-pass")
+        .writeU8(1)
+        .writeU8(2)
+    );
+    expect(regionalPasswordJoiner.session.currentRoomNumber).toBe(passwordRoom.roomNumber);
+    expect(passwordRoom.slots[regionalPasswordJoiner.session.roomSlotIndices[0]!]!.charId).toBe(2);
+
+    const opaqueU32TailCreator = makeLobbySession("opaque_u32_tail");
+    opaqueU32TailCreator.client.sendToServer(
+      state,
+      opaqueU32TailCreator.session.sessionId,
+      new PacketWriter(ClientOpcode.CreateRoom)
+        .writeString("Opaque u32 tail room")
+        .writeString("")
+        .writeU8(0)
+        .writeU8(1)
+        .writeU8(0)
+        .writeU32(0x8765_4321)
+    );
+    const opaqueU32TailRoom = state.rooms.get(opaqueU32TailCreator.session.currentRoomNumber!)!;
+    expect(opaqueU32TailRoom.gameMode).toBe(0);
+    expect(opaqueU32TailRoom.mapTheme).toBe(0);
+
+    const shortCreator = makeLobbySession("short_create");
+    shortCreator.client.sendToServer(
+      state,
+      shortCreator.session.sessionId,
+      new PacketWriter(ClientOpcode.CreateRoomShort)
+        .writeString("Opaque short room")
+        .writeU8(0x23) // opaque prefix byte
+        .writeU8(1)
+        .writeU8(1)
+        .writeU8(0x77) // opaque tail byte
+        .writeU32(0x7654_3210) // opaque trailing word
+    );
+    const shortRoom = state.rooms.get(shortCreator.session.currentRoomNumber!)!;
+    expect(shortRoom.name).toBe("Opaque short room");
+    expect(shortRoom.password).toBe("");
+    expect(shortRoom.gameMode).toBe(0);
+    expect(shortRoom.mapTheme).toBe(0);
+
+    const quick77 = makeLobbySession("quick_join_77");
+    quick77.client.sendToServer(
+      state,
+      quick77.session.sessionId,
+      new PacketWriter(ClientOpcode.QuickJoin).writeU8(1).writeU8(2).writeU8(0xab)
+    );
+    expect(quick77.session.currentRoomNumber).toBe(publicRoom.roomNumber);
+    expect(publicRoom.slots[quick77.session.roomSlotIndices[0]!]!.charId).toBe(2);
+    expect(quick77.client.popByOpcode(ServerOpcode.QuickJoinOrUserProfile)?.readU8()).toBe(0);
+
+    const malformedQuick77 = makeLobbySession("malformed_quick_join");
+    malformedQuick77.client.sendToServer(
+      state,
+      malformedQuick77.session.sessionId,
+      new PacketWriter(ClientOpcode.QuickJoin).writeU8(1).writeU8(1)
+    );
+    expect(malformedQuick77.session.currentRoomNumber).toBeNull();
+    expect(malformedQuick77.client.receivedPackets).toHaveLength(0);
+
+    const quick81 = makeLobbySession("quick_join_81");
+    quick81.client.sendToServer(
+      state,
+      quick81.session.sessionId,
+      new PacketWriter(ClientOpcode.QuickJoinShort).writeU8(1).writeU8(3).writeU32(0xdead_beef)
+    );
+    expect(quick81.session.currentRoomNumber).toBe(publicRoom.roomNumber);
+    expect(publicRoom.slots[quick81.session.roomSlotIndices[0]!]!.charId).toBe(3);
+    expect(quick81.client.popByOpcode(ServerOpcode.QuickJoinOrUserProfile)?.readU8()).toBe(0);
+
+    const roomDetailRequester = makeLobbySession("room_detail_67");
+    roomDetailRequester.client.sendToServer(
+      state,
+      roomDetailRequester.session.sessionId,
+      new PacketWriter(ClientOpcode.RoomDetailOrUserInfo)
+        .writeU16(publicRoom.roomNumber)
+        .writeU32(0x1234_5678)
+    );
+    expect(roomDetailRequester.client.popByOpcode(ServerOpcode.RoomDetailInfo)?.readU8()).toBe(1);
+
+    // C->S 82's opaque context is not used to switch the session into another room.
+    quick77.session.stageId = StageId.Shop;
+    quick77.client.sendToServer(
+      state,
+      quick77.session.sessionId,
+      new PacketWriter(ClientOpcode.ReturnToRoom)
+        .writeU16(passwordRoom.roomNumber)
+        .writeU32(0x1234_5678)
+    );
+    expect(quick77.session.stageId).toBe(StageId.Shop);
+    expect(quick77.client.popByOpcode(ServerOpcode.JoinRoomResult)).toBeUndefined();
+    const userBeforeShopReturn = state.db.getUserById(quick77.session.users[0]!.id)!;
+    quick77.client.sendToServer(
+      state,
+      quick77.session.sessionId,
+      new PacketWriter(ClientOpcode.ReturnToRoom)
+        .writeU16(publicRoom.roomNumber)
+        .writeU32(0x1234_5678)
+    );
+    expect(quick77.session.stageId).toBe(StageId.Prepare);
+    expect(quick77.session.currentRoomNumber).toBe(publicRoom.roomNumber);
+    expect(quick77.client.popByOpcode(ServerOpcode.JoinRoomResult)).toBeDefined();
+    expect(state.db.getUserById(quick77.session.users[0]!.id)).toEqual(userBeforeShopReturn);
+    const returnToRoomAudit = getRecentLogs().findLast(
+      (entry) =>
+        entry.category === "PacketAudit" &&
+        entry.data?.wireOpcode === ClientOpcode.ReturnToRoom &&
+        entry.data?.responseSent === true
+    );
+    expect(returnToRoomAudit?.data?.sessionStageChanged).toBe(true);
+    expect(returnToRoomAudit?.data?.roomStateChanged).toBe(false);
+    expect(returnToRoomAudit?.data?.databaseMutation).toBe(false);
+    expect(JSON.stringify(returnToRoomAudit)).not.toContain("305419896");
+
+    // The other recovered C->S 82 caller is the Stage-20 UserMarket parser after S->C 99.
+    quick77.session.stageId = StageId.UserMarket;
+    const userBeforeMarketReturn = state.db.getUserById(quick77.session.users[0]!.id)!;
+    quick77.client.sendToServer(
+      state,
+      quick77.session.sessionId,
+      new PacketWriter(ClientOpcode.ReturnToRoom)
+        .writeU16(publicRoom.roomNumber)
+        .writeU32(0xdead_beef)
+    );
+    expect(quick77.session.stageId).toBe(StageId.Prepare);
+    expect(quick77.session.currentRoomNumber).toBe(publicRoom.roomNumber);
+    expect(quick77.client.popByOpcode(ServerOpcode.JoinRoomResult)).toBeDefined();
+    expect(state.db.getUserById(quick77.session.users[0]!.id)).toEqual(userBeforeMarketReturn);
+  });
+});
+
+describe("Prepare room packets enforce exact writers and local sender context", () => {
+  test("maps packed fields correctly and prevents malformed or non-chief mutations", () => {
+    const config = loadConfig({ dbPath: ":memory:" });
+    using state = new WorldState(config);
+    const client = new SimulatedClient();
+    const session = state.createSession(client.onWireBytes, "203.0.113.160", 51160, "0.0.0.0", 0, "game");
+    const userA = state.db.createUser("prepare_local_a", "password");
+    const userB = state.db.createUser("prepare_local_b", "password");
+    session.users = [userA, userB];
+    session.netSlotIds = [state.allocateNetSlotId(), state.allocateNetSlotId()];
+    session.equippedCharIds = [0, 0];
+    session.channelSelected = true;
+    session.sendConnectHello(config);
+    const room = state.createRoom(session, "Prepare exact", "", false, 0, 0, [0, 0]);
+
+    const memberClient = new SimulatedClient();
+    const member = state.createSession(memberClient.onWireBytes, "203.0.113.161", 51161, "0.0.0.0", 0, "game");
+    member.users = [state.db.createUser("prepare_member", "password")];
+    member.netSlotIds = [state.allocateNetSlotId()];
+    member.equippedCharIds = [0];
+    member.channelSelected = true;
+    member.sendConnectHello(config);
+    state.assignSessionToRoom(member, room, [0]);
+
+    const localSlot0 = room.slots[session.roomSlotIndices[0]!]!;
+    const localSlot1 = room.slots[session.roomSlotIndices[1]!]!;
+
+    // C->S 88 has a one-byte packed team-color form only. A two-byte body must not be
+    // reinterpreted as a character selection or trigger an equipped-character DB update.
+    client.sendToServer(
+      state,
+      session.sessionId,
+      new PacketWriter(ClientOpcode.SelectTeamColor).writeU8(1).writeU8(2)
+    );
+    expect(localSlot1.teamColor).toBe(1);
+    expect(localSlot1.charId).toBe(0);
+    expect(state.db.getUserByUsername(userB.username)?.equippedChar).toBe(0);
+
+    client.sendToServer(
+      state,
+      session.sessionId,
+      new PacketWriter(ClientOpcode.SelectTeamColor).writeU8((1 << 4) | 3)
+    );
+    expect(localSlot1.teamColor).toBe(3);
+
+    // C->S 89 requires its exact two-byte form and a session-owned local index.
+    client.sendToServer(
+      state,
+      session.sessionId,
+      new PacketWriter(ClientOpcode.SelectCharacter).writeU8(1)
+    );
+    expect(localSlot1.charId).toBe(0);
+    client.sendToServer(
+      state,
+      session.sessionId,
+      new PacketWriter(ClientOpcode.SelectCharacter).writeU8(1).writeU8(2)
+    );
+    expect(localSlot1.charId).toBe(2);
+    expect(localSlot0.charId).toBe(0);
+    expect(state.db.getUserByUsername(userB.username)?.equippedChar).toBe(2);
+
+    // C->S 90 packs a target slot in the high nibble and desired open state in the low nibble.
+    // Setting slot 2 closed must not toggle/select slot 1 based on the raw byte.
+    client.sendToServer(
+      state,
+      session.sessionId,
+      new PacketWriter(ClientOpcode.ToggleSlotOpen).writeU8((3 << 4) | 0)
+    );
+    expect(room.slots[3]?.open).toBe(false);
+    expect(room.slots[1]?.open).toBe(true);
+    expect(room.maxPlayers).toBe(7);
+    client.sendToServer(
+      state,
+      session.sessionId,
+      new PacketWriter(ClientOpcode.ToggleSlotOpen).writeU8((3 << 4) | 1)
+    );
+    expect(room.slots[3]?.open).toBe(true);
+    expect(room.maxPlayers).toBe(8);
+    client.sendToServer(state, session.sessionId, new PacketWriter(ClientOpcode.ToggleSlotOpen));
+    expect(room.slots[3]?.open).toBe(true);
+
+    // C->S 86's recovered writer is exactly u8 state + u32 checksum, not a toggle fallback.
+    client.sendToServer(
+      state,
+      session.sessionId,
+      new PacketWriter(ClientOpcode.ToggleReady).writeU8(1).writeU32(0x1234_5678)
+    );
+    expect(localSlot0.ready).toBe(true);
+    client.sendToServer(
+      state,
+      session.sessionId,
+      new PacketWriter(ClientOpcode.ToggleReady).writeU8(0).writeU8(1)
+    );
+    expect(localSlot0.ready).toBe(true);
+    // A separate recovered one-byte Client writer is also exact; it sets, not toggles.
+    client.sendToServer(
+      state,
+      session.sessionId,
+      new PacketWriter(ClientOpcode.ToggleReady).writeU8(0)
+    );
+    expect(localSlot0.ready).toBe(false);
+
+    // A well-formed C->S 84 changes room settings only for the local chief in Prepare.
+    client.sendToServer(
+      state,
+      session.sessionId,
+      new PacketWriter(ClientOpcode.UpdateRoomSettings)
+        .writeString("Updated locally")
+        .writeString("room-pass")
+        .writeU8(4)
+        .writeU8(2)
+    );
+    expect(room.name).toBe("Updated locally");
+    expect(room.password).toBe("room-pass");
+    expect(room.hasPassword).toBe(true);
+    expect(room.maxPlayers).toBe(4);
+    expect(room.gameMode).toBe(2);
+
+    // The second Client writer sends only the two strings; it does not overwrite numeric fields.
+    client.sendToServer(
+      state,
+      session.sessionId,
+      new PacketWriter(ClientOpcode.UpdateRoomSettings).writeString("Strings only").writeString("pass-two")
+    );
+    expect(room.name).toBe("Strings only");
+    expect(room.password).toBe("pass-two");
+    expect(room.maxPlayers).toBe(4);
+    expect(room.gameMode).toBe(2);
+
+    memberClient.sendToServer(
+      state,
+      member.sessionId,
+      new PacketWriter(ClientOpcode.UpdateRoomSettings)
+        .writeString("Unauthorized")
+        .writeString("")
+        .writeU8(8)
+        .writeU8(0)
+    );
+    expect(room.name).toBe("Strings only");
+    expect(room.password).toBe("pass-two");
+
+    session.stageId = StageId.Game;
+    client.sendToServer(
+      state,
+      session.sessionId,
+      new PacketWriter(ClientOpcode.UpdateRoomSettings)
+        .writeString("Wrong stage")
+        .writeString("")
+        .writeU8(8)
+        .writeU8(0)
+    );
+    expect(room.name).toBe("Strings only");
+  });
+});
+
 describe("Room match-start authorization", () => {
   const makeStartMatchRequest = (
     payloadBytes: 18 | 19 | 23,
@@ -427,6 +862,8 @@ describe("Room match-start authorization", () => {
     memberSession.netSlotIds = [state.allocateNetSlotId()];
     chiefSession.sendConnectHello(config);
     memberSession.sendConnectHello(config);
+    chiefSession.channelSelected = true;
+    memberSession.channelSelected = true;
 
     const room = state.createRoom(chiefSession, "Start policy", "", false, 0, 0, [0]);
     state.assignSessionToRoom(memberSession, room, [0]);
@@ -632,6 +1069,156 @@ describe("Shop handlers preserve source-backed local-player indices", () => {
     expect(client.popByOpcode(ServerOpcode.ShopUseOrEquipResult202)).toBeUndefined();
     expect(client.popByOpcode(ServerOpcode.InventoryUpdate)).toBeUndefined();
     expect(client.popByOpcode(ServerOpcode.EquippedAvatarData)).toBeUndefined();
+  });
+});
+
+describe("UserMarket operations use the locally selected session user", () => {
+  test("routes no-index listing/cancel/buy packets to an explicit local player and syncs transfer snapshots", () => {
+    const config = loadConfig({ dbPath: ":memory:" });
+    using state = new WorldState(config);
+    const firstUser = state.db.createUser("market_local_0", "password");
+    const secondUser = state.db.createUser("market_local_1", "password");
+    const secondStockId = state.db.addStockItem(secondUser.id, 4102);
+
+    const client = new SimulatedClient();
+    const session = state.createSession(client.onWireBytes, "203.0.113.61", 51011, "0.0.0.0", 0, "game");
+    session.sendConnectHello(config);
+    session.users = [firstUser, secondUser];
+    session.channelSelected = true;
+    session.channelIndex = 0;
+    session.stageId = StageId.UserMarket;
+
+    // C->S 326 carries no local-player selector. A 2P session with no observed
+    // UserMarket selection must not silently mutate session.users[0].
+    client.sendToServer(
+      state,
+      session.sessionId,
+      new PacketWriter(ClientOpcode.UserMarketRegisterListing326).writeU32(4102).writeU32(1_000)
+    );
+    expect(state.db.getActiveMarketListings()).toHaveLength(0);
+    expect(client.popByOpcode(ServerOpcode.UserMarketRegisterResult)).toBeUndefined();
+
+    // Client C->S 321's second byte carries the selector used by this local adapter.
+    client.sendToServer(
+      state,
+      session.sessionId,
+      new PacketWriter(ClientOpcode.UserMarketStageEntry321).writeU8(1).writeU8(1)
+    );
+    expect(session.userMarketLocalIdx).toBe(1);
+    client.sendToServer(
+      state,
+      session.sessionId,
+      new PacketWriter(ClientOpcode.UserMarketRegisterListing326).writeU32(4102).writeU32(1_000)
+    );
+    const registerResult = client.popByOpcode(ServerOpcode.UserMarketRegisterResult)!;
+    expect(registerResult.readU16()).toBe(0); // local fixture result
+    expect(registerResult.readU32()).toBe(4102); // local item-code mapping
+    expect(registerResult.remaining).toBe(0);
+    const listing = state.db.getActiveMarketListings()[0]!;
+    expect(listing.sellerUserId).toBe(secondUser.id);
+    expect(listing.stockId).toBe(secondStockId);
+
+    const publicList = client.popByOpcode(ServerOpcode.UserMarketList)!;
+    expect(publicList.readU16()).toBe(1);
+    expect(publicList.readU32()).toBe(listing.id);
+    expect(publicList.readU32()).toBe(4102);
+    expect(publicList.readString()).toBe(secondUser.username);
+    expect(publicList.readU32()).toBe(1_000);
+    expect(publicList.readU16()).toBe(24); // local fixture field
+    expect(publicList.remaining).toBe(0);
+    const mySales = client.popByOpcode(ServerOpcode.UserMarketMySalesList)!;
+    expect(mySales.readU16()).toBe(1);
+    expect(mySales.readU32()).toBe(listing.id);
+    expect(mySales.readU32()).toBe(4102);
+    expect(mySales.readString()).toBe(secondUser.username);
+    expect(mySales.readU32()).toBe(1_000);
+    expect(mySales.readU16()).toBe(24); // local fixture field
+    expect(mySales.remaining).toBe(0);
+
+    // Selecting player 0 makes the same no-index cancel candidate fail the local owner check.
+    client.sendToServer(
+      state,
+      session.sessionId,
+      new PacketWriter(ClientOpcode.UserMarketStageEntry321).writeU8(0).writeU8(0)
+    );
+    client.sendToServer(
+      state,
+      session.sessionId,
+      new PacketWriter(ClientOpcode.UserMarketCancelListing).writeU32(listing.id)
+    );
+    expect(state.db.getActiveMarketListings()).toHaveLength(1);
+    expect(state.db.getUserStock(secondUser.id).find((item) => item.id === secondStockId)?.marketStatus).toBe(1);
+    expect(client.popByOpcode(ServerOpcode.UserMarketCancelResult274)).toBeUndefined();
+
+    client.sendToServer(
+      state,
+      session.sessionId,
+      new PacketWriter(ClientOpcode.UserMarketStageEntry321).writeU8(0).writeU8(1)
+    );
+    client.sendToServer(
+      state,
+      session.sessionId,
+      new PacketWriter(ClientOpcode.UserMarketCancelListing).writeU32(listing.id)
+    );
+    const cancelResult = client.popByOpcode(ServerOpcode.UserMarketCancelResult274)!;
+    expect(cancelResult.readU16()).toBe(0); // local fixture result
+    expect(cancelResult.readU32()).toBe(4102); // local item-code mapping
+    expect(cancelResult.remaining).toBe(0);
+    expect(state.db.getActiveMarketListings()).toHaveLength(0);
+    expect(state.db.getUserStock(secondUser.id).find((item) => item.id === secondStockId)?.marketStatus).toBe(0);
+    expect(client.popByOpcode(ServerOpcode.UserMarketList)?.readU16()).toBe(0);
+    expect(client.popByOpcode(ServerOpcode.UserMarketMySalesList)?.readU16()).toBe(0);
+
+    // The no-index C->S 330 buyer is likewise the selected local user, not users[0].
+    const seller = state.db.createUser("market_external_seller", "password");
+    const sellerStockId = state.db.addStockItem(seller.id, 4103);
+    const externalListing = state.db.createMarketListing(seller.id, seller.username, 4103, 500)!;
+    const firstBalanceBeforeBuy = state.db.getUserById(firstUser.id)!.marketLucci;
+    const secondBalanceBeforeBuy = state.db.getUserById(secondUser.id)!.marketLucci;
+    client.sendToServer(
+      state,
+      session.sessionId,
+      new PacketWriter(ClientOpcode.UserMarketBuyListing).writeU32(externalListing.id)
+    );
+    const purchaseResult = client.popByOpcode(ServerOpcode.UserMarketPurchaseResult)!;
+    expect(purchaseResult.readU16()).toBe(0); // local fixture result
+    expect(purchaseResult.readU32()).toBe(4103); // local listing itemCode mapping
+    expect(purchaseResult.readU32()).toBe(secondBalanceBeforeBuy! - 500);
+    purchaseResult.readVariantTime();
+    expect(purchaseResult.remaining).toBe(0);
+    expect(state.db.getUserById(firstUser.id)?.marketLucci).toBe(firstBalanceBeforeBuy);
+    expect(state.db.getUserById(secondUser.id)?.marketLucci).toBe(secondBalanceBeforeBuy! - 500);
+    expect(state.db.getUserStock(seller.id).some((item) => item.id === sellerStockId)).toBe(false);
+    expect(state.db.getUserStock(secondUser.id).some((item) => item.itemCode === 4103)).toBe(true);
+    expect(client.popByOpcode(ServerOpcode.InventoryUpdate)).toBeDefined();
+    expect(client.popByOpcode(ServerOpcode.UserMarketList)?.readU16()).toBe(0);
+
+    // Transfer uses its explicit byte and refreshes all active in-memory snapshots of that user.
+    const observerClient = new SimulatedClient();
+    const observerSession = state.createSession(
+      observerClient.onWireBytes,
+      "203.0.113.62",
+      51012,
+      "0.0.0.0",
+      0,
+      "game"
+    );
+    observerSession.sendConnectHello(config);
+    observerSession.users = [state.db.getUserById(secondUser.id)!];
+    const secondLucciBeforeTransfer = state.db.getUserById(secondUser.id)!.lucci;
+    const secondMarketBeforeTransfer = state.db.getUserById(secondUser.id)!.marketLucci;
+    client.sendToServer(
+      state,
+      session.sessionId,
+      new PacketWriter(ClientOpcode.UserMarketTransferLucci).writeU8(1).writeU32(200)
+    );
+    const transferResult = client.popByOpcode(ServerOpcode.UserMarketTransferResult)!;
+    expect(transferResult.readU16()).toBe(0); // local fixture result
+    expect(transferResult.readU32()).toBe(secondLucciBeforeTransfer! + 200);
+    expect(transferResult.readU32()).toBe(secondMarketBeforeTransfer! - 200);
+    expect(transferResult.remaining).toBe(0);
+    expect(observerSession.users[0]?.lucci).toBe(secondLucciBeforeTransfer! + 200);
+    expect(observerSession.users[0]?.marketLucci).toBe(secondMarketBeforeTransfer! - 200);
   });
 });
 
@@ -1805,6 +2392,9 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     chiefSession.sendConnectHello(config);
     kickedSession.sendConnectHello(config);
     normalSession.sendConnectHello(config);
+    chiefSession.channelSelected = true;
+    kickedSession.channelSelected = true;
+    normalSession.channelSelected = true;
 
     chiefSession.users = [state.db.createUser("kick_chief", "password")];
     chiefSession.netSlotIds = [state.allocateNetSlotId()];
@@ -1924,6 +2514,8 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     );
     leavingSession.sendConnectHello(config);
     remainingSession.sendConnectHello(config);
+    leavingSession.channelSelected = true;
+    remainingSession.channelSelected = true;
     leavingSession.users = [
       state.db.createUser("leave_local_a", "password"),
       state.db.createUser("leave_local_b", "password"),
@@ -1989,12 +2581,19 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     const client = new SimulatedClient();
     const session = state.createSession(client.onWireBytes, "127.0.0.1", 51014, "0.0.0.0", 0, "game");
     session.sendConnectHello(config);
-    session.users = [state.db.createUser("DetailUser", "password")];
-    session.netSlotIds = [state.allocateNetSlotId()];
+    session.users = [state.db.createUser("LobbyDetailRequester", "password")];
     session.stageId = StageId.Lobby;
     session.channelIndex = 1;
-    const room = state.createRoom(session, "Lobby detail", "", false, 0, 0, [0]);
-    session.stageId = StageId.Lobby;
+    session.channelSelected = true;
+
+    const roomOwnerClient = new SimulatedClient();
+    const roomOwner = state.createSession(roomOwnerClient.onWireBytes, "127.0.0.1", 51015, "0.0.0.0", 0, "game");
+    roomOwner.sendConnectHello(config);
+    roomOwner.users = [state.db.createUser("DetailUser", "password")];
+    roomOwner.netSlotIds = [state.allocateNetSlotId()];
+    roomOwner.channelIndex = 1;
+    roomOwner.channelSelected = true;
+    const room = state.createRoom(roomOwner, "Lobby detail", "", false, 0, 0, [0]);
 
     client.sendToServer(
       state,
@@ -2417,7 +3016,8 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(p81).toBeDefined();
     expect(p81.readString()).toBe("bazzi_tw");
 
-    // 7. Create Room (C->S 75 -> S->C 79 sub_4C244A + S->C 102 sub_4D67B5)
+    // 7. Create Room (local C->S 75 -> S->C 79; Client normal-strategy success parser
+    // sub_4CCE53 requests Stage 12, then queued S->C 102 reaches sub_4B89E4).
     client1.sendToServer(
       state,
       session1.sessionId,
@@ -3042,10 +3642,30 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(client1.popByOpcode(ServerOpcode.ShopConnectionPermission)?.readU8()).toBe(1);
     expect(client1.popByOpcode(ServerOpcode.ShopServerEndpoint)?.readU8()).toBe(1);
 
+    const receivedBeforeRoomValue0 = client1.receivedPackets.length;
+    const roomBeforeRoomValue0 = state.rooms.get(session1.currentRoomNumber!)!;
+    const localSlotBeforeRoomValue0 = roomBeforeRoomValue0.slots.find(
+      (slot) => slot.session === session1 && slot.localPlayerIdx === 0
+    )!;
+    const slotStateBeforeRoomValue0 = {
+      inShop: localSlotBeforeRoomValue0.inShop,
+      ready: localSlotBeforeRoomValue0.ready,
+    };
+    const userBeforeRoomValue0 = state.db.getUserById(updatedBazzi.id)!;
     client1.sendToServer(
       state,
       session1.sessionId,
-      new PacketWriter(ClientOpcode.RoomAux98).writeU8(1)
+      new PacketWriter(ClientOpcode.ContextualClientPacket98).writeU8(0)
+    );
+    expect(session1.stageId).toBe(StageId.Prepare);
+    expect(client1.receivedPackets).toHaveLength(receivedBeforeRoomValue0);
+    expect(localSlotBeforeRoomValue0).toMatchObject(slotStateBeforeRoomValue0);
+    expect(state.db.getUserById(updatedBazzi.id)).toEqual(userBeforeRoomValue0);
+
+    client1.sendToServer(
+      state,
+      session1.sessionId,
+      new PacketWriter(ClientOpcode.ContextualClientPacket98).writeU8(1)
     );
     expect(session1.stageId).toBe(StageId.Shop);
     const p16 = client1.popByOpcode(ServerOpcode.ShopInitAndStage14)!;
@@ -3071,6 +3691,25 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
       expect(localShopStock.readU8()).toBe(item.equipped);
     }
     expect(localShopStock.remaining).toBe(0);
+
+    // Value 0 belongs to the separate UserMarket caller; it must not reuse the old local
+    // room-leave interpretation while the same session is in Shop.
+    const receivedBeforeWrongContext98 = client1.receivedPackets.length;
+    const shopSlotStateBeforeWrongContext98 = {
+      inShop: localSlotBeforeRoomValue0.inShop,
+      ready: localSlotBeforeRoomValue0.ready,
+    };
+    const userBeforeWrongContext98 = state.db.getUserById(updatedBazzi.id)!;
+    client1.sendToServer(
+      state,
+      session1.sessionId,
+      new PacketWriter(ClientOpcode.ContextualClientPacket98).writeU8(0)
+    );
+    expect(session1.stageId).toBe(StageId.Shop);
+    expect(client1.receivedPackets).toHaveLength(receivedBeforeWrongContext98);
+    expect(localSlotBeforeRoomValue0).toMatchObject(shopSlotStateBeforeWrongContext98);
+    expect(state.db.getUserById(updatedBazzi.id)).toEqual(userBeforeWrongContext98);
+
     expect(client1.popByOpcode(ServerOpcode.CrashDumpChunkRequest)).toBeUndefined();
     expect(client1.popByOpcode(ServerOpcode.InventoryData)).toBeUndefined();
     expect(client1.popByOpcode(ServerOpcode.EquippedAvatarData)).toBeUndefined();
@@ -3208,15 +3847,26 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(client1.receivedPackets).toHaveLength(receivedPacketCountBefore321);
     expect(session1.stageId).toBe(StageId.UserMarket);
 
-    // The same Client function separately sends C->S 98 [u8(0)]. With no room,
-    // this reconstruction's room-only handler must not force a Prepare-stage response.
+    // The same Client function separately sends C->S 98 [u8(0)] after C->S 321.
+    // The stage-aware dispatcher keeps this UserMarket caller observation-only; it is not room leave.
+    const userBeforeMarket98 = state.db.getUserById(loggedInUser.id)!;
     client1.sendToServer(
       state,
       session1.sessionId,
-      new PacketWriter(ClientOpcode.RoomAux98).writeU8(0)
+      new PacketWriter(ClientOpcode.ContextualClientPacket98).writeU8(0)
     );
     expect(client1.receivedPackets).toHaveLength(receivedPacketCountBefore321);
     expect(session1.stageId).toBe(StageId.UserMarket);
+    const market98Audit = getRecentLogs().findLast(
+      (entry) =>
+        entry.category === "PacketAudit" &&
+        entry.message.includes("C->S 98 UserMarket follow-up")
+    );
+    expect(market98Audit?.data?.responseAssociation).toBe("UNKNOWN");
+    expect(market98Audit?.data?.responseSent).toBe(false);
+    expect(market98Audit?.data?.stageChanged).toBe(false);
+    expect(market98Audit?.data?.databaseMutation).toBe(false);
+    expect(state.db.getUserById(loggedInUser.id)).toEqual(userBeforeMarket98);
 
     // CUserMarketStage::sub_5722B3 writes [u8 localIdx]; inspect the Client-compatible
     // widths for the local reconstruction's initial snapshot, including S->C 272's count.

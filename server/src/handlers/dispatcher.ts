@@ -157,7 +157,7 @@ const SHOP_FLOW_CANDIDATE_ROLES: ReadonlyMap<number, string> = new Map([
   [ClientOpcode.ShopEnter, "initial-state candidate"],
   [ClientOpcode.ShopConnectionFollowUp38, "conditional follow-up"],
   [ClientOpcode.RequestUserMarketConnection, "conditional follow-up"],
-  [ClientOpcode.RoomAux98, "conditional follow-up; opcode 98 is shared"],
+  [ClientOpcode.ContextualClientPacket98, "conditional follow-up; opcode 98 is shared"],
   [ClientOpcode.RequestFxStockIni, "Shop-stage cache request"],
   [ClientOpcode.RequestStringTableIni, "Shop-stage cache request"],
   [ClientOpcode.RequestPackageMapIni, "Shop-stage cache request"],
@@ -187,9 +187,18 @@ const ROOM_OPCODES = new Set<number>([
   ClientOpcode.StartMatch,
   ClientOpcode.ChangeRoomPassword,
   ClientOpcode.PracticeHandicap,
-  ClientOpcode.RoomAux98,
   ClientOpcode.ExchangeAction,
   ClientOpcode.ExchangePassCheck,
+]);
+
+// Client C->S 98 is shared by distinct writers: the Shop success path sends 1 only when its
+// current stage is one of {Prepare, Practice, Chatting, Exchange}; UserMarket sends 0 after 321.
+// Resolve those contexts explicitly instead of routing solely by opcode/one-byte width.
+const CONTEXTUAL_98_ROOM_ENTRY_STAGES: ReadonlySet<number> = new Set([
+  StageId.Prepare,
+  StageId.Practice,
+  StageId.Chatting,
+  StageId.Exchange,
 ]);
 
 const COMMON_OPCODES = new Set<number>([
@@ -387,6 +396,29 @@ export function dispatchTcpPacket(
     });
   };
 
+  if (opcode === ClientOpcode.ContextualClientPacket98) {
+    if (session.stageId === StageId.UserMarket) {
+      logRoute("handleShopPacket (C->S 98 UserMarket follow-up)");
+      handleShopPacket(state, session, opcode, reader);
+      return;
+    }
+    if (
+      CONTEXTUAL_98_ROOM_ENTRY_STAGES.has(session.stageId) &&
+      session.currentRoomNumber !== null
+    ) {
+      logRoute("handleRoomPacket (C->S 98 Shop-entry context)");
+      handleRoomPacket(state, session, opcode, reader);
+      return;
+    }
+    observeUnresolvedClientCandidate(session, opcode, reader, {
+      explanation:
+        "C->S 98 has distinct Shop-success and UserMarket-follow-up callers; this session stage/room context matches neither local adapter",
+      payloadSchema: "shared Client writer form: exactly u8 (Shop caller writes 1; UserMarket caller writes 0)",
+      semanticRole: "UNKNOWN outside the source-backed Shop/UserMarket contexts",
+    });
+    return;
+  }
+
   // C->S 16 has source-backed chat writers in CChatStage, but the former pre-login
   // COnePageIDStage ID-check attribution is not present in this build. Observe that
   // pre-login context without sending the guessed S->C 59 response.
@@ -465,29 +497,21 @@ export function dispatchTcpPacket(
     return;
   }
 
-  // 4. Opcode 67: Either `CStage::sub_4BA6C0` (`[u16 idx, u32 key]` -> `S->C 83`) or username query (`[str username]` -> `S->C 70` + `S->C 81`)
+  // The checked-in Client has two recovered C->S 67 writers, both in CLobbyStage and both
+  // exactly `[u16 roomIndex, u32 opaque room-context word]`. Do not infer a username query from
+  // printable bytes or route an unverified body into common user-info logic.
   if (opcode === ClientOpcode.RoomDetailOrUserInfo) {
-    const saved = reader.offset;
-    if (reader.remaining >= 2) {
-      const len = reader.readU16();
-      reader.offset = saved;
-      if (len > 0 && len + 2 === reader.remaining && reader.remaining !== 6) {
-        logRoute("handleCommonPacket (RoomDetailOrUserInfo username query)");
-        handleCommonPacket(state, session, opcode, reader);
-        return;
-      }
-      if (len + 2 === reader.remaining && reader.remaining === 6) {
-        const clone = new PacketReader(reader.plain, reader.degree);
-        const maybeStr = clone.readString();
-        if (/^[\x20-\x7e]+$/.test(maybeStr)) {
-          logRoute("handleCommonPacket (RoomDetailOrUserInfo username query)");
-          handleCommonPacket(state, session, opcode, reader);
-          return;
-        }
-      }
+    if (session.stageId === StageId.Lobby && reader.remaining === 6) {
+      logRoute("handleLobbyPacket (C->S 67 room-detail writer)");
+      handleLobbyPacket(state, session, opcode, reader);
+    } else {
+      observeUnresolvedClientCandidate(session, opcode, reader, {
+        explanation:
+          "Recovered C->S 67 writers are exact six-byte Lobby room-detail forms; alternate string/query semantics are not established",
+        payloadSchema: "recovered Lobby form: u16 roomIndex + u32 opaque room-context word (6 bytes)",
+        semanticRole: "UNKNOWN outside the recovered Lobby room-detail context",
+      });
     }
-    logRoute("handleLobbyPacket (RoomDetailOrUserInfo lobby form)");
-    handleLobbyPacket(state, session, opcode, reader);
     return;
   }
 

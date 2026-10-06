@@ -19,7 +19,7 @@ The server uses Bun TCP/UDP sockets, `bun:sqlite`, and CP950 text encoding. It s
 
 ## Database schema
 
-`src/db/migrations.ts` tracks the SQLite schema with `PRAGMA user_version`. Each numbered migration runs in its own transaction. The initial migration creates the current tables and indexes with `IF NOT EXISTS`, so an existing unversioned database using the previous schema is adopted in place without rebuilding its data. Startup fails clearly if the database was created by a newer schema version. Add future schema changes as a new migration; do not rewrite an already-applied migration.
+`src/db/migrations.ts` tracks the SQLite schema with `PRAGMA user_version`. Each numbered migration runs in its own immediate transaction. Version 1 creates missing tables and indexes with `IF NOT EXISTS`; version 2 adds the known later `users`/`inventory` columns when absent and backfills a newly added `marketLucci` from the existing `lucci`. Existing rows are retained and no table is rebuilt. This additive upgrade assumes the legacy database still has the core columns used by the application; an incompatible core layout fails during migration or prepared-statement initialization rather than being silently guessed. Startup also fails clearly if the database was created by a newer schema version. Add future schema changes as a new migration; do not rewrite an already-applied migration.
 
 ## Logs and Shop-click diagnostics
 
@@ -33,7 +33,7 @@ For every decoded packet and framing/byte-preview diagnostics, run:
 BNB_LOG_LEVEL=debug bun run start
 ```
 
-Known login credentials, session-handoff tokens, Shop connection credentials, Nexon Pass/coupon codes, and Nexon Club credential packet previews are redacted. Other debug previews may still contain client data; review before sharing logs. Colors are automatic only on a TTY. Set `BNB_LOG_COLOR=never` to disable them or `BNB_LOG_COLOR=always` to force them. `NO_COLOR=1` disables automatic color.
+Known login credentials, session-handoff tokens, room passwords (C->S 75/76/94), Shop connection credentials, Nexon Pass/coupon codes, and Nexon Club credential packet previews are redacted. Other debug previews may still contain client data; review before sharing logs. Colors are automatic only on a TTY. Set `BNB_LOG_COLOR=never` to disable them or `BNB_LOG_COLOR=always` to force them. `NO_COLOR=1` disables automatic color.
 
 If a click produces no `ShopTrace` event, that establishes only that no listed candidate reached the server dispatcher in the observed interval. Check every TCP session (including the separate GameServer/redirect connection) and use debug or Client-side socket tracing to look for other packets; server logs cannot prove that the Client did or did not invoke its local packet writer.
 

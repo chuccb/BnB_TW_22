@@ -74,7 +74,7 @@ export const ClientOpcode = {
   QueryRankingPage: 64, // sub_4A48F2: [u16 startRank] -> S->C 69 / S->C 66
   ModifyUserInfo: 65, // sub_5495CD
   QueryUserInfo66: 66, // CStage::sub_4BC236: [str username, u8(1), u8 localIdx] -> S->C 81 + S->C 248 + S->C 71
-  RoomDetailOrUserInfo: 67, // sub_4C266D: [u16 roomIdx, u32 roomContextWord] -> S->C 83
+  RoomDetailOrUserInfo: 67, // CLobbyStage::sub_4C266D / sub_4C50C4: [u16 roomIdx, u32 opaque room-context] (exact 6B) -> S->C 83
   UserPagePacket68: 68, // CUserPageDialog::sub_53DEEA emits [str stored name]; response route/schema UNKNOWN
   QueryUserBrief: 69, // sub_4A0321: [u32 userId] -> S->C 70
   QueryUserInfo: 70, // CChatStage::sub_4ABBDE: [u8(0), str username] -> S->C 81 + 70; distinct from S->C ServerOpcode 70 PUserInfoResult
@@ -82,37 +82,37 @@ export const ClientOpcode = {
   UseSuperSpeaker: 72, // sub_4A3E36: [u8 localIdx, u8 speakerType, str msg] -> S->C 65 + S->C 21
   SaveDefaultChars: 73, // sub_4BABFF / sub_54728B: [u8 playerCount, playerCount * u8 charId]
   UpdatePremiumSlotState: 74, // sub_5ED25A: [u8 playerIdx, u8 state]
-  CreateRoom: 75, // sub_4CD379 / sub_4CAC9F / sub_4CB60D / sub_4CC28E -> S->C 79 + S->C 102
-  JoinRoom: 76, // sub_4C4D93 -> S->C 80 + S->C 102
-  QuickJoin: 77, // sub_4C83BA / CNormalLobbyStrategy::sub_4CCCE2 -> S->C 81
-  LeaveRoom: 78, // sub_5AA580: []; Client locally enters Lobby before send; S->C 9 is a dump-offset route in GameServer stages
-  CreateRoomShort: 79, // sub_4C070B -> S->C 79 + S->C 102
-  RoomListScrollOrDetail: 80, // sub_4A496F -> S->C 83
-  QuickJoinShort: 81, // Quick join alias -> S->C 81
-  ReturnToRoom: 82, // sub_536E2E -> S->C 80
-  EnterLobby: 83, // CStage::sub_4B94A6 -> S->C 89 + local S->C 186 candidate + S->C 82
+  CreateRoom: 75, // Normal writers: str,str,u8,count,IDs then u32 or u8+u32; sub_4CAC9F has distinct [u8,str,str,...] / [u8,str,...] forms
+  JoinRoom: 76, // sub_4C4D93 password-string/conditional-prefix writer + separate invite-marker writer; u32 context is opaque locally
+  QuickJoin: 77, // sub_4C83BA: [u8 localCnt, localCnt*u8 charId, u8 opaque tail]
+  LeaveRoom: 78, // sub_5AA580: exact empty body; Client locally enters Lobby before send, S->C 9 is a GameServer dump-offset route
+  CreateRoomShort: 79, // sub_4C070B: [str, u8 opaque, u8 count, IDs, u8 opaque, u32 opaque]
+  RoomListScrollOrDetail: 80, // sub_4A496F: [u16 roomIdx] -> S->C 83
+  QuickJoinShort: 81, // CNormalLobbyStrategy::sub_4CCCE2: [u8 localCnt, localCnt*u8 charId, u32 opaque tail]
+  ReturnToRoom: 82, // Shop sub_536E2E / UserMarket sub_57271B after S->C 99: [u16 roomNumber, u32 opaque context]
+  EnterLobby: 83, // CStage::sub_4B94A6: empty Lobby-entry signal; local handler has a selected-channel/handoff gate
   LobbyConditionalSignal261: 261, // CLobbyStage::sub_4C99DC: empty; feature 18 + sub_59DBD9()==79 + j[2013] gate; no Shop-click or reply association
 
   // Room / Prepare / Exchange Stage (CPrepareStage / CExchangeStage)
-  UpdateRoomSettings: 84, // sub_4D6803 / sub_4D689B -> S->C 93
-  ToggleReady: 86, // sub_4D5B2F: [u8 readyState, u32 esfnChecksum] -> S->C 104
-  SelectMap: 87, // sub_4D1E59: [u16 mapId, u32 mapKey] -> S->C 109
-  SelectTeamColor: 88, // sub_4D2A67: [u8((localIdx<<4)|team)] -> S->C 105 + S->C 104
-  SelectCharacter: 89, // sub_4D2AFD: [u8 localIdx, u8 charId] -> S->C 106 + S->C 104
-  ToggleSlotOpen: 90, // sub_4D2BB8: [u8((slotIdx<<4)|open)] -> S->C 107 + S->C 104
-  KickPlayer: 91, // CPrepareStage::sub_4DAE65: [u32 targetSlotNetId, u8 hasSuperChiefItem]
-  BanVoteResponse: 92, // sub_4D555E -> S->C 111
+  UpdateRoomSettings: 84, // sub_4D688D: [str,str,u8,u8]; sub_4D696C: [str,str]
+  ToggleReady: 86, // sub_4B2350: [u8]; Prepare sub_4D5B2F: [u8 readyState,u32 esfnChecksum]
+  SelectMap: 87, // sub_4B247D: [u16 mapId]; sub_4D1E59: [u16 mapId,u32 mapKey]
+  SelectTeamColor: 88, // CSlotStage sub_4B8475 / Prepare sub_4D2A67: one packed u8(localIdx,team)
+  SelectCharacter: 89, // sub_4B8065 / Practice sub_4D0813 / Prepare sub_4D2AFD: [u8 localIdx,u8 charId]
+  ToggleSlotOpen: 90, // CSlotStage sub_4B84FF / Prepare sub_4D2BB8: one packed u8(slotIdx,openState)
+  KickPlayer: 91, // Prepare sub_4DAE65 and separate CChattingStage sub_4B4A3E writers: [u32 targetSlotNetId,u8 flag]
+  BanVoteResponse: 92, // sub_4D555E: [u32 targetSlotNetId,u8 voteFlag] -> local S->C 111 mapping
   StartMatch: 93, // sub_4D5DB1 + sub_4DF2EC -> S->C 112 + S->C 113
   ChangeRoomPassword: 94, // sub_4DB16C -> S->C 231 + S->C 93
   ClientPacket95: 95, // Six direct writers: 3*u8 + u16; no shared field meaning or reply established
   PracticeHandicap: 96, // sub_4D0627 -> S->C 108
   TeamChat: 97, // CChatStage::sub_4AD598 -> S->C 114
-  RoomAux98: 98, // shared sub_4B8E1D writer: [u8 value], called from shop-connection and UserMarket sub_5723F6 paths
+  ContextualClientPacket98: 98, // shared sub_4B8E1D: Shop success sends u8(1) after stage gate {12,19,17,18}; UserMarket sends u8(0) after C->S 321
   StagePacket99: 99, // CStage::sub_4B24F6: [u8 opaque, u16 rowCount, rowCount * 3*u32]; semantics/reply UNKNOWN
   ExchangeAction: 100, // CExchangeStage::sub_558142: [u8 state, (if state==3: u32 lucci, u8 count, count*(u32 stockId, 16B SYSTEMTIME))]
   ExchangePassCheck: 101, // CExchangeStage::sub_55B5B0: [str pass] -> S->C 130 + S->C 126
   MyPageUpdateBadge: 103, // CMyPageDialog::sub_54467A: [u8 playerIdx, u8 badge]
-  RoomChiefBroadcast: 104, // sub_4BE3C5: [u16 roomNum, u32 chiefKey, u8 flag]
+  RoomChiefBroadcast: 104, // sub_4BE3C5: [u16 roomNum, u32 opaque room-context word, u8 flag]
   ReportPlayer: 105, // sub_476AD6: [str targetUser, u16 reasonCode, u8 flag, str detail]
   CancelAction: 106, // sub_49DC34: empty cancel notification
 
@@ -326,7 +326,7 @@ export const ServerOpcode = {
   ExpSync: 89, // CStage::sub_4B992F
   RoomSettingsSync: 93, // CPrepareStage::sub_4D6BC2
   StageSpecificRoute99: 99, // CStage fallback, Shop connection manager, and UserMarket have separate S->C 99 paths
-  ShopLeaveReturnStage: 99, // CShopConnectionMan::sub_529EB2: [u16 targetStageId] -> C->S 82 or 78; separate from CStage fallback case 99 -> sub_4B9D81
+  ShopLeaveReturnStage: 99, // CShopStageNew sub_53C550->sub_536E2E / UserMarket sub_574380->sub_57271B: [u16]; {12,19,17,18}->C->S 82, else C->S 78 + Lobby; distinct from CStage fallback sub_4B9D81
   SetPlayerOnPrepare: 102, // CSlotStage::sub_4B89E4 (CSetPlayerOnPreparePacket)
   PlayerLeftSlot: 103, // CSessionStage::sub_4B789B [u8 slotIdx, u32 removedNetId, u8 flag] -> CPrepareStage::sub_4D4154
   SlotStateSync: 104, // CPrepareStage::sub_4D9D08

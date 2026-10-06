@@ -102,6 +102,27 @@ function hasUserMarketTransactionContext(state: WorldState, session: ClientSessi
   return hasAuthenticatedGameContext(state, session) && session.stageId === StageId.UserMarket;
 }
 
+/** Record a Client-carried selector for the local market adapter; this is not a verified server identity rule. */
+function selectUserMarketUser(session: ClientSession, localIdx: number): UserRecord | null {
+  const user = session.users[localIdx];
+  if (!user) return null;
+  session.userMarketLocalIdx = localIdx;
+  return user;
+}
+
+/**
+ * Resolve the local market user for a packet with no selector byte. The only implicit fallback
+ * is an unambiguous one-user session; a two-user session must have supplied a valid selector.
+ */
+function getSelectedUserMarketUser(
+  session: ClientSession
+): { localIdx: number; user: UserRecord } | null {
+  const localIdx = session.userMarketLocalIdx ?? (session.users.length === 1 ? 0 : null);
+  if (localIdx === null) return null;
+  const user = session.users[localIdx];
+  return user ? { localIdx, user } : null;
+}
+
 /**
  * Builds S->C 194 (`CUserInventoryMan::sub_595272` -> `sub_594ECF`) full inventory load
  * or S->C 188 (`CUserInventoryMan::sub_5953FE` -> `sub_594ECF`) inventory update:
@@ -513,8 +534,8 @@ export function buildMarketMySalesPacket275(
   state: WorldState,
   session: ClientSession
 ): PacketWriter {
-  const user = session.users[0];
-  const listings = user ? state.db.getMarketListingsBySeller(user.id) : [];
+  const selection = getSelectedUserMarketUser(session);
+  const listings = selection ? state.db.getMarketListingsBySeller(selection.user.id) : [];
   const w275 = new PacketWriter(ServerOpcode.UserMarketMySalesList);
   w275.writeU16(listings.length);
   for (const item of listings) {
@@ -1478,6 +1499,7 @@ export function handleShopPacket(
       // This S->C 269 success is a reconstruction choice based on the Client's
       // confirmed transition parser, not a production-server trace.
       session.stageId = StageId.UserMarket;
+      session.userMarketLocalIdx = null;
       const w269 = new PacketWriter(ServerOpcode.UserMarketEnterResult);
       w269.writeU8(1);
       session.sendPacket(w269);
@@ -1503,7 +1525,7 @@ export function handleShopPacket(
       }
       const fieldA = reader.readU8();
       const localIdx = reader.readU8();
-      if (!session.users[localIdx]) {
+      if (!selectUserMarketUser(session, localIdx)) {
         logRejectedUserMarketPacket(session, opcode, payloadBytes, "second u8 localPlayerIdx naming a session user", "Ignored C->S 321 with an invalid local-player index");
         break;
       }
@@ -1518,6 +1540,46 @@ export function handleShopPacket(
       break;
     }
 
+    case ClientOpcode.ContextualClientPacket98: {
+      // CUserMarketStage::sub_5723F6 emits u8(0) immediately after its C->S 321 body.
+      // Do not apply the room/Shop u8(1) policy here: no Client reply association or official
+      // state transition for this UserMarket follow-up has been established.
+      const payloadBytes = reader.remaining;
+      const fieldValue = parseExactPayload(reader, (probe) =>
+        probe.remaining === 1 ? probe.readU8() : null
+      );
+      if (
+        fieldValue !== 0 ||
+        !hasUserMarketTransactionContext(state, session) ||
+        session.userMarketLocalIdx === null ||
+        !session.users[session.userMarketLocalIdx]
+      ) {
+        logRejectedUserMarketPacket(
+          session,
+          opcode,
+          payloadBytes,
+          "exact u8(0), authenticated UserMarket-stage session, and a local-player selection from C->S 321",
+          "Ignored malformed or out-of-context C->S 98 UserMarket follow-up"
+        );
+        break;
+      }
+      logger.info("PacketAudit", "Observed C->S 98 UserMarket follow-up; no Server response/state association is established", {
+        direction: "C->S",
+        wireOpcode: opcode,
+        opcodeName: formatClientOpcode(opcode),
+        sessionId: session.sessionId,
+        connectionKind: session.connectionKind,
+        stageId: formatStageId(session.stageId),
+        payloadBytes,
+        payloadSchema: "u8(0), emitted after C->S 321 by CUserMarketStage::sub_5723F6",
+        responseAssociation: "UNKNOWN",
+        responseSent: false,
+        stageChanged: false,
+        databaseMutation: false,
+      });
+      break;
+    }
+
     case ClientOpcode.UserMarketStageSync324: {
       // CUserMarketStage::sub_5722B3 writes exactly one local-player index on the sync path.
       const payloadBytes = reader.remaining;
@@ -1526,7 +1588,7 @@ export function handleShopPacket(
         break;
       }
       const localIdx = reader.readU8();
-      const marketUser = session.users[localIdx];
+      const marketUser = selectUserMarketUser(session, localIdx);
       if (!marketUser) {
         logRejectedUserMarketPacket(session, opcode, payloadBytes, "localPlayerIdx naming a session user", "Ignored C->S 324 with an invalid local-player index");
         break;
@@ -1565,7 +1627,7 @@ export function handleShopPacket(
       const field1 = reader.readU8();
       const field2 = reader.readU16();
       const localIdx = reader.readU8();
-      if (!session.users[localIdx]) {
+      if (!selectUserMarketUser(session, localIdx)) {
         logRejectedUserMarketPacket(session, opcode, payloadBytes, "last u8 localPlayerIdx naming a session user", "Ignored C->S 325 with an invalid local-player index");
         break;
       }
@@ -1593,7 +1655,23 @@ export function handleShopPacket(
       }
       const selectedItemField = reader.readU32();
       const priceField = reader.readU32();
-      const listing = state.db.createMarketListing(user!.id, user!.username, selectedItemField, priceField);
+      const selection = getSelectedUserMarketUser(session);
+      if (!selection) {
+        logRejectedUserMarketPacket(
+          session,
+          opcode,
+          payloadBytes,
+          "selected UserMarket local player; C->S 326 itself has no selector byte",
+          "Ignored C->S 326 because a two-user session has no unambiguous local-player selection"
+        );
+        break;
+      }
+      const listing = state.db.createMarketListing(
+        selection.user.id,
+        selection.user.username,
+        selectedItemField,
+        priceField
+      );
       if (!listing) {
         logger.info("PacketAudit", "Ignored C->S 326 whose local item-code/price policy did not resolve", {
           direction: "C->S",
@@ -1624,7 +1702,18 @@ export function handleShopPacket(
         break;
       }
       const listingId = reader.readU32();
-      const cancelled = state.db.cancelMarketListing(listingId, user!.id);
+      const selection = getSelectedUserMarketUser(session);
+      if (!selection) {
+        logRejectedUserMarketPacket(
+          session,
+          opcode,
+          payloadBytes,
+          "selected UserMarket local player; C->S 327 itself has no selector byte",
+          "Ignored C->S 327 because a two-user session has no unambiguous local-player selection"
+        );
+        break;
+      }
+      const cancelled = state.db.cancelMarketListing(listingId, selection.user.id);
       if (!cancelled) {
         logger.info("PacketAudit", "Ignored C->S 327 without an active listing owned by the selected local user", {
           direction: "C->S",
@@ -1665,7 +1754,7 @@ export function handleShopPacket(
         logRejectedUserMarketPacket(session, opcode, payloadBytes, "authenticated UserMarket-stage session; exact str query, u16 field, u8 localPlayerIdx", "Ignored malformed or out-of-context C->S 328 search body");
         break;
       }
-      if (!session.users[parsedSearch.localIdx]) {
+      if (!selectUserMarketUser(session, parsedSearch.localIdx)) {
         logRejectedUserMarketPacket(session, opcode, payloadBytes, "last u8 localPlayerIdx naming a session user", "Ignored C->S 328 with an invalid local-player index");
         break;
       }
@@ -1693,7 +1782,7 @@ export function handleShopPacket(
       }
       const localIdx = reader.readU8();
       const amount = reader.readU32();
-      const transferUser = session.users[localIdx];
+      const transferUser = selectUserMarketUser(session, localIdx);
       if (!transferUser) {
         logRejectedUserMarketPacket(session, opcode, payloadBytes, "localPlayerIdx naming a session user", "Ignored C->S 329 with an invalid local-player index");
         break;
@@ -1711,7 +1800,7 @@ export function handleShopPacket(
         });
         break;
       }
-      session.users[localIdx] = updated;
+      synchronizeSessionUserSnapshot(state, updated);
       const userLucci = updated.lucci;
       const marketLucci = updated.marketLucci ?? updated.lucci;
       logger.debug("UserMarket", "Handled exact C->S 329 with local reconstruction direction", {
@@ -1740,7 +1829,18 @@ export function handleShopPacket(
         break;
       }
       const listingId = reader.readU32();
-      const bought = state.db.buyMarketListing(listingId, user!.id);
+      const selection = getSelectedUserMarketUser(session);
+      if (!selection) {
+        logRejectedUserMarketPacket(
+          session,
+          opcode,
+          payloadBytes,
+          "selected UserMarket local player; C->S 330 itself has no selector byte",
+          "Ignored C->S 330 because a two-user session has no unambiguous local-player selection"
+        );
+        break;
+      }
+      const bought = state.db.buyMarketListing(listingId, selection.user.id);
       if (!bought) {
         logger.info("PacketAudit", "Ignored C->S 330 without an affordable active listing for another user", {
           direction: "C->S",

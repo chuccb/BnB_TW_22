@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -290,6 +291,72 @@ describe("SQLite schema migrations", () => {
 
     migrateDatabase(db.db);
     expect(db.getInventory(user.id)).toHaveLength(1);
+  });
+
+  test("adds known v2 columns to an existing unversioned database without losing user or stock data", () => {
+    const directory = mkdtempSync(join(tmpdir(), "bnb-legacy-schema-test-"));
+    const dbPath = join(directory, "legacy.sqlite");
+
+    try {
+      const legacy = new Database(dbPath, { create: true, strict: true });
+      legacy.exec(`
+        CREATE TABLE users (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+          nickname TEXT NOT NULL DEFAULT '',
+          password TEXT NOT NULL,
+          gender INTEGER NOT NULL DEFAULT 0,
+          level INTEGER NOT NULL DEFAULT 1,
+          exp INTEGER NOT NULL DEFAULT 0,
+          wins INTEGER NOT NULL DEFAULT 0,
+          draws INTEGER NOT NULL DEFAULT 0,
+          losses INTEGER NOT NULL DEFAULT 0,
+          lucci INTEGER NOT NULL DEFAULT 50000,
+          cash INTEGER NOT NULL DEFAULT 10000,
+          grade INTEGER NOT NULL DEFAULT 0,
+          rankFlag INTEGER NOT NULL DEFAULT 0,
+          equippedChar INTEGER NOT NULL DEFAULT 0,
+          guildName TEXT NOT NULL DEFAULT '',
+          guildMark INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE inventory (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          userId INTEGER NOT NULL,
+          packageId INTEGER NOT NULL,
+          itemId INTEGER NOT NULL,
+          quantity INTEGER NOT NULL DEFAULT 1,
+          equippedSlot INTEGER NOT NULL DEFAULT 0,
+          expireTime INTEGER NOT NULL DEFAULT 0,
+          customText TEXT NOT NULL DEFAULT '',
+          FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
+        );
+        INSERT INTO users (username, nickname, password, lucci, cash)
+        VALUES ('legacy_user', 'Legacy', 'legacy-password', 1234, 5678);
+        INSERT INTO inventory (userId, packageId, itemId, quantity)
+        VALUES (1, 1001, 4500, 2);
+      `);
+      legacy.close();
+
+      using db = new GameDatabase(dbPath);
+      const migratedUser = db.getUserByUsername("legacy_user");
+      expect(migratedUser).toMatchObject({
+        id: 1,
+        username: "legacy_user",
+        lucci: 1234,
+        cash: 5678,
+        marketLucci: 1234,
+        rankGrade: 1,
+        ladderPoints: 1000,
+        isGm: 0,
+      });
+      expect(db.getUserStock(1)).toMatchObject([
+        { itemCode: 4500, quantity: 2, remainUnits: 0, marketStatus: 0 },
+      ]);
+      expect(db.db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version)
+        .toBe(CURRENT_SCHEMA_VERSION);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   test("persists the schema version and user data across database restarts", () => {

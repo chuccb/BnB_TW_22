@@ -30,10 +30,76 @@ function readCompleteString(reader: PacketReader): string | null {
   return reader.readString();
 }
 
+function sessionOwnsRoomSlot(session: ClientSession, room: GameRoom): boolean {
+  return room.slots.some((slot) => slot.occupied && slot.session === session);
+}
+
 function sessionOwnsChiefSlot(session: ClientSession, room: GameRoom): boolean {
   return room.slots.some(
     (slot) => slot.occupied && slot.session === session && slot.netSlotId === room.chiefSlotNetId
   );
+}
+
+function hasSelectedRoomStageContext(
+  state: WorldState,
+  session: ClientSession,
+  room: GameRoom,
+  allowedStages: readonly number[]
+): boolean {
+  return session.connectionKind === "game" &&
+    session.channelSelected &&
+    Number.isInteger(session.channelIndex) &&
+    session.channelIndex >= 0 &&
+    session.channelIndex < state.channels.length &&
+    session.currentRoomNumber === room.roomNumber &&
+    allowedStages.includes(session.stageId) &&
+    sessionOwnsRoomSlot(session, room);
+}
+
+function getSessionRoomSlot(
+  session: ClientSession,
+  room: GameRoom,
+  localIdx: number
+): { slotIdx: number; slot: RoomSlot } | null {
+  if (!Number.isInteger(localIdx) || localIdx < 0 || localIdx >= session.users.length) return null;
+  const slotIdx = session.roomSlotIndices[localIdx];
+  if (slotIdx === undefined) return null;
+  const slot = room.slots[slotIdx];
+  const user = session.users[localIdx];
+  if (
+    !slot ||
+    !user ||
+    !slot.occupied ||
+    slot.session !== session ||
+    slot.localPlayerIdx !== localIdx ||
+    slot.user?.id !== user.id
+  ) {
+    return null;
+  }
+  return { slotIdx, slot };
+}
+
+function logRejectedRoomPacket(
+  session: ClientSession,
+  room: GameRoom,
+  opcode: number,
+  payloadBytes: number,
+  expectedSchema: string,
+  reason: string
+): void {
+  logger.warn("Room", reason, {
+    direction: "C->S",
+    wireOpcode: opcode,
+    sessionId: session.sessionId,
+    connectionKind: session.connectionKind,
+    stageId: formatStageId(session.stageId),
+    roomNumber: room.roomNumber,
+    payloadBytes,
+    expectedSchema,
+    responseSent: false,
+    roomStateChanged: false,
+    databaseMutation: false,
+  });
 }
 
 /**
@@ -58,21 +124,14 @@ export function computeSlotStateFlags(slot: RoomSlot): number {
 }
 
 /**
- * Writes `CUser::sub_4A42E8` (`0x004A42E8`) into a PacketWriter:
- *   str username
- *   u8 gender
- *   u8 level
- *   u32 exp
- *   u16 rankFlag
- *   u32 wins
- *   u32 losses
- *   u32 draws
- *   u32 lucci
- *   u8 grade
- *   u16 pad0
- *   u16 stat1
- *   u16 stat2
- *   u16 stat3
+ * Writes the fields consumed by `CUser::sub_4A42E8` (`0x004A42E8`) in wire order:
+ *   str (Client CUser member +0x08)
+ *   u8 (+0x24), u8 (+0x30), u32 (+0x3C), u16 (+0x54)
+ *   u32 (+0x60), u32 (+0x78), u32 (+0x6C), u32 (+0x48), u8 (+0x90)
+ *   u16 (discarded by the Client parser), u16 (+0xC0), u16 (+0xCC), u16 (+0xD8)
+ *
+ * The property names passed in `user` are this reconstruction's mapping; the Client dump only
+ * proves the read widths/order and destination member offsets shown above.
  */
 export function writeCUserBlock(w: PacketWriter, user: UserRecord): void {
   w.writeString(user.username);
@@ -85,10 +144,10 @@ export function writeCUserBlock(w: PacketWriter, user: UserRecord): void {
   w.writeU32(user.draws);
   w.writeU32(user.lucci);
   w.writeU8(user.grade);
-  w.writeU16(0);
-  w.writeU16(0);
-  w.writeU16(0);
-  w.writeU16(0);
+  w.writeU16(0); // Read and discarded by CUser::sub_4A42E8.
+  w.writeU16(0); // CUser member +0xC0; semantics not established here.
+  w.writeU16(0); // CUser member +0xCC; semantics not established here.
+  w.writeU16(0); // CUser member +0xD8; semantics not established here.
 }
 
 /**
@@ -132,14 +191,30 @@ export function writeSlotAccessoryBlock(
 }
 
 /**
- * Builds S->C 102 (`CSessionStage::sub_4B7DF2` case `0x66` -> vtable `+328` -> `CSlotStage::sub_4B89E4` at `0x004B89E4`):
- *   Constructs `CSetPlayerOnPreparePacket` (`CSlotAccessoryPacket::possible_ctor_or_dtor_0` at `0x004376E4`):
- *   `CSetPlayerPacket` (`0x00437337`) + `CSlotAccessoryPacket` (`0x00437484`)
+ * Builds S->C 102. In the Client's Stage-12 path, `CPrepareStage::sub_4DCF07` falls back to
+ * `CSessionStage::sub_4B7DF2`; opcode 102 dispatches through vtable `+328` to
+ * `CSlotStage::sub_4B89E4` (`0x004B89E4`). That handler constructs
+ * `CSetPlayerOnPreparePacket` via `CSlotAccessoryPacket::possible_ctor_or_dtor_0`
+ * (`0x004376E4`), which parses `CSetPlayerPacket` (`0x00437337`) and
+ * `CSlotAccessoryPacket` (`0x00437484`).
+ *
+ * Wire order after the opcode:
+ *   u8 slotIdx, u32 slotNetId, u8 selector, u8 packetField20, u8 packetField36, u8 discarded
+ *   if selector != 0: u8 conditionalByte
+ *   block(3) [stateFlags, charId, teamColor]
+ *   CUser::sub_4A42E8 fields, u32 trailing CUser value, u8 wrapper byte
+ *   if Client feature 15 is enabled: str + u32 extension fields
+ *   CSlotAccessoryPacket
+ * The third outer field is called `packetSelector` here only because it selects whether the
+ * following conditional byte is present. `CSessionStage::sub_4B72C6` also uses nonzero versus
+ * zero to enable or suppress join-notice work, but `CPrepareStage::sub_4D9A28` calls the base
+ * slot/user installation path in either case. It therefore must not be described as an avatar
+ * enable flag.
  */
 export function buildSetPlayerPacket(
   state: WorldState,
   slot: RoomSlot,
-  joinAnnounce: number = 1
+  packetSelector: number = 1
 ): PacketWriter {
   const w = new PacketWriter(102);
   const user: UserRecord = slot.user ?? {
@@ -164,12 +239,12 @@ export function buildSetPlayerPacket(
 
   w.writeU8(slot.slotIdx);
   w.writeU32(slot.netSlotId);
-  w.writeU8(joinAnnounce);
-  w.writeU8(0); // flag20
-  w.writeU8(0); // flag36
-  w.writeU8(0); // unused
-  if (joinAnnounce !== 0) {
-    w.writeU8(0); // extraJoinFlag
+  w.writeU8(packetSelector);
+  w.writeU8(0); // packet field +20; semantics not established.
+  w.writeU8(0); // packet field +36; passed to the Client's slot-state store.
+  w.writeU8(0); // Read and discarded by CSetPlayerPacket constructor.
+  if (packetSelector !== 0) {
+    w.writeU8(0); // Conditional packet field +32; semantics not established.
   }
 
   const slotBlock = new Uint8Array([
@@ -181,10 +256,15 @@ export function buildSetPlayerPacket(
 
   writeCUserBlock(w, user);
 
-  w.writeU32(0); // userFlags
-  w.writeU8(0xff); // coupleSlotIdx (0xFF = none)
-  w.writeString(user.guildName || "");
-  w.writeU32(user.guildMark || 0);
+  // The Client reads a u32, then passes it to a char-parameter setter at CUser+0xB4.
+  // Its business meaning is not established by the parser.
+  w.writeU32(0);
+  w.writeU8(0xff); // Local builder placeholder for the Client's following wrapper byte.
+  if (state.config.enabledFeatures.has(15)) {
+    // The Client parses these two fields only when Taiwan/region feature 15 is enabled.
+    w.writeString(user.guildName || "");
+    w.writeU32(user.guildMark || 0);
+  }
 
   writeSlotAccessoryBlock(w, state, slot.user);
   return w;
@@ -426,13 +506,19 @@ function startMatchOnRoom(
   includeEsfnStream: boolean = false,
   firstStartFieldCandidate?: number
 ): void {
-  const senderOwnsChiefSlot = room.slots.some(
-    (slot) =>
-      slot.occupied &&
-      slot.session === session &&
-      slot.netSlotId === room.chiefSlotNetId
-  );
-  if (!senderOwnsChiefSlot) {
+  if (!hasSelectedRoomStageContext(state, session, room, [StageId.Prepare])) {
+    logger.warn("Room", "Ignored match-start request without a selected game-channel Prepare room membership", {
+      sessionId: session.sessionId,
+      connectionKind: session.connectionKind,
+      stageId: formatStageId(session.stageId),
+      roomNumber: room.roomNumber,
+      responseSent: false,
+      roomStateChanged: false,
+    });
+    return;
+  }
+
+  if (!sessionOwnsChiefSlot(session, room)) {
     logger.warn("Room", "Ignored match-start request from a session that does not own the chief slot", {
       sessionId: session.sessionId,
       connectionKind: session.connectionKind,
@@ -521,43 +607,97 @@ export function handlePrepareRoomPacket(
 
   switch (opcode) {
     case ClientOpcode.UpdateRoomSettings: {
-      if (reader.remaining >= 2) {
-        room.name = reader.readString() || room.name;
+      // `sub_4D688D` writes strings plus two u8 values; `sub_4D696C` writes only the two strings.
+      const payloadBytes = reader.remaining;
+      const parsed = parseExactPayload(reader, (probe) => {
+        const name = readCompleteString(probe);
+        if (name === null) return null;
+        const password = readCompleteString(probe);
+        if (password === null) return null;
+        if (probe.remaining === 0) return { name, password, maxPlayers: null, gameMode: null };
+        if (probe.remaining !== 2) return null;
+        return { name, password, maxPlayers: probe.readU8(), gameMode: probe.readU8() };
+      });
+      if (
+        !parsed ||
+        (parsed.maxPlayers !== null && (parsed.maxPlayers < 1 || parsed.maxPlayers > 8)) ||
+        !hasSelectedRoomStageContext(state, session, room, [StageId.Prepare]) ||
+        !sessionOwnsChiefSlot(session, room)
+      ) {
+        logRejectedRoomPacket(
+          session,
+          room,
+          opcode,
+          payloadBytes,
+          "exactly str name + str password, optionally followed by u8 maxPlayers (1..8) + u8 mode; selected-channel Prepare chief member",
+          "Ignored malformed or unauthorized C->S 84 room-settings update"
+        );
+        break;
       }
-      if (reader.remaining >= 2) {
-        room.password = reader.readString();
-        room.hasPassword = room.password.length > 0;
-      }
-      if (reader.remaining >= 2) {
-        room.maxPlayers = reader.readU8();
-        room.gameMode = reader.readU8();
-      } else if (reader.remaining >= 1) {
-        room.gameMode = reader.readU8();
+
+      // Both Client writer variants are retained: the shorter form updates only strings.
+      // Field widths/order are Client evidence; authorization and GameRoom mapping are local policy.
+      room.name = parsed.name || room.name;
+      room.password = parsed.password;
+      room.hasPassword = parsed.password.length > 0;
+      if (parsed.maxPlayers !== null && parsed.gameMode !== null) {
+        room.maxPlayers = parsed.maxPlayers;
+        room.gameMode = parsed.gameMode;
       }
       state.broadcastToRoom(room, () => buildRoomSettingsPacket(room));
       break;
     }
 
     case ClientOpcode.ToggleReady: {
-      // `sub_4D5B2F`: `[u8 readyState, u32 esfnChecksum]`
-      const arg0 = reader.remaining >= 1 ? reader.readU8() : 1;
-      const slotIdx = session.roomSlotIndices[0] ?? 0;
-      const slot = room.slots[slotIdx];
-      if (slot && slot.occupied) {
-        if (reader.remaining >= 4) {
-          reader.readU32(); // esfnChecksum (`dword_96EB20 + 136`)
-          slot.ready = arg0 !== 0;
-        } else {
-          slot.ready = !slot.ready;
-        }
-        state.broadcastToRoom(room, () => buildSlotStatePacket(slot));
+      // Recovered Client writers are distinct exact forms: `sub_4B2350` writes `[u8 state]`,
+      // while Prepare `sub_4D5B2F` writes `[u8 state, u32 ESFN checksum]`.
+      const payloadBytes = reader.remaining;
+      const parsed = parseExactPayload(reader, (probe) => {
+        if (probe.remaining === 1) return { readyState: probe.readU8(), esfnChecksum: null };
+        if (probe.remaining !== 5) return null;
+        return { readyState: probe.readU8(), esfnChecksum: probe.readU32() };
+      });
+      const localSlot = getSessionRoomSlot(session, room, 0);
+      if (
+        !parsed ||
+        parsed.readyState > 1 ||
+        !hasSelectedRoomStageContext(state, session, room, [StageId.Prepare]) ||
+        !localSlot
+      ) {
+        logRejectedRoomPacket(
+          session,
+          room,
+          opcode,
+          payloadBytes,
+          "exact u8 readyState (0/1), optionally followed by u32 ESFN checksum; selected-channel Prepare member with local slot 0",
+          "Ignored malformed or out-of-context C->S 86 ready-state update"
+        );
+        break;
       }
+      void parsed.esfnChecksum; // Client CRC field is not authenticated or interpreted locally.
+      localSlot.slot.ready = parsed.readyState !== 0;
+      state.broadcastToRoom(room, () => buildSlotStatePacket(localSlot.slot));
       break;
     }
 
     case ClientOpcode.SelectMap: {
       // Recovered C->S 87 writers are `[u16 mapId]` (`sub_4B247D`) and
-      // `[u16 mapId, u32 mapKey]` (`sub_4D1E59`). An empty packet is not a start request.
+      // `[u16 mapId, u32 mapKey]` (`sub_4D1E59`). Requiring chief ownership is a local
+      // authorization policy; it is not asserted as recovered official-server behavior.
+      if (
+        !hasSelectedRoomStageContext(state, session, room, [StageId.Prepare]) ||
+        !sessionOwnsChiefSlot(session, room)
+      ) {
+        logRejectedRoomPacket(
+          session,
+          room,
+          opcode,
+          reader.remaining,
+          "selected-channel Prepare member owning chief slot",
+          "Ignored C->S 87 map-selection request outside the local chief policy"
+        );
+        break;
+      }
       if (reader.remaining !== 2 && reader.remaining !== 6) {
         logger.warn("Room", "Ignored malformed C->S 87 map-selection packet", {
           sessionId: session.sessionId,
@@ -594,67 +734,126 @@ export function handlePrepareRoomPacket(
     }
 
     case ClientOpcode.SelectTeamColor: {
-      // `sub_4D2A67`: `[u8 ((localIdx << 4) | (teamColor & 0x0F))]`
-      if (reader.remaining === 1) {
-        const packed = reader.readU8();
-        const localIdx = (packed >>> 4) & 0x0f;
-        const teamColor = packed & 0x0f;
-        const slotIdx = session.roomSlotIndices[localIdx] ?? session.roomSlotIndices[0] ?? 0;
-        const slot = room.slots[slotIdx];
-        if (slot && slot.occupied) {
-          slot.teamColor = teamColor & 0x1f;
-          state.broadcastToRoom(room, () => buildTeamColorPacket(slotIdx, slot.teamColor));
-          state.broadcastToRoom(room, () => buildSlotStatePacket(slot));
-        }
-      } else {
-        const localIdx = reader.remaining >= 1 ? reader.readU8() : 0;
-        const charId = reader.remaining >= 1 ? reader.readU8() : 0;
-        const slotIdx = session.roomSlotIndices[localIdx] ?? session.roomSlotIndices[0] ?? 0;
-        const slot = room.slots[slotIdx];
-        if (slot && slot.occupied) {
-          slot.charId = charId & 0x3f;
-          session.equippedCharIds[localIdx] = slot.charId;
-          if (slot.user) {
-            slot.user.equippedChar = slot.charId;
-            state.db.updateEquippedChar(slot.user.id, slot.charId);
-          }
-          state.broadcastToRoom(room, () => buildCharSelectPacket(slotIdx, slot.charId));
-          state.broadcastToRoom(room, () => buildSlotStatePacket(slot));
-        }
+      // `sub_4D2A67` (Prepare) and `sub_4B8475` (CSlotStage) both write the exact packed u8;
+      // this room adapter applies it only in selected-channel Prepare context.
+      const payloadBytes = reader.remaining;
+      if (
+        payloadBytes !== 1 ||
+        !hasSelectedRoomStageContext(state, session, room, [StageId.Prepare])
+      ) {
+        logRejectedRoomPacket(
+          session,
+          room,
+          opcode,
+          payloadBytes,
+          "one packed u8; selected-channel Prepare room member",
+          "Ignored malformed or out-of-context C->S 88 team-color request"
+        );
+        break;
       }
+      const packed = reader.readU8();
+      const localIdx = (packed >>> 4) & 0x0f;
+      const teamColor = packed & 0x0f;
+      const localSlot = getSessionRoomSlot(session, room, localIdx);
+      if (!localSlot) {
+        logRejectedRoomPacket(
+          session,
+          room,
+          opcode,
+          payloadBytes,
+          "packed localIdx must identify an occupied slot owned by this session",
+          "Ignored C->S 88 with a local-player index not owned by the session"
+        );
+        break;
+      }
+      localSlot.slot.teamColor = teamColor;
+      state.broadcastToRoom(room, () => buildTeamColorPacket(localSlot.slotIdx, localSlot.slot.teamColor));
+      state.broadcastToRoom(room, () => buildSlotStatePacket(localSlot.slot));
       break;
     }
 
     case ClientOpcode.SelectCharacter: {
-      // `sub_4D2AFD`: `[u8 localIdx, u8 charId]`
-      const localIdx = reader.remaining >= 1 ? reader.readU8() : 0;
-      const charId = reader.remaining >= 1 ? reader.readU8() : 0;
-      const slotIdx = session.roomSlotIndices[localIdx] ?? session.roomSlotIndices[0] ?? 0;
-      const slot = room.slots[slotIdx];
-      if (slot && slot.occupied) {
-        slot.charId = charId & 0x3f;
-        session.equippedCharIds[localIdx] = slot.charId;
-        if (slot.user) {
-          slot.user.equippedChar = slot.charId;
-          state.db.updateEquippedChar(slot.user.id, slot.charId);
-        }
-        state.broadcastToRoom(room, () => buildCharSelectPacket(slotIdx, slot.charId));
-        state.broadcastToRoom(room, () => buildSlotStatePacket(slot));
+      // `sub_4B8065`, Practice `sub_4D0813`, and Prepare `sub_4D2AFD` write the same exact
+      // `[u8 localIdx, u8 charId]` form; the local room adapter below remains Prepare-only.
+      const payloadBytes = reader.remaining;
+      const parsed = parseExactPayload(reader, (probe) => {
+        if (probe.remaining !== 2) return null;
+        return { localIdx: probe.readU8(), charId: probe.readU8() };
+      });
+      if (!parsed || !hasSelectedRoomStageContext(state, session, room, [StageId.Prepare])) {
+        logRejectedRoomPacket(
+          session,
+          room,
+          opcode,
+          payloadBytes,
+          "u8 localIdx, u8 charId; selected-channel Prepare room member",
+          "Ignored malformed or out-of-context C->S 89 character-selection request"
+        );
+        break;
       }
+      const localSlot = getSessionRoomSlot(session, room, parsed.localIdx);
+      if (!localSlot) {
+        logRejectedRoomPacket(
+          session,
+          room,
+          opcode,
+          payloadBytes,
+          "localIdx must identify an occupied slot owned by this session",
+          "Ignored C->S 89 with a local-player index not owned by the session"
+        );
+        break;
+      }
+      localSlot.slot.charId = parsed.charId & 0x3f;
+      session.equippedCharIds[parsed.localIdx] = localSlot.slot.charId;
+      if (localSlot.slot.user) {
+        localSlot.slot.user.equippedChar = localSlot.slot.charId;
+        state.db.updateEquippedChar(localSlot.slot.user.id, localSlot.slot.charId);
+      }
+      state.broadcastToRoom(room, () => buildCharSelectPacket(localSlot.slotIdx, localSlot.slot.charId));
+      state.broadcastToRoom(room, () => buildSlotStatePacket(localSlot.slot));
       break;
     }
 
     case ClientOpcode.ToggleSlotOpen: {
-      // `sub_4D2BB8`: `[u8 ((slotIdx << 4) | (openState & 0x0F))]`
-      const raw = reader.remaining >= 1 ? reader.readU8() : 0;
-      const targetSlotIdx = raw > 7 ? (raw >>> 4) & 0x0f : raw;
-      const targetSlot = room.slots[targetSlotIdx];
-      if (targetSlot && !targetSlot.occupied) {
-        targetSlot.open = !targetSlot.open;
-        room.maxPlayers = room.slots.filter((s) => s.open).length;
-        state.broadcastToRoom(room, () =>
-          buildSlotOpenClosePacket(targetSlotIdx, targetSlot.open ? 1 : 0)
+      // `sub_4B84FF` (CSlotStage) and `sub_4D2BB8` (Prepare) write one packed byte: high nibble
+      // slot index, low nibble desired state. This local adapter applies it only in Prepare;
+      // setting the requested state (not toggling) is a reconstruction interpretation.
+      const payloadBytes = reader.remaining;
+      if (
+        payloadBytes !== 1 ||
+        !hasSelectedRoomStageContext(state, session, room, [StageId.Prepare]) ||
+        !sessionOwnsChiefSlot(session, room)
+      ) {
+        logRejectedRoomPacket(
+          session,
+          room,
+          opcode,
+          payloadBytes,
+          "one packed u8; selected-channel Prepare member owning chief slot",
+          "Ignored malformed or unauthorized C->S 90 slot-open request"
         );
+        break;
+      }
+      const packed = reader.readU8();
+      const targetSlotIdx = (packed >>> 4) & 0x0f;
+      const requestedOpenState = packed & 0x0f;
+      const targetSlot = room.slots[targetSlotIdx];
+      if (targetSlotIdx >= room.slots.length || requestedOpenState > 1 || !targetSlot || targetSlot.occupied) {
+        logRejectedRoomPacket(
+          session,
+          room,
+          opcode,
+          payloadBytes,
+          "slot index in room bounds, openState 0/1, unoccupied target",
+          "Ignored C->S 90 with an invalid target slot or open-state value"
+        );
+        break;
+      }
+      const requestedOpen = requestedOpenState !== 0;
+      if (targetSlot.open !== requestedOpen) {
+        targetSlot.open = requestedOpen;
+        room.maxPlayers = room.slots.filter((slot) => slot.open).length;
+        state.broadcastToRoom(room, () => buildSlotOpenClosePacket(targetSlotIdx, requestedOpen ? 1 : 0));
         state.broadcastToRoom(room, () => buildSlotStatePacket(targetSlot));
       }
       break;
@@ -662,6 +861,21 @@ export function handlePrepareRoomPacket(
 
     case ClientOpcode.KickPlayer: {
       // `CPrepareStage::sub_4DAE65` sends `[u32 targetSlotNetId, u8 hasSuperChiefItem]`.
+      // Chief-only Prepare context is local authorization policy, not a recovered official rule.
+      if (
+        !hasSelectedRoomStageContext(state, session, room, [StageId.Prepare]) ||
+        !sessionOwnsChiefSlot(session, room)
+      ) {
+        logRejectedRoomPacket(
+          session,
+          room,
+          opcode,
+          reader.remaining,
+          "u32 targetSlotNetId, u8 flag; selected-channel Prepare member owning chief slot",
+          "Ignored C->S 91 outside the local chief-only kick policy"
+        );
+        break;
+      }
       if (reader.remaining !== 5) {
         logger.warn("Room", "Ignored malformed C->S 91 kick-player packet", {
           sessionId: session.sessionId,
@@ -706,14 +920,44 @@ export function handlePrepareRoomPacket(
     }
 
     case ClientOpcode.BanVoteResponse: {
-      // `sub_4D555E`: `[u32 targetNetId, u8 agreeFlag]`
-      const targetNetId = reader.remaining >= 4 ? reader.readU32() : 0;
-      const agreeFlag = reader.remaining >= 1 ? reader.readU8() : 0;
-      const targetSlot = room.slots.find((s) => s.occupied && s.netSlotId === targetNetId);
-      const targetName = targetSlot?.user?.username ?? "";
+      // `sub_4D555E`: exact `[u32 targetNetId, u8 agreeFlag]`.
+      const payloadBytes = reader.remaining;
+      const parsed = parseExactPayload(reader, (probe) => {
+        if (probe.remaining !== 5) return null;
+        return { targetNetId: probe.readU32(), agreeFlag: probe.readU8() };
+      });
+      if (
+        !parsed ||
+        parsed.agreeFlag > 1 ||
+        !hasSelectedRoomStageContext(state, session, room, [StageId.Prepare])
+      ) {
+        logRejectedRoomPacket(
+          session,
+          room,
+          opcode,
+          payloadBytes,
+          "u32 targetNetId, u8 agreeFlag (0/1); selected-channel Prepare room member",
+          "Ignored malformed or out-of-context C->S 92 ban-vote response"
+        );
+        break;
+      }
+      const targetSlot = room.slots.find(
+        (slot) => slot.occupied && slot.netSlotId === parsed.targetNetId
+      );
+      if (!targetSlot) {
+        logRejectedRoomPacket(
+          session,
+          room,
+          opcode,
+          payloadBytes,
+          "targetNetId must identify an occupied slot in the same room",
+          "Ignored C->S 92 with a target that is not an occupied room slot"
+        );
+        break;
+      }
       const w111 = new PacketWriter(ServerOpcode.BanVoteSync);
-      w111.writeU8(agreeFlag ? 1 : 5);
-      w111.writeString(targetName);
+      w111.writeU8(parsed.agreeFlag ? 1 : 5); // Local S->C mapping; no authoritative vote policy is established.
+      w111.writeString(targetSlot.user?.username ?? "");
       state.broadcastToRoom(room, () => w111);
       break;
     }
@@ -780,9 +1024,7 @@ export function handlePrepareRoomPacket(
         break;
       }
       if (
-        session.connectionKind !== "game" ||
-        !session.channelSelected ||
-        (session.stageId !== StageId.Prepare && session.stageId !== StageId.Practice) ||
+        !hasSelectedRoomStageContext(state, session, room, [StageId.Prepare, StageId.Practice]) ||
         !sessionOwnsChiefSlot(session, room)
       ) {
         logger.info("PacketAudit", "Observed C->S 94 outside the local Prepare password-update policy", {
@@ -815,8 +1057,8 @@ export function handlePrepareRoomPacket(
       // writers' shared width, and the independent Prepare/Game/Exchange 115 parsers, do not
       // establish common field meanings or a common request/reply relationship.
       const payloadBytes = reader.remaining;
-      if (payloadBytes !== 5) {
-        logger.warn("Room", "Ignored malformed C->S 95 ClientPacket95 body", {
+      if (payloadBytes !== 5 || !hasSelectedRoomStageContext(state, session, room, [StageId.Prepare])) {
+        logger.warn("Room", "Ignored malformed or out-of-context C->S 95 ClientPacket95 body", {
           sessionId: session.sessionId,
           connectionKind: session.connectionKind,
           stageId: formatStageId(session.stageId),
@@ -841,49 +1083,89 @@ export function handlePrepareRoomPacket(
     }
 
     case ClientOpcode.PracticeHandicap: {
-      // `sub_4D0627` is the recovered writer for C->S 96: `[u8 slotIdx, u8 delta]` -> S->C 108.
-      if (reader.remaining !== 2) {
-        logger.warn("Room", "Ignored malformed C->S 96 practice-handicap packet", {
-          sessionId: session.sessionId,
-          connectionKind: session.connectionKind,
-          stageId: formatStageId(session.stageId),
-          payloadBytes: reader.remaining,
-          expectedPayloadBytes: 2,
-          responseSent: false,
-          roomStateChanged: false,
-        });
+      // `sub_4D0627`: exact `[u8 slotIdx, u8 delta]` -> local S->C 108 mapping.
+      const payloadBytes = reader.remaining;
+      const parsed = parseExactPayload(reader, (probe) => {
+        if (probe.remaining !== 2) return null;
+        return { slotIdx: probe.readU8(), delta: probe.readU8() };
+      });
+      if (
+        !parsed ||
+        parsed.slotIdx >= room.slots.length ||
+        !room.slots[parsed.slotIdx]?.occupied ||
+        !hasSelectedRoomStageContext(state, session, room, [StageId.Practice])
+      ) {
+        logRejectedRoomPacket(
+          session,
+          room,
+          opcode,
+          payloadBytes,
+          "u8 occupied room slotIdx, u8 delta; selected-channel Practice room member",
+          "Ignored malformed or out-of-context C->S 96 practice-handicap request"
+        );
         break;
       }
-
-      const slotIdx = reader.readU8();
-      const delta = reader.readU8();
-      state.broadcastToRoom(room, () => buildPracticeHandicapPacket(slotIdx, delta));
+      state.broadcastToRoom(room, () => buildPracticeHandicapPacket(parsed.slotIdx, parsed.delta));
       break;
     }
 
-    case ClientOpcode.RoomAux98: {
-      // Shared Client writer `sub_4B8E1D` sends one u8; the UserMarket `sub_5723F6` path also sends 0.
-      // This room handler applies it as inShopFlag only after the no-room guard above.
-      const inShopFlag = reader.remaining >= 1 ? reader.readU8() : 0;
-      const slotIdx = session.roomSlotIndices[0] ?? 0;
-      const slot = room.slots[slotIdx];
-      if (slot && slot.occupied) {
-        slot.inShop = inShopFlag !== 0;
-        if (slot.inShop) {
-          slot.ready = false;
-        }
-        state.broadcastToRoom(room, () => buildSlotStatePacket(slot));
+    case ClientOpcode.ContextualClientPacket98: {
+      // The Shop-success caller `sub_52A129` emits u8(1) only after a successful reply and
+      // only for stage IDs 12/19/17/18 (`sub_4B8EE9`). UserMarket's distinct u8(0) caller is
+      // routed to shopHandler; equal width does not establish a shared operation. The local
+      // Shop-entry transition below is reconstruction policy, not official Server behavior.
+      const payloadBytes = reader.remaining;
+      if (payloadBytes !== 1) {
+        logRejectedRoomPacket(
+          session,
+          room,
+          opcode,
+          payloadBytes,
+          "exactly u8(1) in a selected-channel room stage {Prepare, Practice, Chatting, Exchange}",
+          "Ignored malformed C->S 98 Shop-entry body"
+        );
+        break;
       }
-      if (inShopFlag !== 0) {
-        session.stageId = StageId.Shop;
-        session.sendPacket(buildShopInitPacket16(state, session));
-        session.sendPacket(buildUserStockPacket(state, session));
-      } else {
-        session.stageId = StageId.Prepare;
-        const w99 = new PacketWriter(ServerOpcode.ShopLeaveReturnStage);
-        w99.writeU16(StageId.Prepare);
-        session.sendPacket(w99);
+      const fieldValue = reader.readU8();
+      if (
+        fieldValue !== 1 ||
+        !hasSelectedRoomStageContext(state, session, room, [
+          StageId.Prepare,
+          StageId.Practice,
+          StageId.Chatting,
+          StageId.Exchange,
+        ])
+      ) {
+        logRejectedRoomPacket(
+          session,
+          room,
+          opcode,
+          payloadBytes,
+          "u8(1); selected-channel room member in Prepare, Practice, Chatting, or Exchange",
+          "Ignored C->S 98 outside the local Shop-entry policy"
+        );
+        break;
       }
+      const localSlot = getSessionRoomSlot(session, room, 0);
+      if (!localSlot) {
+        logRejectedRoomPacket(
+          session,
+          room,
+          opcode,
+          payloadBytes,
+          "session local-player slot 0 must remain occupied in the current room",
+          "Ignored C->S 98 without a verified local room slot"
+        );
+        break;
+      }
+      // Local reconstruction policy: mark this slot as in-Shop and clear ready. Neither
+      // this mapping nor the chosen response sequence is established official Server behavior.
+      localSlot.slot.inShop = true;
+      localSlot.slot.ready = false;
+      state.broadcastToRoom(room, () => buildSlotStatePacket(localSlot.slot));
+      session.stageId = StageId.Shop;
+      session.sendPacket(buildShopInitPacket16(state, session));
+      session.sendPacket(buildUserStockPacket(state, session));
       break;
     }
 
@@ -937,11 +1219,7 @@ export function handlePrepareRoomPacket(
         });
         break;
       }
-      if (
-        session.connectionKind !== "game" ||
-        !session.channelSelected ||
-        session.stageId !== StageId.Exchange
-      ) {
+      if (!hasSelectedRoomStageContext(state, session, room, [StageId.Exchange])) {
         logger.warn("Exchange", "Ignored C->S 100 outside the selected-channel Exchange context", {
           sessionId: session.sessionId,
           connectionKind: session.connectionKind,
@@ -990,11 +1268,7 @@ export function handlePrepareRoomPacket(
         });
         break;
       }
-      if (
-        session.connectionKind !== "game" ||
-        !session.channelSelected ||
-        session.stageId !== StageId.Exchange
-      ) {
+      if (!hasSelectedRoomStageContext(state, session, room, [StageId.Exchange])) {
         logger.warn("Exchange", "Observed C->S 101 outside the selected-channel Exchange context", {
           sessionId: session.sessionId,
           connectionKind: session.connectionKind,
@@ -1022,6 +1296,30 @@ export function handlePrepareRoomPacket(
 
     case ClientOpcode.LeaveRoom: {
       // `CPrepareStage::sub_4D1F0F` requests StageId.Lobby locally before sending empty C->S 78.
+      // Require a real selected-channel room membership; the stage may already have advanced on
+      // the Client, so this local leave policy accepts known room-associated stages only.
+      const payloadBytes = reader.remaining;
+      if (
+        payloadBytes !== 0 ||
+        !hasSelectedRoomStageContext(state, session, room, [
+          StageId.Lobby,
+          StageId.Prepare,
+          StageId.Shop,
+          StageId.Game,
+          StageId.Exchange,
+          StageId.Practice,
+        ])
+      ) {
+        logRejectedRoomPacket(
+          session,
+          room,
+          opcode,
+          payloadBytes,
+          "empty body; selected-channel session owns an occupied slot in this room",
+          "Ignored malformed or out-of-context C->S 78 leave-room request"
+        );
+        break;
+      }
       // Snapshot each local slot's identity before leaveRoom clears the server's slot records.
       // Do not echo S->C 9: its generic GameServer fallback treats the u32 as a dump-file offset.
       const removedSlotNetIds = new Map(

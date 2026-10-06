@@ -136,6 +136,12 @@ export class ClientSession {
   public channelIndex = 0;
   /** Local one-shot C->S 318 permission latch; not an official-server permission token. */
   public userMarketPermissionGranted = false;
+  /**
+   * Most recently observed UserMarket local-player selector. The local reconstruction uses it
+   * for C->S 326/327/330, whose Client writers carry no selector; this is not an official
+   * server-side identity mapping. A two-user session without a valid observed selector is ambiguous.
+   */
+  public userMarketLocalIdx: number | null = null;
 
   // Up to 2 local players per client (1P / 2P)
   public users: UserRecord[] = [];

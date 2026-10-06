@@ -538,7 +538,7 @@ describe("Protocol Layer — CRC, Cipher, Primitives, SmartStream & Framing", ()
     expect(receivedByClient[0]!.readU16()).toBe(1);
   });
 
-  test("TCP packet logs correlate sessions, omit S->C bodies, and redact credential-bearing C->S previews", () => {
+  test("TCP packet logs correlate sessions, omit S->C bodies, and redact credential- and room-password-bearing C->S previews", () => {
     const previousLevel = getLogLevel();
     setLogLevel("silent");
     clearRecentLogs();
@@ -619,6 +619,30 @@ describe("Protocol Layer — CRC, Cipher, Primitives, SmartStream & Framing", ()
       expect(shopAliasLog?.data?.opcodeAliases).toEqual(["ShopCashQuery"]);
 
       const sensitiveClientPackets = [
+        {
+          writer: new PacketWriter(ClientOpcode.CreateRoom, 2)
+            .writeString("private-room-title")
+            .writeString("private-create-password")
+            .writeU8(0)
+            .writeU8(1)
+            .writeU8(0)
+            .writeU32(0),
+          secret: "private-create-password",
+        },
+        {
+          writer: new PacketWriter(ClientOpcode.JoinRoom, 2)
+            .writeU16(7)
+            .writeU32(0x12345678)
+            .writeString("private-join-password")
+            .writeU8(1)
+            .writeU8(0),
+          secret: "private-join-password",
+        },
+        {
+          writer: new PacketWriter(ClientOpcode.ChangeRoomPassword, 2)
+            .writeString("private-updated-room-password"),
+          secret: "private-updated-room-password",
+        },
         {
           writer: new PacketWriter(ClientOpcode.ShopBuyItemPass, 2)
             .writeString("private-nexon-pass")

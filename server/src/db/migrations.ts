@@ -5,6 +5,18 @@ interface SchemaMigration {
   up(database: Database): void;
 }
 
+function addColumnIfMissing(
+  database: Database,
+  table: "users" | "inventory",
+  column: string,
+  declaration: string
+): boolean {
+  const columns = database.query<{ name: string }, []>(`PRAGMA table_info("${table}")`).all();
+  if (columns.some((candidate) => candidate.name === column)) return false;
+  database.exec(`ALTER TABLE "${table}" ADD COLUMN "${column}" ${declaration}`);
+  return true;
+}
+
 const MIGRATIONS = [
   {
     version: 1,
@@ -96,6 +108,29 @@ const MIGRATIONS = [
       `);
     },
   },
+  {
+    version: 2,
+    up(database: Database): void {
+      // Earlier unversioned files may already have these base tables, so CREATE IF NOT EXISTS
+      // alone does not add fields introduced after those files were created. Add only known
+      // reconstruction columns, preserve existing rows, and seed new market balances from the
+      // existing game currency rather than replacing a user's balance with the new-account default.
+      const marketLucciAdded = addColumnIfMissing(
+        database,
+        "users",
+        "marketLucci",
+        "INTEGER NOT NULL DEFAULT 50000"
+      );
+      if (marketLucciAdded) {
+        database.exec("UPDATE users SET marketLucci = lucci");
+      }
+      addColumnIfMissing(database, "users", "rankGrade", "INTEGER NOT NULL DEFAULT 1");
+      addColumnIfMissing(database, "users", "ladderPoints", "INTEGER NOT NULL DEFAULT 1000");
+      addColumnIfMissing(database, "users", "isGm", "INTEGER NOT NULL DEFAULT 0");
+      addColumnIfMissing(database, "inventory", "remainUnits", "INTEGER NOT NULL DEFAULT 0");
+      addColumnIfMissing(database, "inventory", "marketStatus", "INTEGER NOT NULL DEFAULT 0");
+    },
+  },
 ] as const satisfies readonly SchemaMigration[];
 
 export const CURRENT_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;
@@ -103,9 +138,10 @@ export const CURRENT_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;
 /**
  * Applies each missing schema version in its own immediate transaction. The
  * version is read after the write lock is acquired so concurrent server starts
- * cannot both apply the same non-idempotent migration. Version 1 uses CREATE
- * IF NOT EXISTS so databases using the previous schema are adopted in place
- * without replacing their existing rows.
+ * cannot both apply the same migration. Version 1 creates missing base tables;
+ * version 2 adds known newer columns to pre-existing tables without replacing
+ * their rows. Files with unrecognized/missing core columns still fail visibly
+ * when the repository's prepared statements are initialized.
  */
 export function migrateDatabase(database: Database): void {
   const applyNextMigration = database.transaction((): boolean => {

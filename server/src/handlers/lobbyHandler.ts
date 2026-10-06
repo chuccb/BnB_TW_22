@@ -24,6 +24,145 @@ import {
   buildInventoryPacket,
 } from "./shopHandler.ts";
 
+function clonePacketReader(reader: PacketReader): PacketReader {
+  const clone = new PacketReader(reader.plain, reader.degree);
+  clone.offset = reader.offset;
+  return clone;
+}
+
+function parseExactPayload<T>(
+  reader: PacketReader,
+  parse: (probe: PacketReader) => T | null
+): T | null {
+  const probe = clonePacketReader(reader);
+  const value = parse(probe);
+  if (value === null || probe.remaining !== 0) return null;
+  reader.offset = probe.offset;
+  return value;
+}
+
+function readCompleteString(reader: PacketReader): string | null {
+  if (reader.remaining < 2) return null;
+  const length = reader.peekU16();
+  if (length > 0x7fff || length > reader.remaining - 2) return null;
+  return reader.readString();
+}
+
+interface ParsedCreateRoom {
+  roomName: string;
+  password: string;
+  prefixU8: number;
+  charIds: number[];
+  tailU8?: number;
+  tailU32: number;
+  tailLayout: "u32" | "u8+u32";
+}
+
+function parseCreateRoomPayload(reader: PacketReader, hasPasswordField: boolean): ParsedCreateRoom | null {
+  return parseExactPayload(reader, (probe) => {
+    const roomName = readCompleteString(probe);
+    if (roomName === null) return null;
+    const password = hasPasswordField ? readCompleteString(probe) : "";
+    if (password === null || probe.remaining < 2) return null;
+
+    const prefixU8 = probe.readU8();
+    const localCount = probe.readU8();
+    if (localCount < 1 || localCount > 2 || probe.remaining < localCount) return null;
+
+    const charIds: number[] = [];
+    for (let index = 0; index < localCount; index++) charIds.push(probe.readU8());
+    if (hasPasswordField && probe.remaining === 4) {
+      // One recovered C->S 75 Lobby-strategy writer ends in a single opaque u32.
+      return { roomName, password, prefixU8, charIds, tailU32: probe.readU32(), tailLayout: "u32" };
+    }
+    if (probe.remaining !== 5) return null;
+    const tailU8 = probe.readU8();
+    const tailU32 = probe.readU32();
+    return { roomName, password, prefixU8, charIds, tailU8, tailU32, tailLayout: "u8+u32" };
+  });
+}
+
+interface ParsedJoinRoom {
+  roomNumber: number;
+  password: string;
+  credentialForm: "password-string" | "regional-password-string" | "invite-marker";
+  charIds: number[];
+}
+
+function parseJoinRoomPayload(reader: PacketReader): ParsedJoinRoom | null {
+  const parseForm = (form: ParsedJoinRoom["credentialForm"]): ParsedJoinRoom | null =>
+    parseExactPayload(reader, (probe) => {
+      if (probe.remaining < 7) return null;
+      const roomNumber = probe.readU16();
+      probe.readU32(); // Opaque room-context field; retained structurally but not used as identity.
+      let password = "";
+      if (form === "regional-password-string") {
+        if (probe.remaining < 1 || probe.readU8() !== 1) return null;
+      }
+      if (form === "password-string" || form === "regional-password-string") {
+        const parsedPassword = readCompleteString(probe);
+        if (parsedPassword === null) return null;
+        password = parsedPassword;
+      } else if (probe.remaining < 1 || probe.readU8() !== 0) {
+        return null;
+      }
+
+      if (probe.remaining < 1) return null;
+      const localCount = probe.readU8();
+      if (localCount < 1 || localCount > 2 || probe.remaining !== localCount) return null;
+      const charIds: number[] = [];
+      for (let index = 0; index < localCount; index++) charIds.push(probe.readU8());
+      return { roomNumber, password, credentialForm: form, charIds };
+    });
+
+  // The common writer always writes a length-prefixed password string. This Client also has
+  // a region-128 prefix form and a separate invite-accept writer with a one-byte zero marker.
+  return parseForm("password-string") ??
+    parseForm("regional-password-string") ??
+    parseForm("invite-marker");
+}
+
+function hasSelectedChannel(session: ClientSession, state: WorldState): boolean {
+  return session.connectionKind === "game" &&
+    session.channelSelected &&
+    Number.isInteger(session.channelIndex) &&
+    session.channelIndex >= 0 &&
+    session.channelIndex < state.channels.length;
+}
+
+function hasLobbyRoomActionContext(state: WorldState, session: ClientSession): boolean {
+  return hasSelectedChannel(session, state) &&
+    session.stageId === StageId.Lobby &&
+    session.users.length >= 1 &&
+    session.users.length <= 2 &&
+    session.currentRoomNumber === null;
+}
+
+function sessionOwnsRoomSlot(session: ClientSession, room: GameRoom): boolean {
+  return room.slots.some((slot) => slot.occupied && slot.session === session);
+}
+
+function logRejectedLobbyPacket(
+  session: ClientSession,
+  opcode: number,
+  payloadBytes: number,
+  expectedSchema: string,
+  reason: string
+): void {
+  logger.warn("Lobby", reason, {
+    direction: "C->S",
+    wireOpcode: opcode,
+    opcodeName: formatClientOpcode(opcode),
+    sessionId: session.sessionId,
+    connectionKind: session.connectionKind,
+    stageId: formatStageId(session.stageId),
+    payloadBytes,
+    expectedSchema,
+    responseSent: false,
+    roomStateChanged: false,
+  });
+}
+
 /**
  * Builds S->C 79 (`CLobbyStage::sub_4C86A2` case `'O'` -> `sub_4C3F09` -> `CNormalLobbyStrategy::sub_4CCE53` at `0x004CCE53`)
  * Create Room Result:
@@ -286,7 +425,7 @@ export function buildRoomDetailInfoPacket(room: GameRoom | undefined): PacketWri
  * - 76: Join Room (`sub_4C4D93`) -> `S->C 80` + `S->C 102`
  * - 77 / 81: Quick Join (`sub_4C83BA`, `CNormalLobbyStrategy::sub_4CCCE2`) -> `S->C 81` (`sub_4C4635`)
  * - 80: Room List Scroll / Detail Info (`sub_4A496F`: `[u16 roomIndex]`) -> `S->C 83`
- * - 82: Return to Room (`sub_536E2E`: `[u16 roomNumber, u32 chiefKey]`) -> `S->C 80`
+ * - 82: Return to Room (`sub_536E2E`: `[u16 roomNumber, u32 opaque room-context word]`) -> `S->C 80`
  */
 export function handleLobbyPacket(
   state: WorldState,
@@ -294,6 +433,30 @@ export function handleLobbyPacket(
   opcode: number,
   reader: PacketReader
 ): void {
+  if (opcode === ClientOpcode.EnterLobby) {
+    const payloadBytes = reader.remaining;
+    const pendingLobbyHandoff =
+      session.stageId === StageId.SelectServer && session.pendingStageId === StageId.Lobby;
+    const alreadyInLobby = session.stageId === StageId.Lobby;
+    if (
+      payloadBytes !== 0 ||
+      !hasSelectedChannel(session, state) ||
+      session.users.length < 1 ||
+      session.users.length > 2 ||
+      session.currentRoomNumber !== null ||
+      (!pendingLobbyHandoff && !alreadyInLobby)
+    ) {
+      logRejectedLobbyPacket(
+        session,
+        opcode,
+        payloadBytes,
+        "empty C->S 83 body; selected game channel, one or two session users, and Lobby handoff context",
+        "Ignored malformed or out-of-context C->S 83 Lobby-entry signal"
+      );
+      return;
+    }
+  }
+
   switch (opcode) {
     case ClientOpcode.ClientReportOrLobbyEnter:
     case ClientOpcode.EnterLobby: {
@@ -399,160 +562,251 @@ export function handleLobbyPacket(
     }
 
     case ClientOpcode.RoomDetailOrUserInfo: {
-      // `sub_4C266D` / `CLobbyStage::sub_4C50C4`: `[u16 roomIndex, u32 room-context word]` (6 bytes) -> `S->C 83`
-      const roomNumber = reader.remaining >= 2 ? reader.readU16() : 1;
+      // `sub_4C266D`: exact `[u16 roomIndex, u32 opaque room-context word]` -> S->C 83.
+      const payloadBytes = reader.remaining;
+      if (payloadBytes !== 6 || !hasLobbyRoomActionContext(state, session)) {
+        logRejectedLobbyPacket(
+          session,
+          opcode,
+          payloadBytes,
+          "Lobby context; exactly u16 roomIndex + u32 opaque room-context word (6 bytes)",
+          "Ignored malformed or out-of-context C->S 67 room-detail request"
+        );
+        break;
+      }
+      const roomNumber = reader.readU16();
+      reader.readU32(); // The Client writer's room-context value is not used as an admission key locally.
       const room = state.rooms.get(roomNumber);
-      session.sendPacket(buildRoomDetailInfoPacket(room));
+      if (room) session.sendPacket(buildRoomDetailInfoPacket(room));
       break;
     }
 
     case ClientOpcode.CreateRoom:
     case ClientOpcode.CreateRoomShort: {
-      const roomName = reader.remaining >= 2 ? reader.readString() : "CrazyArcade Room";
-      let password = "";
-      let isPrivate = false;
-      if (opcode === ClientOpcode.CreateRoomShort) {
-        // `sub_4C070B`: `[str roomName, u8 isPrivate, u8 localCnt, localCnt * u8 charId, u8 gameMode, ...]`
-        isPrivate = reader.remaining >= 1 ? reader.readU8() !== 0 : false;
-      } else {
-        // `sub_4CD379`: `[str roomName, str password, u8 isPrivate, u8 localCnt, localCnt * u8 charId, u8 gameMode, u32 mapTheme]`
-        password = reader.remaining >= 2 ? reader.readString() : "";
-        isPrivate = reader.remaining >= 1 ? reader.readU8() !== 0 : password.length > 0;
+      const payloadBytes = reader.remaining;
+      const hasPasswordField = opcode === ClientOpcode.CreateRoom;
+      const parsed = parseCreateRoomPayload(reader, hasPasswordField);
+      const expectedSchema = hasPasswordField
+        ? "str roomName, str password, u8 opaque, u8 localCnt, localCnt*u8 charId, tail u32 OR u8+u32 (exact; writer variants kept distinct)"
+        : "str roomName, u8 opaque, u8 localCnt, localCnt*u8 charId, u8 opaque, u32 opaque (exact)";
+      if (
+        !parsed ||
+        !hasLobbyRoomActionContext(state, session) ||
+        parsed.charIds.length !== session.users.length
+      ) {
+        logRejectedLobbyPacket(
+          session,
+          opcode,
+          payloadBytes,
+          `${expectedSchema}; lobby session user count must match localCnt`,
+          "Ignored malformed, non-exact, or out-of-context room-create request"
+        );
+        break;
       }
 
-      const localCnt = Math.min(2, Math.max(1, reader.remaining >= 1 ? reader.readU8() : 1));
-      const charIds: number[] = [];
-      for (let i = 0; i < localCnt; i++) {
-        charIds.push(reader.remaining >= 1 ? reader.readU8() : 0);
-      }
-      const gameMode = reader.remaining >= 1 ? reader.readU8() : 0;
-      const mapTheme = reader.remaining >= 4 ? reader.readU32() & 0xff : 0;
-
+      // These are local adapter mappings, not Client-proven meanings for the opaque flag/tail.
+      // The main C->S 75 writer maps its 1-byte tail to a local mode and low byte of map option;
+      // its 4-byte-tail variant and C->S 79 retain the local defaults instead.
+      const localGameMode = hasPasswordField && parsed.tailLayout === "u8+u32" ? parsed.tailU8! : 0;
+      const localMapTheme = hasPasswordField && parsed.tailLayout === "u8+u32" ? parsed.tailU32 & 0xff : 0;
       const room = state.createRoom(
         session,
-        roomName,
-        password,
-        isPrivate,
-        gameMode,
-        mapTheme,
-        charIds
+        parsed.roomName,
+        parsed.password,
+        parsed.password.length > 0,
+        localGameMode,
+        localMapTheme,
+        parsed.charIds
       );
+      logger.info("PacketAudit", "Created a local room from an exact Client writer form", {
+        direction: "C->S",
+        wireOpcode: opcode,
+        sessionId: session.sessionId,
+        localPlayerCount: parsed.charIds.length,
+        opaquePrefixU8: parsed.prefixU8,
+        tailLayout: parsed.tailLayout,
+        tailU8: parsed.tailU8 ?? null,
+        tailU32: parsed.tailU32,
+        localGameMode,
+        localMapTheme,
+        responseSent: true,
+        roomStateChanged: true,
+        databaseMutation: false,
+        serverMappingPolicy: "room password uses non-empty string; opaque fields use variant-specific local mapping/defaults",
+      });
 
-      // Send S->C 79 Create Room Result -> transitions client to Stage 12 (CPrepareStage)
+      // S->C 79 and 102 are local reconstruction outputs.
       session.sendPacket(buildCreateRoomResultPacket(room));
-
-      // Send S->C 102 (`CSetPlayerOnPreparePacket`) for each occupied slot in the room
       for (const slotIdx of session.roomSlotIndices) {
         const slot = room.slots[slotIdx];
-        if (slot && slot.occupied) {
-          session.sendPacket(buildSetPlayerPacket(state, slot, 0));
-        }
+        if (slot && slot.occupied) session.sendPacket(buildSetPlayerPacket(state, slot, 0));
       }
       break;
     }
 
     case ClientOpcode.JoinRoom: {
-      const roomNumber = reader.remaining >= 2 ? reader.readU16() : 1;
-      if (reader.remaining >= 4) {
-        reader.readU32(); // Room-key association is not used as an admission rule by this reconstruction.
+      const payloadBytes = reader.remaining;
+      const parsed = parseJoinRoomPayload(reader);
+      if (!parsed || !hasLobbyRoomActionContext(state, session) || parsed.charIds.length !== session.users.length) {
+        logRejectedLobbyPacket(
+          session,
+          opcode,
+          payloadBytes,
+          "u16 roomNumber, u32 opaque room-context, one recovered credential form, u8 localCnt, localCnt*u8 charId (exact); Lobby session user count must match",
+          "Ignored malformed, non-exact, or out-of-context C->S 76 join-room request"
+        );
+        break;
       }
 
-      const room = state.rooms.get(roomNumber);
+      const room = state.rooms.get(parsed.roomNumber);
       if (!room || room.isPlaying) {
         const w80 = new PacketWriter(ServerOpcode.JoinRoomResult);
-        w80.writeU8(2); // 2 = CantJoinRoom (`sub_4C77C2`)
+        w80.writeU8(2); // Client maps result 2 to CantJoinRoom; this is local admission policy.
         session.sendPacket(w80);
-        return;
+        break;
       }
 
-      // `sub_4C4D93`: always writes `str password` (`CSendPacket::sub_6956C0`), or `u8(0)` in invite accept
-      let providedPassword = "";
-      if (room.hasPassword) {
-        providedPassword = reader.remaining >= 2 ? reader.readString() : "";
-      } else if (reader.remaining >= 1) {
-        const peekLen = reader.remaining;
-        if (peekLen > 4) {
-          providedPassword = reader.readString();
-        } else {
-          reader.readU8();
-        }
-      }
-
-      if (room.hasPassword && providedPassword !== room.password) {
+      // The invite-marker writer has no password string. This reconstruction has no recovered
+      // invitation credential store, so it does not treat that marker as a password bypass.
+      if (
+        room.hasPassword &&
+        (parsed.credentialForm === "invite-marker" || parsed.password !== room.password)
+      ) {
         const w80 = new PacketWriter(ServerOpcode.JoinRoomResult);
-        w80.writeU8(1); // 1 = WrongPassword (`sub_4C77C2`)
+        w80.writeU8(1); // Client maps result 1 to WrongPassword; emitted as local policy.
         session.sendPacket(w80);
-        return;
+        break;
       }
 
-      const localCnt = Math.min(2, Math.max(1, reader.remaining >= 1 ? reader.readU8() : 1));
-      const charIds: number[] = [];
-      for (let i = 0; i < localCnt; i++) {
-        charIds.push(reader.remaining >= 1 ? reader.readU8() : 0);
-      }
-
-      const freeCount = room.slots.filter((s) => s.open && !s.occupied).length;
-      if (freeCount < localCnt) {
+      const freeCount = room.slots.filter((slot) => slot.open && !slot.occupied).length;
+      if (freeCount < parsed.charIds.length) {
         const w80 = new PacketWriter(ServerOpcode.JoinRoomResult);
-        w80.writeU8(2); // 2 = CantJoinRoom (`sub_4C77C2`)
+        w80.writeU8(2);
         session.sendPacket(w80);
-        return;
+        break;
       }
 
-      const assignedSlots = state.assignSessionToRoom(session, room, charIds);
+      const assignedSlots = state.assignSessionToRoom(session, room, parsed.charIds);
+      if (assignedSlots.length !== parsed.charIds.length) {
+        // Defensive consistency guard; the pre-check should make this unreachable in the
+        // single-threaded local world-state mutation path.
+        state.leaveRoom(session);
+        logger.error("Lobby", "Room assignment count differed from the exact C->S 76 localCnt", {
+          sessionId: session.sessionId,
+          roomNumber: room.roomNumber,
+          requestedLocalCount: parsed.charIds.length,
+          assignedLocalCount: assignedSlots.length,
+        });
+        break;
+      }
 
-      // Send S->C 80 Join Room Result to the joining session
       session.sendPacket(buildJoinRoomResultPacket(state, room));
-
-      // Broadcast S->C 102 (`CSetPlayerOnPreparePacket`) for the newly joined slots to everyone in the room
       for (const slotIdx of assignedSlots) {
         const slot = room.slots[slotIdx]!;
         state.broadcastToRoom(room, () => buildSetPlayerPacket(state, slot, 1));
       }
+      logger.info("PacketAudit", "Joined a local room from an exact Client writer form", {
+        direction: "C->S",
+        wireOpcode: opcode,
+        sessionId: session.sessionId,
+        roomNumber: room.roomNumber,
+        credentialForm: parsed.credentialForm,
+        localPlayerCount: parsed.charIds.length,
+        responseSent: true,
+        roomStateChanged: true,
+        databaseMutation: false,
+        admissionPolicy: "local room lookup/password/slot capacity; Client context word not used as sender identity or invitation proof",
+      });
       break;
     }
 
     case ClientOpcode.QuickJoin:
     case ClientOpcode.QuickJoinShort: {
-      const localCnt = Math.min(2, Math.max(1, reader.remaining >= 1 ? reader.readU8() : 1));
-      const charIds: number[] = [];
-      for (let i = 0; i < localCnt; i++) {
-        charIds.push(reader.remaining >= 1 ? reader.readU8() : 0);
-      }
-
-      const targetRoom = Iterator.from(state.rooms.values()).find((r) => {
-        const freeSlots = r.slots.filter((s) => s.open && !s.occupied).length;
-        return !r.isPlaying && !r.hasPassword && freeSlots >= localCnt;
+      const payloadBytes = reader.remaining;
+      const localCount = opcode === ClientOpcode.QuickJoin ? 1 : 4;
+      const parsed = parseExactPayload(reader, (probe) => {
+        if (probe.remaining < 1) return null;
+        const count = probe.readU8();
+        if (count < 1 || count > 2 || probe.remaining !== count + localCount) return null;
+        const charIds: number[] = [];
+        for (let index = 0; index < count; index++) charIds.push(probe.readU8());
+        const trailingValue = localCount === 1 ? probe.readU8() : probe.readU32();
+        return { count, charIds, trailingValue };
       });
-
-      if (!targetRoom) {
-        // S->C 81 (`sub_4C4635`): errCode = 2 ("CantFindEmptyRoom")
-        const w81 = new PacketWriter(ServerOpcode.QuickJoinOrUserProfile);
-        w81.writeU8(2);
-        session.sendPacket(w81);
-        return;
+      if (
+        !parsed ||
+        !hasLobbyRoomActionContext(state, session) ||
+        parsed.count !== session.users.length
+      ) {
+        logRejectedLobbyPacket(
+          session,
+          opcode,
+          payloadBytes,
+          opcode === ClientOpcode.QuickJoin
+            ? "u8 localCnt, localCnt*u8 charId, u8 opaque tail (exact)"
+            : "u8 localCnt, localCnt*u8 charId, u32 opaque tail (exact)",
+          "Ignored malformed, non-exact, or out-of-context quick-join request"
+        );
+        break;
       }
 
-      // Send S->C 81 (`sub_4C4635`) Quick Join Result
+      const targetRoom = Iterator.from(state.rooms.values()).find((candidate) => {
+        const freeSlots = candidate.slots.filter((slot) => slot.open && !slot.occupied).length;
+        return !candidate.isPlaying && !candidate.hasPassword && freeSlots >= parsed.count;
+      });
+      if (!targetRoom) {
+        const w81 = new PacketWriter(ServerOpcode.QuickJoinOrUserProfile);
+        w81.writeU8(2); // Client's S->C 81 parser maps 2 to CantFindEmptyRoom.
+        session.sendPacket(w81);
+        break;
+      }
+
+      const assignedSlots = state.assignSessionToRoom(session, targetRoom, parsed.charIds);
+      if (assignedSlots.length !== parsed.charIds.length) {
+        state.leaveRoom(session);
+        logger.error("Lobby", "Quick-join assignment count differed from exact Client localCnt", {
+          sessionId: session.sessionId,
+          roomNumber: targetRoom.roomNumber,
+          requestedLocalCount: parsed.charIds.length,
+          assignedLocalCount: assignedSlots.length,
+        });
+        break;
+      }
+
       const w81 = new PacketWriter(ServerOpcode.QuickJoinOrUserProfile);
-      w81.writeU8(0); // errCode = 0
+      w81.writeU8(0);
       w81.writeU16(targetRoom.roomNumber);
-      w81.writeU32(targetRoom.chiefSlotNetId); // local mapping for the Client room-context word
+      w81.writeU32(targetRoom.chiefSlotNetId); // Local builder mapping for an opaque Client context word.
       w81.writeU8(targetRoom.mapTheme);
       session.sendPacket(w81);
+      for (const slotIdx of assignedSlots) {
+        const slot = targetRoom.slots[slotIdx]!;
+        state.broadcastToRoom(targetRoom, () => buildSetPlayerPacket(state, slot, 1));
+      }
+      logger.info("PacketAudit", "Quick-joined a local room from an exact Client writer form", {
+        direction: "C->S",
+        wireOpcode: opcode,
+        sessionId: session.sessionId,
+        roomNumber: targetRoom.roomNumber,
+        localPlayerCount: parsed.charIds.length,
+        opaqueTail: parsed.trailingValue,
+        responseSent: true,
+        roomStateChanged: true,
+        databaseMutation: false,
+        serverMappingPolicy: "local free public-room selection and assignment; S->C 81 context word uses room.chiefSlotNetId",
+      });
       break;
     }
 
     case ClientOpcode.RoomListScrollOrDetail: {
-      if (reader.remaining !== 2) {
-        logger.warn("Lobby", "Ignored malformed C->S 80 room-detail request", {
-          sessionId: session.sessionId,
-          connectionKind: session.connectionKind,
-          stageId: formatStageId(session.stageId),
-          expectedPayloadBytes: 2,
-          receivedPayloadBytes: reader.remaining,
-          responseSent: false,
-        });
+      if (reader.remaining !== 2 || !hasLobbyRoomActionContext(state, session)) {
+        logRejectedLobbyPacket(
+          session,
+          opcode,
+          reader.remaining,
+          "Lobby context; exactly u16 roomNumber (2 bytes)",
+          "Ignored malformed or out-of-context C->S 80 room-detail request"
+        );
         break;
       }
 
@@ -587,12 +841,52 @@ export function handleLobbyPacket(
     }
 
     case ClientOpcode.ReturnToRoom: {
-      const roomNumber = reader.remaining >= 2 ? reader.readU16() : 1;
-      const room = state.rooms.get(roomNumber);
-      if (room) {
-        session.stageId = StageId.Prepare;
-        session.sendPacket(buildJoinRoomResultPacket(state, room));
+      const payloadBytes = reader.remaining;
+      if (payloadBytes !== 6) {
+        logRejectedLobbyPacket(
+          session,
+          opcode,
+          payloadBytes,
+          "exactly u16 roomNumber + u32 opaque Client context word (6 bytes)",
+          "Ignored malformed C->S 82 room-return request"
+        );
+        break;
       }
+      const roomNumber = reader.readU16();
+      reader.readU32(); // Opaque Client context word; structural validation only.
+      const room = state.rooms.get(roomNumber);
+      if (
+        !hasSelectedChannel(session, state) ||
+        (session.stageId !== StageId.Shop && session.stageId !== StageId.UserMarket) ||
+        session.currentRoomNumber !== roomNumber ||
+        !room ||
+        !sessionOwnsRoomSlot(session, room)
+      ) {
+        logRejectedLobbyPacket(
+          session,
+          opcode,
+          payloadBytes,
+          "selected game channel; same current room and occupied session-owned slot; Shop or UserMarket stage",
+          "Ignored C->S 82 room-return request without matching local room membership"
+        );
+        break;
+      }
+
+      // The Client's u32 is retained for audit only; no sender-slot or admission meaning is inferred.
+      session.stageId = StageId.Prepare;
+      session.sendPacket(buildJoinRoomResultPacket(state, room));
+      logger.info("PacketAudit", "Observed C->S 82 and returned the session to its existing local room", {
+        direction: "C->S",
+        wireOpcode: opcode,
+        sessionId: session.sessionId,
+        roomNumber,
+        opaqueRoomContextWord: "<omitted>",
+        responseSent: true,
+        sessionStageChanged: true,
+        roomStateChanged: false,
+        databaseMutation: false,
+        serverPolicy: "requires the same room to already own an occupied session slot; opaque u32 is not used for identity",
+      });
       break;
     }
   }
