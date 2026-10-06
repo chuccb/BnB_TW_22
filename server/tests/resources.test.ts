@@ -156,7 +156,7 @@ describe("Client Resource Archives — Fx.idx, .i16 Tables, Maps & All 12 .ssd/.
     expect(resources.initXml).toContain('<info name="quest"  attr0="1"/>');
     expect(resources.initXml).not.toContain('nation value="tw"');
 
-    // CGameMapInfoList::sub_4E8597 extracts Map/* entries in exact Fx.idx order with sub_4E5845 CRC32 & CRC8
+    // Client map metadata stores the low byte of sub_4E5845's CRC32 result.
     expect(resources.maps.length).toBe(319);
     expect(resources.maps[0]!.name.startsWith("Map/")).toBe(true);
     expect(resources.maps[0]!.folderName.length).toBeGreaterThan(0);

@@ -25,7 +25,7 @@ const DEFAULT_CLIENT_RESOURCE_ROOT = existsSync(resolve(SERVER_ROOT, "CA.exe"))
  * - CData::sub_674590 (0x00674590)
  * - CBomberAttrMan (sub_4EC1FD, 0x004EC1FD)
  * - CItemAttrMan (sub_4EF2BD, 0x004EF2BD)
- * - CGameMapInfoList (sub_4E8597, 0x004E8597) & CGameMap::sub_4E5845 (0x004E5845, one-byte checksum from low CCRC32 byte)
+ * - CGameMapInfoList (sub_4E8597, 0x004E8597) & CGameMap::sub_4E5845 (0x004E5845, stores the low byte of CCRC32 from sub_668E80)
  * - All 12 Client .ssd / .ini SmartStream caches ("ssi1" loader sub_699410 at 0x00699410 & sub_6984B0 at 0x006984B0):
  *   1. fxdynimginfo.ssd (sub_49E093 / sub_49DF97, S->C 189)
  *   2. csysstr.ssd      (sub_5D00B9 / sub_5CFE6C, S->C 2)
@@ -95,8 +95,8 @@ export interface MapInfo {
   maxPlayers: number; // `n8` in `CGameMapInfoList::sub_4E8597`
   width: number; // `n1000_2` in `CGameMapInfoList::sub_4E8597`
   height: number; // `v11` in `CGameMapInfoList::sub_4E8597`
-  crc32: number; // Full `CCRC32::sub_668E80(0, mapData, mapSize)` value (local index metadata).
-  crc8: number; // Client `sub_4E5845` stores only the low byte of that CCRC32 result at `CGameMap + 24`.
+  crc32: number; // `CCRC32::sub_668E80(0, mapData, mapSize)` stored at `CGameMap + 24` (`sub_4E5845`)
+  crc8: number; // Client field name; `(CCRC32::sub_668E80(0, mapData, mapSize) & 0xff)` stored at `CGameMap + 24`
   byteSize: number;
 }
 
@@ -441,11 +441,7 @@ export function parseItemAttrBuffer(plain: Uint8Array): ItemAttr[] {
   for (let s = 0; s < shipCount && pos + 8 <= plain.length; s++) {
     dv.getUint32(pos, true); // Ship identifier is outside the server's ItemAttr lookup model.
     const nameLen = dv.getUint32(pos + 4, true);
-    const shipRecordSize = 8 + nameLen + 32;
-    if (shipRecordSize > plain.length - pos) {
-      return items;
-    }
-    pos += shipRecordSize;
+    pos += 8 + nameLen + 32;
   }
 
   let itemId = 0;
@@ -1339,7 +1335,7 @@ export function loadClientResources(
         const rawMap = readIddEntry(iddFd, "Fx.idd", fxIddSize, entry);
         const plainMap = decryptIddEntry(rawMap, entry.maskId, entry.crc32);
         const crc32 = computeCRC32(0, plainMap, plainMap.length);
-        // Client CGameMap::sub_4E5845 stores `(char)CCRC32(...)`, not a separate CCRC8 result.
+        // The Client narrows the CRC32 result from sub_668E80 to one byte in CGameMap::sub_4E5845.
         const crc8 = crc32 & 0xff;
 
         let version = 1000;
