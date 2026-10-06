@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { buildSetPlayerPacket } from "../src/handlers/roomHandler.ts";
+import {
+  buildSetPlayerPacket,
+  computeSlotStateFlags,
+} from "../src/handlers/roomHandler.ts";
 import type { StockEntry, UserRecord } from "../src/db/database.ts";
 import { PacketReader } from "../src/protocol/primitives.ts";
 import { ServerOpcode } from "../src/protocol/opcodes.ts";
@@ -156,12 +159,23 @@ function parseSetPlayerPacket(reader: PacketReader, feature15: boolean) {
   };
 }
 
+describe("Prepare slot-state flags", () => {
+  test("keeps the empty/open and room-chief bits distinct", () => {
+    const { slot } = makeFixture(true);
+
+    expect(computeSlotStateFlags({ ...slot, occupied: false }, slot.netSlotId)).toBe(1);
+    expect(computeSlotStateFlags(slot, slot.netSlotId)).toBe(2);
+    expect(computeSlotStateFlags(slot, slot.netSlotId + 1)).toBe(0);
+    expect(computeSlotStateFlags({ ...slot, ready: true }, slot.netSlotId)).toBe(6);
+  });
+});
+
 describe("S->C 102 SetPlayer packet builder", () => {
   test("matches the Client parser order with feature 15 and both selector branches", () => {
     const { state, slot, user, stock } = makeFixture(true);
 
     for (const selector of [0, 1]) {
-      const reader = new PacketReader(buildSetPlayerPacket(state, slot, selector).toPayload(), 3);
+      const reader = new PacketReader(buildSetPlayerPacket(state, slot, selector, slot.netSlotId).toPayload(), 3);
       expect(reader.opcode).toBe(ServerOpcode.SetPlayerOnPrepare);
       const parsed = parseSetPlayerPacket(reader, true);
 
@@ -173,7 +187,7 @@ describe("S->C 102 SetPlayer packet builder", () => {
         packetField36: 0,
         discardedByte: 0,
         conditionalByte: selector !== 0 ? 0 : undefined,
-        slotBlock: [3, 0, 1],
+        slotBlock: [2, 0, 1],
         user: {
           username: user.username,
           gender: user.gender,
@@ -196,7 +210,7 @@ describe("S->C 102 SetPlayer packet builder", () => {
         accessories: {
           equippedCount: 1,
           equippedPad: 0,
-          equippedItems: [{ slotType: 0, itemCode: stock[0]!.itemCode }],
+          equippedItems: [{ slotType: stock[0]!.equipped, itemCode: stock[0]!.itemCode }],
           effectCount: 0,
           effects: [],
           flags: [0, 0, 0],
@@ -211,7 +225,7 @@ describe("S->C 102 SetPlayer packet builder", () => {
 
   test("omits feature-15 extension fields when the Client feature is disabled", () => {
     const { state, slot, user, stock } = makeFixture(false);
-    const reader = new PacketReader(buildSetPlayerPacket(state, slot, 1).toPayload(), 3);
+    const reader = new PacketReader(buildSetPlayerPacket(state, slot, 1, slot.netSlotId).toPayload(), 3);
 
     expect(reader.opcode).toBe(ServerOpcode.SetPlayerOnPrepare);
     const parsed = parseSetPlayerPacket(reader, false);
@@ -220,7 +234,7 @@ describe("S->C 102 SetPlayer packet builder", () => {
     expect(parsed.extension).toBeUndefined();
     expect(parsed.accessories.equippedCount).toBe(1);
     expect(parsed.accessories.equippedItems).toEqual([
-      { slotType: 0, itemCode: stock[0]!.itemCode },
+      { slotType: stock[0]!.equipped, itemCode: stock[0]!.itemCode },
     ]);
     expect(parsed.user.username).toBe(user.username);
     expect(reader.remaining).toBe(0);

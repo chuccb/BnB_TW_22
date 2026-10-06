@@ -108,16 +108,23 @@ function logRejectedRoomPacket(
  *
  * Computes the 1-byte slot state bitmask used in `block(3) [stateFlags, charId, teamColor]`
  * (`CSetPlayerPacket::possible_ctor_or_dtor` at `0x00437337` and `CPrepareStage::sub_4D9D08` at `0x004D9D08`):
- * - bit 0 (0x01): open
- * - bit 1 (0x02): occupied
- * - bit 2 (0x04): local Ready encoding; the Client's start preflight accepts `(stateFlags & 0x1C) == 4`.
- * - bit 3 (0x08): reconstruction's `inShop` marker. The Client has a distinct `0x1C` special-state check;
- *   the relationship between that Client state and this local encoding is not established.
+ * - bit 0 (0x01): an available empty slot. `CSlotStage::sub_4B1F0B` only installs/draws a
+ *   slot's CUser/avatar when this bit is clear, so an occupied slot must never carry it.
+ * - bit 1 (0x02): room-chief state. `sub_5A6AC3` tests this bit on local-player slot state,
+ *   and Prepare uses that result to select Start rather than Ready UI.
+ * - bit 2 (0x04): local Ready encoding; the Client's start preflight accepts
+ *   `(stateFlags & 0x1C) == 4`.
+ * - bit 3 (0x08): reconstruction's `inShop` marker. The Client has a distinct `0x1C`
+ *   special-state check; the relationship between that Client state and this local encoding
+ *   is not established.
  */
-export function computeSlotStateFlags(slot: RoomSlot): number {
+export function computeSlotStateFlags(
+  slot: RoomSlot,
+  chiefSlotNetId: number | null = null
+): number {
   let flags = 0;
-  if (slot.open) flags |= 0x01;
-  if (slot.occupied) flags |= 0x02;
+  if (slot.open && !slot.occupied) flags |= 0x01;
+  if (slot.occupied && chiefSlotNetId !== null && slot.netSlotId === chiefSlotNetId) flags |= 0x02;
   if (slot.ready) flags |= 0x04;
   if (slot.inShop) flags |= 0x08;
   return flags;
@@ -177,9 +184,11 @@ export function writeSlotAccessoryBlock(
   w.writeU8(stock.length);
   if (stock.length > 0) {
     w.writeU8(0);
-    for (let i = 0; i < stock.length; i++) {
-      w.writeU8(i);
-      w.writeU16(stock[i]!.itemCode & 0xffff);
+    for (const item of stock) {
+      // sub_4B817E's downstream accessory updater treats this byte as the destination
+      // equipment slot, not as this packet array's ordinal position.
+      w.writeU8(item.equipped & 0xff);
+      w.writeU16(item.itemCode & 0xffff);
     }
   }
   w.writeU8(0); // effectCount = 0
@@ -214,7 +223,8 @@ export function writeSlotAccessoryBlock(
 export function buildSetPlayerPacket(
   state: WorldState,
   slot: RoomSlot,
-  packetSelector: number = 1
+  packetSelector: number = 1,
+  chiefSlotNetId: number | null = null
 ): PacketWriter {
   const w = new PacketWriter(102);
   const user: UserRecord = slot.user ?? {
@@ -248,7 +258,7 @@ export function buildSetPlayerPacket(
   }
 
   const slotBlock = new Uint8Array([
-    computeSlotStateFlags(slot),
+    computeSlotStateFlags(slot, chiefSlotNetId),
     slot.charId & 0x3f,
     slot.teamColor & 0x1f,
   ]);
@@ -297,12 +307,16 @@ export function buildPlayerLeftSlotPacket(
  *   u8 extraFlag
  * Clears `*(this + 1988)` when ready state (`0x04`) or open bit (`0x01`) changes.
  */
-export function buildSlotStatePacket(slot: RoomSlot, extraFlag: number = 0): PacketWriter {
+export function buildSlotStatePacket(
+  slot: RoomSlot,
+  extraFlag: number = 0,
+  chiefSlotNetId: number | null = null
+): PacketWriter {
   const w = new PacketWriter(ServerOpcode.SlotStateSync);
   w.writeU8(slot.slotIdx);
   w.writeBlock(
     new Uint8Array([
-      computeSlotStateFlags(slot),
+      computeSlotStateFlags(slot, chiefSlotNetId),
       slot.charId & 0x3f,
       slot.teamColor & 0x1f,
     ])
@@ -676,7 +690,7 @@ export function handlePrepareRoomPacket(
       }
       void parsed.esfnChecksum; // Client CRC field is not authenticated or interpreted locally.
       localSlot.slot.ready = parsed.readyState !== 0;
-      state.broadcastToRoom(room, () => buildSlotStatePacket(localSlot.slot));
+      state.broadcastToRoom(room, () => buildSlotStatePacket(localSlot.slot, 0, room.chiefSlotNetId));
       break;
     }
 
@@ -768,7 +782,7 @@ export function handlePrepareRoomPacket(
       }
       localSlot.slot.teamColor = teamColor;
       state.broadcastToRoom(room, () => buildTeamColorPacket(localSlot.slotIdx, localSlot.slot.teamColor));
-      state.broadcastToRoom(room, () => buildSlotStatePacket(localSlot.slot));
+      state.broadcastToRoom(room, () => buildSlotStatePacket(localSlot.slot, 0, room.chiefSlotNetId));
       break;
     }
 
@@ -810,7 +824,7 @@ export function handlePrepareRoomPacket(
         state.db.updateEquippedChar(localSlot.slot.user.id, localSlot.slot.charId);
       }
       state.broadcastToRoom(room, () => buildCharSelectPacket(localSlot.slotIdx, localSlot.slot.charId));
-      state.broadcastToRoom(room, () => buildSlotStatePacket(localSlot.slot));
+      state.broadcastToRoom(room, () => buildSlotStatePacket(localSlot.slot, 0, room.chiefSlotNetId));
       break;
     }
 
@@ -854,7 +868,7 @@ export function handlePrepareRoomPacket(
         targetSlot.open = requestedOpen;
         room.maxPlayers = room.slots.filter((slot) => slot.open).length;
         state.broadcastToRoom(room, () => buildSlotOpenClosePacket(targetSlotIdx, requestedOpen ? 1 : 0));
-        state.broadcastToRoom(room, () => buildSlotStatePacket(targetSlot));
+        state.broadcastToRoom(room, () => buildSlotStatePacket(targetSlot, 0, room.chiefSlotNetId));
       }
       break;
     }
@@ -1162,7 +1176,7 @@ export function handlePrepareRoomPacket(
       // this mapping nor the chosen response sequence is established official Server behavior.
       localSlot.slot.inShop = true;
       localSlot.slot.ready = false;
-      state.broadcastToRoom(room, () => buildSlotStatePacket(localSlot.slot));
+      state.broadcastToRoom(room, () => buildSlotStatePacket(localSlot.slot, 0, room.chiefSlotNetId));
       session.stageId = StageId.Shop;
       session.sendPacket(buildShopInitPacket16(state, session));
       session.sendPacket(buildUserStockPacket(state, session));

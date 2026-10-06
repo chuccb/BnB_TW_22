@@ -229,7 +229,7 @@ export function buildJoinRoomResultPacket(state: WorldState, room: GameRoom): Pa
   for (let i = 0; i < 8; i++) {
     const slot = room.slots[i]!;
     const slotBlock = new Uint8Array([
-      computeSlotStateFlags(slot),
+      computeSlotStateFlags(slot, room.chiefSlotNetId),
       slot.charId & 0x3f,
       slot.teamColor & 0x1f,
     ]);
@@ -639,7 +639,7 @@ export function handleLobbyPacket(
       session.sendPacket(buildCreateRoomResultPacket(room));
       for (const slotIdx of session.roomSlotIndices) {
         const slot = room.slots[slotIdx];
-        if (slot && slot.occupied) session.sendPacket(buildSetPlayerPacket(state, slot, 0));
+        if (slot && slot.occupied) session.sendPacket(buildSetPlayerPacket(state, slot, 0, room.chiefSlotNetId));
       }
       break;
     }
@@ -703,7 +703,7 @@ export function handleLobbyPacket(
       session.sendPacket(buildJoinRoomResultPacket(state, room));
       for (const slotIdx of assignedSlots) {
         const slot = room.slots[slotIdx]!;
-        state.broadcastToRoom(room, () => buildSetPlayerPacket(state, slot, 1));
+        state.broadcastToRoom(room, () => buildSetPlayerPacket(state, slot, 1, room.chiefSlotNetId));
       }
       logger.info("PacketAudit", "Joined a local room from an exact Client writer form", {
         direction: "C->S",
@@ -781,7 +781,7 @@ export function handleLobbyPacket(
       session.sendPacket(w81);
       for (const slotIdx of assignedSlots) {
         const slot = targetRoom.slots[slotIdx]!;
-        state.broadcastToRoom(targetRoom, () => buildSetPlayerPacket(state, slot, 1));
+        state.broadcastToRoom(targetRoom, () => buildSetPlayerPacket(state, slot, 1, targetRoom.chiefSlotNetId));
       }
       logger.info("PacketAudit", "Quick-joined a local room from an exact Client writer form", {
         direction: "C->S",
