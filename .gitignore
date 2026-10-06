@@ -1,0 +1,15 @@
+# Bun / Node dependencies (root and server workspace)
+node_modules/
+
+# SQLite database files
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# Runtime diagnostics and local configuration
+*.log
+.env
+.env.*
+!.env.example
+.DS_Store
