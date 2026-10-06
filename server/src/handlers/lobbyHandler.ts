@@ -654,9 +654,11 @@ export function handleLobbyPacket(
         deferredServerOpcodes: deferredSlotPackets.map((packet) => packet.opcode),
         slots: session.roomSlotIndices.map((slotIdx) => {
           const slot = room.slots[slotIdx]!;
-          return `${slotIdx}:net=${slot.netSlotId},flags=${formatU8Hex(
+          return `${slotIdx}:flags=${formatU8Hex(
             computeSlotStateFlags(slot, room.chiefSlotNetId)
-          )},char=${slot.charId & 0x3f}`;
+          )},char=${slot.charId & 0x3f},localIdentityMatch=${
+            slot.netSlotId === session.netSlotIds[slot.localPlayerIdx]
+          }`;
         }),
         reason: "avoid S->C 79 and stage-specific S->C 102 in one Client receive burst",
       });

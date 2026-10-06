@@ -429,6 +429,36 @@ export class WorldState implements Disposable {
     return token;
   }
 
+  /**
+   * Allocate the per-local-player values stored by the Client at `CLoginUserInfo+95`.
+   *
+   * The same value is returned in C->S 6 for handoff authentication and is compared with
+   * room-slot `CUser+32` by `sub_5D9716`. Keeping one distinct value per local player therefore
+   * lets the GameServer use the authenticated C->S 6 values as its room-slot identities.
+   */
+  public allocateLocalPlayerTokens(
+    playerCount: number,
+    usernames: string[],
+    charIds: number[],
+    loginSessionId: number
+  ): number[] {
+    if (playerCount < 1 || playerCount > 2) {
+      throw new RangeError(`Client supports one or two local-player tokens, got ${playerCount}`);
+    }
+
+    const tokens = Array.from({ length: playerCount }, () => this.nextToken++ >>> 0);
+    for (const token of tokens) {
+      this.sessionsByToken.set(token, {
+        usernames: [...usernames],
+        netSlotIds: [...tokens],
+        charIds: [...charIds],
+        loginSessionId,
+        channelIndex: null,
+      });
+    }
+    return tokens;
+  }
+
   public setAuthTokenChannel(token: number, channelIndex: number): void {
     const snapshot = this.sessionsByToken.get(token >>> 0);
     if (snapshot) {

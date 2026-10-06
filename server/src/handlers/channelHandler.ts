@@ -131,13 +131,13 @@ export function handleChannelSelect(
 
   // The client received this token in S->C 4; update its game-server handoff snapshot.
   if (session.authTokens.length === 0 && session.users.length > 0) {
-    const token = state.allocateAuthToken(
+    session.authTokens = state.allocateLocalPlayerTokens(
+      session.users.length,
       session.users.map((user) => user.username),
-      session.netSlotIds,
       session.equippedCharIds,
       session.sessionId
     );
-    session.authTokens = session.users.map(() => token);
+    session.netSlotIds = [...session.authTokens];
   }
   for (const token of new Set(session.authTokens)) {
     state.setAuthTokenChannel(token, channelIndex);
@@ -339,7 +339,9 @@ export function handleSessionAuthHandoff(
   );
   const tokens = handoff.players.map((player) => player.sessionToken);
   const token = tokens[0] ?? 0;
-  const savedSession = state.sessionsByToken.get(token);
+  const savedSessions = tokens.map((playerToken) => state.sessionsByToken.get(playerToken));
+  const savedSession = savedSessions[0];
+  const allTokensFound = savedSessions.every((snapshot) => snapshot !== undefined);
 
   logger.debug("SessionHandoff", `Received ${formatClientOpcode(ClientOpcode.SessionHandoff)}`, {
     sessionId: session.sessionId,
@@ -365,7 +367,7 @@ export function handleSessionAuthHandoff(
         : `${handoff.reconnectContextByte} (${formatU8Hex(handoff.reconnectContextByte)})`,
     trailingHandoffFieldCount: handoff.trailingHandoffFieldsU32.length,
     unreadTrailingBytes: handoff.unreadTrailingBytes,
-    tokenFound: savedSession !== undefined,
+    tokenFound: allTokensFound,
   });
 
   const rejectHandoff = (reason: string): void => {
@@ -376,7 +378,7 @@ export function handleSessionAuthHandoff(
       declaredPlayerCount: handoff.declaredPlayerCount,
       parsedPlayerCount: playerCount,
       tokenPresent: token !== 0,
-      tokenFound: savedSession !== undefined,
+      tokenFound: allTokensFound,
       rejectionReason: reason,
     });
   };
@@ -397,8 +399,27 @@ export function handleSessionAuthHandoff(
     rejectHandoff("invalid-local-player-count");
     return;
   }
-  if (!savedSession || token === 0) {
+  if (!savedSession || token === 0 || !allTokensFound) {
     rejectHandoff("no-auth-session-for-token");
+    return;
+  }
+  if (tokens.length !== playerCount || new Set(tokens).size !== playerCount) {
+    rejectHandoff("player-auth-token-mismatch");
+    return;
+  }
+  if (
+    savedSessions.some(
+      (snapshot) =>
+        !snapshot ||
+        snapshot.loginSessionId !== savedSession.loginSessionId ||
+        snapshot.channelIndex !== savedSession.channelIndex ||
+        snapshot.usernames.length !== savedSession.usernames.length ||
+        snapshot.usernames.some(
+          (username, index) => username.toLowerCase() !== savedSession.usernames[index]?.toLowerCase()
+        )
+    )
+  ) {
+    rejectHandoff("player-auth-token-session-mismatch");
     return;
   }
   if (savedSession.channelIndex === null) {
@@ -411,10 +432,6 @@ export function handleSessionAuthHandoff(
     savedSession.charIds.length !== playerCount
   ) {
     rejectHandoff("saved-session-player-count-mismatch");
-    return;
-  }
-  if (tokens.length !== playerCount || tokens.some((playerToken) => playerToken !== token)) {
-    rejectHandoff("player-auth-token-mismatch");
     return;
   }
   if (
@@ -440,7 +457,9 @@ export function handleSessionAuthHandoff(
   session.channelSelected = true;
   session.authTokens = [...tokens];
   session.users = restoredUsers;
-  session.netSlotIds = [...savedSession.netSlotIds];
+  // `sub_5D9716` matches room CUser+32 against these C->S 6 values. Reusing the
+  // authenticated values is what lets Prepare callbacks resolve each local-player index.
+  session.netSlotIds = [...tokens];
   session.equippedCharIds = [...savedSession.charIds];
 
   const previousStageId = session.stageId;
@@ -459,8 +478,8 @@ export function handleSessionAuthHandoff(
     pendingStage: formatStageId(StageId.Lobby),
     channelIndex: session.channelIndex,
     users: session.users.map((user) => user.username),
-    netSlotIds: session.netSlotIds,
-    tokenFound: savedSession !== undefined,
+    localIdentityCount: session.netSlotIds.length,
+    tokenFound: allTokensFound,
     lobbyEntrySignalObserved: session.lobbyEntryPacketSeen,
   }, {
     displayData: {

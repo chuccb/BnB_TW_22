@@ -2769,6 +2769,9 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(p4.readU32()).toBe(0); // wins
     expect(p4.readU32()).toBe(0); // losses
     const token1 = p4.readU32();
+    // Client stores this at local-user +95. The same value authenticates C->S 6 and must be
+    // echoed as room CUser+32 so `sub_5D9716` can resolve Prepare interactions to local player 0.
+    expect(session1.netSlotIds).toEqual([token1]);
     expect(p4.readString()).toBe("bazzi_tw");
     const loggedInUser = state.db.getUserByUsername("bazzi_tw")!;
     expect(p4.readU8()).toBe(loggedInUser.gender);
@@ -2905,6 +2908,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(session1.stageId).toBe(StageId.SelectServer);
     expect(session1.pendingStageId).toBe(StageId.Lobby);
     expect(session1.lobbyEntryPacketSeen).toBe(false);
+    expect(session1.netSlotIds).toEqual([token1]);
 
     const handoffReceiveLog = getRecentLogs().findLast(
       (entry) => entry.category === "SessionHandoff" && entry.message === "Received 6 (SessionHandoff)"

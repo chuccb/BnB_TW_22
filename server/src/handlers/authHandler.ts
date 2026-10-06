@@ -197,16 +197,21 @@ export function buildLoginSuccessPacket(state: WorldState, session: ClientSessio
   const count = Math.max(1, session.users.length);
   w.writeU8(count);
 
-  const token = state.allocateAuthToken(
+  const localPlayerTokens = state.allocateLocalPlayerTokens(
+    count,
     session.users.map((u) => u.username),
-    session.netSlotIds,
     session.equippedCharIds,
     session.sessionId
   );
+  session.authTokens = [...localPlayerTokens];
+  // Client static evidence shows the LoginResult field stored at local-user offset +95 is
+  // both written back in C->S 6 and used to match a room slot's CUser+32. Use that authenticated
+  // value as the local room identity; this is reconstruction policy, not an official-server claim.
+  session.netSlotIds = [...localPlayerTokens];
 
   for (let i = 0; i < count; i++) {
     const user = session.users[i]!;
-    session.authTokens[i] = token;
+    const token = localPlayerTokens[i]!;
 
     w.writeU32(user.lucci);
     w.writeU32(user.wins);
@@ -351,7 +356,6 @@ export function handleLogin(
       return;
     }
     session.users.push(auth.user);
-    session.netSlotIds.push(state.allocateNetSlotId());
     session.equippedCharIds.push(auth.user.equippedChar);
   }
 
@@ -392,7 +396,7 @@ export function handleLogin(
         eligible: user.level >= channel.minLevel && user.level <= channel.maxLevel,
       })),
     })),
-    netSlotIds: session.netSlotIds,
+    localIdentityCount: session.netSlotIds.length,
     playerCount: session.users.length,
   });
 }
