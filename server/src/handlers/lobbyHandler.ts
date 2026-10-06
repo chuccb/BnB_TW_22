@@ -635,12 +635,31 @@ export function handleLobbyPacket(
         serverMappingPolicy: "room password uses non-empty string; opaque fields use variant-specific local mapping/defaults",
       });
 
-      // S->C 79 and 102 are local reconstruction outputs.
+      // S->C 79 requests Stage 12 from the Lobby handler, but CMainWnd constructs that stage on
+      // a later main-loop turn. Sending S->C 102 immediately can put both frames in one Client
+      // receive burst, where the still-active Lobby stage consumes/ignores 102. Release the slot
+      // packets after the Client emits its next C->S packet instead.
       session.sendPacket(buildCreateRoomResultPacket(room));
-      for (const slotIdx of session.roomSlotIndices) {
+      const deferredSlotPackets = session.roomSlotIndices.flatMap((slotIdx) => {
         const slot = room.slots[slotIdx];
-        if (slot && slot.occupied) session.sendPacket(buildSetPlayerPacket(state, slot, 0, room.chiefSlotNetId));
-      }
+        return slot?.occupied
+          ? [buildSetPlayerPacket(state, slot, 0, room.chiefSlotNetId)]
+          : [];
+      });
+      session.deferStagePackets(StageId.Prepare, deferredSlotPackets);
+      logger.info("StageSync", "Deferred Prepare slot installation until Client resumes", {
+        sessionId: session.sessionId,
+        roomNumber: room.roomNumber,
+        targetStage: formatStageId(StageId.Prepare),
+        deferredServerOpcodes: deferredSlotPackets.map((packet) => packet.opcode),
+        slots: session.roomSlotIndices.map((slotIdx) => {
+          const slot = room.slots[slotIdx]!;
+          return `${slotIdx}:net=${slot.netSlotId},flags=${formatU8Hex(
+            computeSlotStateFlags(slot, room.chiefSlotNetId)
+          )},char=${slot.charId & 0x3f}`;
+        }),
+        reason: "avoid S->C 79 and stage-specific S->C 102 in one Client receive burst",
+      });
       break;
     }
 

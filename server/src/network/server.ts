@@ -273,60 +273,38 @@ export class CrazyArcadeServer implements Disposable, AsyncDisposable {
             packetFlow,
             ...packetTraceSummary
           } = session.getPacketTraceSummary(closedAtMs);
-          const packetFlowLines = packetFlow
-            .split("\n")
-            .map((line) => `  ${line}`)
-            .join("\n");
           const closeInitiator = session.serverCloseReason ? "server-requested" : "unknown";
-          const sessionSummary =
-            session.linkedLoginSessionId === null
-              ? `Session #${session.sessionId}`
-              : `Session #${session.sessionId} (LoginServer #${session.linkedLoginSessionId} -> GameServer #${session.sessionId})`;
-          const endpointSummary =
-            `${session.remoteAddress}:${session.remotePort} -> ${session.localAddress}:${session.localPort}`;
           const pendingStage =
             session.pendingStageId === null ? null : formatStageId(session.pendingStageId);
-          const stageSummary = `Stage: ${formatStageId(session.stageId)}${pendingStage === null ? "" : `; pending ${pendingStage}`}`;
-          const lobbySignalSummary =
-            `C->S 83 lobby-entry signal observed: ${session.lobbyEntryPacketSeen ? "yes" : "no"}; ` +
-            "modal/UI state remains unobservable";
-          const packetCountSummary =
-            `Packets: C->S ${packetTraceSummary.clientToServerDecodedPackets} decoded; ` +
-            `S->C ${packetTraceSummary.serverToClientWriteCalls} socket.write calls; ` +
-            `trace omitted ${packetTraceSummary.omittedTraceEvents}; ` +
-            `pending receive ${packetTraceSummary.pendingReceiveBytes}B`;
-          const closeSummary =
-            `Duration: ${closedAtMs - session.connectedAtMs}ms; close initiator: ${closeInitiator}` +
-            (session.serverCloseReason ? ` (${session.serverCloseReason})` : "");
-          const message = [
-            `${label} TCP socket closed`,
-            `${sessionSummary} · ${endpointSummary}`,
-            stageSummary,
-            packetCountSummary,
-            lobbySignalSummary,
-            closeSummary,
-            "Packet timeline (S->C entries are socket.write calls, not proof of client receipt):",
-            packetFlowLines,
-          ].join("\n");
-          logger.info(
-            "TCP",
-            message,
-            {
+          const connectedForMs = closedAtMs - session.connectedAtMs;
+          const closeData = {
+            sessionId: session.sessionId,
+            linkedLoginSessionId: session.linkedLoginSessionId ?? undefined,
+            remoteAddress: session.remoteAddress,
+            remotePort: session.remotePort,
+            stageId: formatStageId(session.stageId),
+            pendingStageId: pendingStage ?? undefined,
+            lobbyEntryPacketSeen: session.lobbyEntryPacketSeen,
+            connectedForMs,
+            closeInitiator,
+            serverCloseReason: session.serverCloseReason ?? undefined,
+            socketError: session.socketErrorMessage ?? undefined,
+            ...packetTraceSummary,
+            packetFlow,
+          };
+          logger.info("TCP", `${label} connection closed`, closeData, {
+            displayData: {
               sessionId: session.sessionId,
-              linkedLoginSessionId: session.linkedLoginSessionId ?? undefined,
-              remoteAddress: session.remoteAddress,
-              remotePort: session.remotePort,
-              stageId: formatStageId(session.stageId),
-              pendingStageId: pendingStage ?? undefined,
-              lobbyEntryPacketSeen: session.lobbyEntryPacketSeen,
-              connectedForMs: closedAtMs - session.connectedAtMs,
+              stageId: closeData.stageId,
+              connectedForMs,
+              c2sPackets: packetTraceSummary.clientToServerDecodedPackets,
+              s2cWrites: packetTraceSummary.serverToClientWriteCalls,
               closeInitiator,
-              serverCloseReason: session.serverCloseReason ?? undefined,
-              socketError: session.socketErrorMessage ?? undefined,
-              ...packetTraceSummary,
+              ...(session.serverCloseReason
+                ? { reason: session.serverCloseReason }
+                : {}),
             },
-            { displayData: {} }
-          );
+          });
           world.removeSession(session.sessionId);
         },
 

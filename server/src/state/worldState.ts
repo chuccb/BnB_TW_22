@@ -153,6 +153,14 @@ export class ClientSession {
   public roomSlotIndices: number[] = [];
   public udpEndpoint: { address: string; port: number } | null = null;
 
+  /**
+   * Packets that require the Client's requested stage to have been constructed first. They are
+   * released only after the next decoded C->S packet proves that the Client resumed its packet
+   * loop after the transition request. This is local ordering policy, not an acknowledgement of
+   * any earlier S->C packet.
+   */
+  private deferredStagePackets: { stageId: number; packets: PacketWriter[] } | null = null;
+
   public lastAntiHackStatus = 0;
 
   /** Explicit server-initiated close request, if one was made before TCP close. */
@@ -305,6 +313,24 @@ export class ClientSession {
     const frame = this.socketState.encodePacket(writer, 0x00, this.packetLogContext());
     this.sendRaw(frame);
     this.recordPacketTrace("S->C", writer.opcode, frame.length - 7);
+  }
+
+  public deferStagePackets(stageId: number, packets: PacketWriter[]): void {
+    if (packets.length === 0) return;
+    if (this.deferredStagePackets !== null) {
+      throw new Error(
+        `Session ${this.sessionId} already has deferred packets for stage ${this.deferredStagePackets.stageId}`
+      );
+    }
+    this.deferredStagePackets = { stageId, packets: [...packets] };
+  }
+
+  public flushDeferredStagePackets(): PacketWriter[] {
+    if (this.deferredStagePackets?.stageId !== this.stageId) return [];
+    const packets = this.deferredStagePackets.packets;
+    this.deferredStagePackets = null;
+    for (const packet of packets) this.sendPacket(packet);
+    return packets;
   }
 }
 

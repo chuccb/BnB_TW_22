@@ -441,6 +441,14 @@ describe("Lobby room writers are parsed as exact, distinct Client layouts", () =
     expect(publicRoom.mapTheme).toBe(7); // local low-byte mapping only
     expect(creator.session.roomSlotIndices.map((idx) => publicRoom.slots[idx]!.charId)).toEqual([0, 1]);
     expect(creator.client.popByOpcode(ServerOpcode.CreateRoomResult)).toBeDefined();
+    expect(creator.client.popByOpcode(ServerOpcode.SetPlayerOnPrepare)).toBeUndefined();
+    creator.client.sendToServer(
+      state,
+      creator.session.sessionId,
+      new PacketWriter(ClientOpcode.ClientPeriodicStatus).writeU32(1).writeU32(2)
+    );
+    expect(creator.client.popByOpcode(ServerOpcode.SetPlayerOnPrepare)).toBeDefined();
+    expect(creator.client.popByOpcode(ServerOpcode.SetPlayerOnPrepare)).toBeDefined();
 
     const emptyPasswordJoiner = makeLobbySession("empty_password_join");
     // The normal 76 writer always includes an empty length-prefixed string. After room/context,
@@ -3016,8 +3024,9 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(p81).toBeDefined();
     expect(p81.readString()).toBe("bazzi_tw");
 
-    // 7. Create Room (local C->S 75 -> S->C 79; Client normal-strategy success parser
-    // sub_4CCE53 requests Stage 12, then queued S->C 102 reaches sub_4B89E4).
+    // 7. Create Room (local C->S 75 -> S->C 79). The Client normal-strategy parser
+    // sub_4CCE53 only requests Stage 12; CMainWnd constructs it on a later main-loop turn, so
+    // local S->C 102 is deferred until the next decoded C->S packet establishes ordering.
     client1.sendToServer(
       state,
       session1.sessionId,
@@ -3037,8 +3046,14 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(roomNum).toBe(1);
     const roomGameKey = p79.readU32();
     expect(roomGameKey).toBe(state.rooms.get(roomNum)!.chiefSlotNetId);
-    expect(client1.popByOpcode(102)).toBeDefined(); // Full room snapshot S->C 102
+    expect(client1.popByOpcode(102)).toBeUndefined();
     expect(session1.stageId).toBe(StageId.Prepare);
+    client1.sendToServer(
+      state,
+      session1.sessionId,
+      new PacketWriter(ClientOpcode.ClientPeriodicStatus).writeU32(1).writeU32(2)
+    );
+    expect(client1.popByOpcode(102)).toBeDefined(); // Deferred S->C 102 after Client resumed
 
     // 8. Second player logs in and joins Room #1 (C->S 76 -> S->C 80 + S->C 102 + S->C 100 to Chief)
     let client2 = new SimulatedClient();
@@ -4753,15 +4768,14 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
       const closeLog = getRecentLogs().findLast(
         (entry) =>
           entry.category === "TCP" &&
-          entry.message.startsWith("LoginServer TCP socket closed\n") &&
+          entry.message === "LoginServer connection closed" &&
           entry.data?.sessionId === sessionId
       );
       expect(closeLog?.data?.closeInitiator).toBe("server-requested");
       expect(closeLog?.data?.serverCloseReason).toBe("server-shutdown");
       expect(closeLog?.data?.serverToClientWriteCalls).toBe(1);
       expect(closeLog?.data?.clientToServerDecodedPackets).toBe(0);
-      expect(closeLog?.message).toContain("Packet timeline (S->C entries are socket.write calls");
-      expect(closeLog?.message).toContain("S->C [write-call] ConnectHello");
+      expect(closeLog?.data?.packetFlow).toContain("S->C [write-call] ConnectHello");
     } finally {
       client?.close();
       if (!stopped) server.stop();
@@ -4971,7 +4985,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     const gameCloseLog = getRecentLogs().findLast(
       (entry) =>
         entry.category === "TCP" &&
-        entry.message.startsWith("GameServer TCP socket closed\n") &&
+        entry.message === "GameServer connection closed" &&
         entry.data?.sessionId === gameSessionId
     );
     expect(gameCloseLog?.data?.closeInitiator).toBe("unknown");
@@ -4981,10 +4995,11 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(gameCloseLog?.data?.pendingReceiveBytes).toBe(0);
     expect(gameCloseLog?.data?.lobbyEntryPacketSeen).toBe(true);
     expect(gameCloseLog?.data?.linkedLoginSessionId).toBe(linkedLoginSessionId);
-    expect(gameCloseLog?.message).toContain("C->S [decoded] 83 (EnterLobby)");
-    expect(gameCloseLog?.message).toContain("S->C [write-call] 89 (ExpSync)");
-    expect(gameCloseLog?.message).toContain("S->C [write-call] 207 (DynamicMapAndStageConfig)");
-    expect(gameCloseLog?.message).toContain("modal/UI state remains unobservable");
+    expect(gameCloseLog?.data?.packetFlow).toContain("C->S [decoded] 83 (EnterLobby)");
+    expect(gameCloseLog?.data?.packetFlow).toContain("S->C [write-call] 89 (ExpSync)");
+    expect(gameCloseLog?.data?.packetFlow).toContain(
+      "S->C [write-call] 207 (DynamicMapAndStageConfig)"
+    );
     expect(gameCloseLog?.message).not.toContain("live_tester");
   });
 });

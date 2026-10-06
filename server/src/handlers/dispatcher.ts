@@ -14,6 +14,7 @@ import {
   formatClientOpcode,
   formatClientUdpOpcode,
   formatReconstructedUdpInputOpcode,
+  formatServerOpcode,
   formatStageId,
   getClientOpcodeAliases,
   logger,
@@ -350,6 +351,25 @@ export function dispatchTcpPacket(
     stageId: formatStageId(session.stageId),
     remainingPayloadBytes: reader.remaining,
   });
+
+  // A transition-result handler can only request a new Client stage; CMainWnd constructs that
+  // stage on a later main-loop turn. Do not place stage-specific follow-ups in the same receive
+  // burst. A subsequent decoded C->S packet is a causal ordering boundary, not proof that the
+  // Client accepted any particular earlier S->C packet.
+  const deferredPackets = session.flushDeferredStagePackets();
+  if (deferredPackets.length > 0) {
+    logger.info("StageSync", "Released deferred stage packets after Client resumed", {
+      sessionId: session.sessionId,
+      stageId: formatStageId(session.stageId),
+      trigger: formatClientOpcode(opcode),
+      serverOpcodes: deferredPackets.map((packet) =>
+        packet.opcode === null
+          ? "<connection packet>"
+          : formatServerOpcode(packet.opcode, session.stageId)
+      ),
+      clientReceiptVerified: false,
+    });
+  }
 
   const shopFlowRole = SHOP_FLOW_CANDIDATE_ROLES.get(opcode);
   if (shopFlowRole) {

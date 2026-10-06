@@ -332,6 +332,26 @@ export function formatLogEntry(
   return lines.join("\n");
 }
 
+function isVerboseDebugOutputEnabled(): boolean {
+  return ["1", "true", "yes", "on"].includes(
+    (process.env.BNB_LOG_VERBOSE ?? "").trim().toLowerCase()
+  );
+}
+
+function isRoutineDebugNoise(
+  category: string,
+  data: Record<string, unknown> | undefined
+): boolean {
+  if (isVerboseDebugOutputEnabled()) return false;
+  if (category === "Dispatcher" || category === "Heartbeat") return true;
+  if (category === "TCP" || category === "UDP") return true;
+  return (
+    category === "Framing" &&
+    data?.direction === "C->S" &&
+    data.opcode === ClientOpcode.ClientPeriodicStatus
+  );
+}
+
 function shouldUseColor(stream: NodeJS.WriteStream): boolean {
   const configured = (process.env.BNB_LOG_COLOR ?? "").trim().toLowerCase();
   if (["always", "true", "1"].includes(configured)) return true;
@@ -361,6 +381,11 @@ function writeLog(
   }
 
   if (LEVEL_PRIORITY[level] < LEVEL_PRIORITY[currentLogLevel]) {
+    return;
+  }
+  // Debug remains packet-oriented by default, but hides duplicated raw-byte/dispatcher lines and
+  // periodic heartbeat noise. Set BNB_LOG_VERBOSE=1 to restore the complete forensic stream.
+  if (level === "debug" && isRoutineDebugNoise(category, data)) {
     return;
   }
 
