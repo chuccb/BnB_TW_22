@@ -101,7 +101,7 @@ export const ClientOpcode = {
   SelectCharacter: 89, // sub_4B8065 / Practice sub_4D0813 / Prepare sub_4D2AFD: [u8 localIdx,u8 charId]
   ToggleSlotOpen: 90, // CSlotStage sub_4B84FF / Prepare sub_4D2BB8: one packed u8(slotIdx,openState)
   KickPlayer: 91, // Prepare sub_4DAE65 and separate CChattingStage sub_4B4A3E writers: [u32 targetSlotNetId,u8 flag]
-  BanVoteResponse: 92, // sub_4D555E: [u32 targetSlotNetId,u8 voteFlag] -> local S->C 111 mapping
+  BanVoteResponse: 92, // CChattingStage::sub_4B3310 / CPrepareStage::sub_4D54B1 (also the S->C 110 receivers; prior sub_4D555E citation is an interior address of sub_4D54B1): [u32 targetSlotNetId, u8 voteFlag] -> local S->C 111 mapping
   StartMatch: 93, // sub_4D5DB1 + sub_4DF2EC -> S->C 112 + S->C 113
   ChangeRoomPassword: 94, // sub_4DB16C -> S->C 231 + S->C 93
   ClientPacket95: 95, // Six direct writers: 3*u8 + u16; no shared field meaning or reply established
@@ -116,51 +116,58 @@ export const ClientOpcode = {
   ReportPlayer: 105, // sub_476AD6: [str targetUser, u16 reasonCode, u8 flag, str detail]
   CancelAction: 106, // sub_49DC34: empty cancel notification
 
-  // In-Game Match Stage (CGameStage — 0x004F672F)
-  PlaceBomb: 107, // sub_4EDCF0 -> S->C 138
-  KickBomb: 108, // sub_4EB05B -> S->C 139
-  BombExplode: 109, // sub_4EF5F8 -> S->C 137
-  PushBox: 110, // sub_4EE2BB -> S->C 140
-  PickUpItem: 111, // sub_4F1A2E -> S->C 141
-  DestroyTile: 112, // sub_4F1956 -> S->C 142
-  PlayerStateChange: 113, // sub_4EA4EE: packed subtype/slot + coordinates; load registration is UDP opcode 1
-  MatchFinish: 114, // sub_4EC3FD -> S->C 148 + S->C 153
-  NpcAttackDamage: 115, // CGONpcAttackMon::sub_5193D8: [u16 npcObjId, u16 damageOrAction]
-  NpcStateEvent: 116, // CGONpcAttackMon::sub_518C5B: [u8 npcSlot, u16 stateVal]
-  LeaveMatch: 117, // Leave match early -> S->C 153
-  BomberSpecialAction: 118, // sub_4EA367 / sub_4EA3CD: [u8 bomberIdx, u8 flag, u8 x, u8 y, u8 a5, u8 a4] -> S->C 154
-  BossAiSync: 119, // sub_522107 / sub_522252 / sub_5222B5
-  ThrowDart: 120, // sub_4EE0D0 -> S->C 145
-  PushBomb: 121, // sub_44B969: [u8 flagsAndBomberIdx, u8 x, u8 y] -> S->C 146 (sub_4EEB75)
-  InGameBubbleChat: 122, // sub_44E435: [u8 slotIdx, str message] -> S->C 21
-  ThrowBombAction: 123, // sub_44B72D: [u8 x, u8 y, u8 (bomberIdx<<4)|dir] -> S->C 180 (sub_4EAC86)
-  BomberReviveOrGhost: 125, // sub_4EE3DF: [u8 a2, u8 a3, u8 slotIdx, u8 a4] -> S->C 156 / 157 / 158
-  MatchDrawTimeout: 126, // sub_4EC3FD -> finishMatch(null)
-  ComponentSubPacket: 127, // -> S->C 149
-  PickupMapItem: 128, // sub_44F405: [u8 bomberIdx, u8 x, u8 y] -> S->C 142 (sub_4EB01C)
-  RoundSyncAck: 129, // sub_4F588D: [u8(1)]
-  StageTransitionAck: 130, // sub_4F574C: [u8(1)]
-  SpawnMapItems: 131, // sub_4F1525 -> S->C 151
-  DestroyTilesBatch: 132, // sub_4F1690: [u8 count, u16 a5, u16 a4, u8 a2, u16 a9, count*(u8 x, u8 y)] -> S->C 151
-  BossSkillTarget: 133, // sub_50CD79: [u8 randSeed, u32 x, u32 y, tiles...]
-  ThrowBomb: 134, // sub_4EDC97 -> S->C 146
-  ReportPerfMetrics: 135, // sub_4EA946: [5 * u32 perfMetrics]
-  SyncGameObjectUpdate: 136, // sub_578D1F: [u16 objId, 20B state] -> S->C 176
-  SyncGameObjectEvent: 137, // sub_579F03: [u16 objId, u32 val] -> S->C 177
-  BombChainTileCheck: 138, // sub_4E9A13: [u8 bomberIdx, u8 count, count*(u8 x, u8 y)]
-  MapScriptSync: 139, // sub_4FB3B2: [u8 a6, u8 count1, count1*(u8 x, u8 y), u8 count2, count2*(u8 t, u8 x, u8 y)]
-  MapScriptTick: 140, // sub_4FB7C9: [u8(0)]
-  TriggerRemoteBomb: 141, // sub_58587E: [u8 bomberIdx, u8 bombId, u8 flag] -> S->C 141 (sub_4ECAAA)
-  PlaceSpecialBomb: 142, // sub_4EE16E -> S->C 181
-  CustomGameObjectSync: 143, // sub_587966: [str data, u8 id, u8 flag]
-  PlayerTrappedInBalloon: 144, // sub_508B55: [u8 bomberIdx] -> S->C 165 (sub_4EAC12)
-  InGameAliveAck: 145, // sub_4EA141: [u8(1)]
-  SuddenDeathHazard: 146, // sub_509789: [u8(3), u8 slotOrTeam]
-  ReportUdpPeerRtt: 147, // CUDPPeerMan::sub_57BEF4: [u8 peerIdx, u32 rttMs, u8 count]
-  ReportGameDesync: 148, // sub_4EAB99: [u8 bomberIdx, u32 userKey, u8 reason]
-  RequestUdpRelay: 149, // CUDPPeerMan::sub_57BEF6: [u8 peerIdx (0..11)] -> S->C 125
-  PracticeExit: 150, // sub_4D18B3 -> S->C 153
-  UseActiveGameItem: 153, // sub_50E781: [u8 bomberIdx, u8 itemSlot, u8 itemType] -> S->C 153
+  // In-Game Match Stage (CGameStage — 0x004F672F). Verified writers: (ctor) =
+  // CSendPacket::possible_ctor_or_dtor_3 stack ctor; (re-init) = sub_57B69C ->
+  // CSendPacketBase::sub_695DF0 on a member packet (writes the opcode u16 first).
+  // Earlier evidence comments citing interior VAs (sub_4EDCF0, sub_4EB05B, sub_4EF5F8,
+  // sub_4EE2BB, sub_4F1A2E, sub_4F1956, sub_4EA4EE, sub_4EC3FD, sub_4EE0D0, sub_4EDC97,
+  // sub_4EE16E, sub_44B969, sub_44E435, sub_44B72D, sub_4EE3DF, sub_50CD79, ...) were
+  // interior addresses of nearby functions, not writer entries; replaced with the real
+  // CA.exe.c writer functions below.
+  PlaceBomb: 107, // sub_4E8AEF (re-init): per invocation u8, u32, u8, u8, u8, u8, u8, u8, u8, u16, u8 (machine-code write order) -> S->C 138
+  KickBomb: 108, // sub_4E8DC1 (re-init): [u8 packed(bomber,dir), u16, u8, u8, u8, u8, u16] -> S->C 139
+  BombExplode: 109, // CGOBomb::sub_443339 + sub_44846F + sub_44B172 + sub_4EE238 (ctor): [u16 objNetId, u8 x, u8 y, u16 moveKind (0 bomb-slide / 300 box-push)]; movement/action writers paired to S->C 137 by the reconstruction
+  PushBox: 110, // sub_4E8D41 (re-init): [u8 subType(2), u8 slotIdx, u8 srcY, u8 srcX, u8 destY, u8 destX] -> S->C 140
+  PickUpItem: 111, // sub_4E8BEA (re-init) -> S->C 141
+  DestroyTile: 112, // sub_4E8C5B (re-init) -> S->C 142
+  PlayerStateChange: 113, // 17 writers incl sub_4EDB76 / CGOBomber::sub_44E498 (ctor): [u8 ((slotIdx & 0x0F) | (subType << 4)), u16 x, u16 y, ...] subtype masks 0xB0/0x10/0x20 recovered; load registration is UDP opcode 1
+  MatchFinish: 114, // sub_50EA21 (ctor): [u16, u16, u16 count, count * (u8, u8)] -> S->C 148 + S->C 153
+  NpcAttackDamage: 115, // CGONpcAttackMon::sub_5193BA + CGONpcBasicMon::sub_51A5D8 + sub_51B4A0 + sub_51C412 (ctor): [u16 npcObjId, u16 damageOrAction]
+  NpcStateEvent: 116, // CGONpcAttackMon::sub_518C4F (ctor): [u8 npcSlot, u16 stateVal]
+  MapObjectEvent: 117, // 11 writers (ctor): CScriptObject::sub_45B999, CGONpcIceMon::sub_51BBDA, CMapActionObjState::sub_51F5CD (4 forms), CMapActionSay::sub_51FFA0, sub_51B933, sub_51C5C4, sub_51C657, sub_51D5C5: [u16 objNetId, u16 eventId, variant (u8 / 2-4*u16 / u32+u16s / str)]; map-script / NPC / map-action events. Not a leave-match request: the former LeaveMatch name and its S->C 153 pairing are withdrawn (no leave-match writer exists in the census).
+  BomberSpecialAction: 118, // sub_4EA34D / sub_4EA3CD / sub_4EA457 / sub_4EA4E1 (ctor): [u8 bomberIdx, u8 flag, u8 x, u8 y, u8 a5, u8 a4] -> S->C 154
+  BossAiSync: 119, // sub_522107 / sub_522252 / sub_5222B5 / sub_52230E / sub_5223AF (re-init): [u16 subOp, u16 arg?, u32 bossId, u16 x/40, u16 y/40] and 2 further subOp forms
+  ThrowDart: 120, // sub_4E8CCC (re-init): [u8(0), u16, u16, u8, u16] -> S->C 145
+  PushBomb: 121, // sub_44B89A (ctor): [u8 flagsAndBomberIdx, u8 x, u8 y] -> S->C 146 (sub_4EEB75)
+  InGameBubbleChat: 122, // sub_44E413 (ctor): [u8 slotIdx, str message] -> S->C 21
+  ThrowBombAction: 123, // sub_44B65D (ctor): [u8 x, u8 y, u8 (bomberIdx<<4)|dir] -> S->C 180 (sub_4EAC86)
+  BomberReviveOrGhost: 125, // sub_4EE3C0 (ctor): [u8 a2, u8 a3, u8 slotIdx, u8 a4] -> S->C 156 / 157 / 158
+  MatchDrawTimeout: 126, // sub_4F3D22 (ctor, same function also builds 113) -> finishMatch(null)
+  ComponentSubPacket: 127, // sub_4EA2F2 (ctor): [u8 a1] -> S->C 149
+  PickupMapItem: 128, // sub_44F803 / sub_44FED9 (ctor): [u8 bomberIdx, u8 x, u8 y] -> S->C 142 (sub_4EB01C)
+  RoundSyncAck: 129, // sub_4F588D (ctor): [u8(1)]
+  StageTransitionAck: 130, // sub_4F574C (ctor): [u8(1)]
+  SpawnMapItems: 131, // sub_4F1525 / sub_4F17A1 (ctor): [u8, u8, u8, u8] -> S->C 151
+  DestroyTilesBatch: 132, // sub_4F165D (ctor): [u8 count, u16 a5, u16 a4, u8 a2, u16 a9, count*(u8 x, u8 y)] -> S->C 151
+  BossSkillTarget: 133, // CGOTileStaticLucci::sub_50CC40 (ctor): [u8 randSeed, u32 x, u32 y, tiles...]
+  ThrowBomb: 134, // sub_4E8E54 (re-init): [u8 packed(bomber,dir), u8, u8, u8, u8, u8, u16] -> S->C 146
+  ReportPerfMetrics: 135, // sub_4EA8FA (ctor): [5 * u32 perfMetrics]
+  SyncGameObjectUpdate: 136, // sub_578D03 (ctor): [u16 objId, block(20)] -> S->C 176
+  SyncGameObjectEvent: 137, // sub_579EE3 (ctor): [u16 objId, u32 val] -> S->C 177
+  BombChainTileCheck: 138, // sub_4E9C99 (ctor): 4 * u8 (prior [u8 bomberIdx, u8 count, count*(u8 x, u8 y)] labeling unverified against the four writes)
+  MapScriptSync: 139, // sub_4FAF56 (ctor): [u8 a6, u8 count1, count1*(u8 x, u8 y), u8 count2, count2*(u8 t, u8 x, u8 y)]
+  MapScriptTick: 140, // sub_4FB764 (ctor): [u8(0)]
+  TriggerRemoteBomb: 141, // sub_58585E (ctor): [u8 bomberIdx, u8 bombId, u8 flag] -> S->C 141 (sub_4ECAAA)
+  PlaceSpecialBomb: 142, // sub_4E8A8A (re-init): [u8, u8, u8, u8] -> S->C 181
+  CustomGameObjectSync: 143, // sub_587967 (ctor): [str data, u8 id, u8 flag]; sent from sub_587EDD. No client receive route for S->C 143 is recovered in any stage dispatcher.
+  PlayerTrappedInBalloon: 144, // sub_506A9B / sub_50E5BE (ctor): [u8 bomberIdx] -> S->C 165 (sub_4EAC12)
+  InGameAliveAck: 145, // sub_4EA141 (ctor): [u8(1)]; sent as the response when S->C 182 (InGameAliveCheck) is received
+  SuddenDeathHazard: 146, // sub_50977F + sub_509822 + CTimebombDetermining::sub_50BA30 + CTimebombNondetermined::sub_50BBF1 (ctor): [u8(3), u8 slotOrTeam]
+  ReportUdpPeerRtt: 147, // CUDPPeerMan::sub_57BEF6 (ctor): [u8 peerIdx, u32 rttMs, u8, u8] (tail count/list not fully established)
+  ReportGameDesync: 148, // sub_4EAB99 (ctor): [u8 bomberIdx, u32 userKey, u8 reason]
+  RequestUdpRelay: 149, // CUDPPeerMan::sub_57BEF6 (ctor): [u8 peerIdx (0..11)] -> S->C 125
+  PracticeExit: 150, // sub_4D18B3 (ctor) -> S->C 153
+  UseActiveGameItem: 153, // sub_50E705 (ctor): [u8 bomberIdx, u8 itemSlot, u8 itemType] -> S->C 145 (ThrowDartBroadcast; the earlier S->C 153 pairing is withdrawn — 153 is ReturnToPrepareStage)
 
   // Config / Shop / Inventory / UserMarket / Couple / SMS Requests
   UnresolvedClientPacket252: 252, // No current-build Client writer recovered; prior packagemap.ini / S->C 157 association withdrawn.
@@ -307,7 +314,7 @@ export const ServerOpcode = {
   RankingList: 69, // sub_4A5114: [u16 startRank, u8 count, count*sub_4A4FBD]
   UserInfoModal70: 70, // PUserInfoResult -> Lobby sub_4C128B clears stage+6180, then sub_4A6379 -> sub_4BBCA8; modal may re-enter the +380-gated Shop helper, but does not set +380
   StageSpecificRoute71: 71, // CMyInfoDlg profile parser and state-gated CChatStage case -> sub_4ACB63 are distinct; schema/meaning not equated
-  UserStats71: 71, // CMyInfoDlg::sub_541F65; CChatStage also has a separate state-gated case 71 -> sub_4ACB63
+  UserStats71: 71, // CMyInfoDlg::sub_541F65 (prior citation is an interior address of CEmotionWnd::CEmotionPopupDlg::sub_541DC1; handler attribution unverified in this pass); CChatStage also has a separate state-gated case 71 -> sub_4ACB63
   ChatStageRoute73: 73, // CChatStage::sub_4B0A63 -> root slot 80 (+0x140); field mapping/meaning UNKNOWN
   ChatStageRoute77: 77, // CChatStage::sub_4B0A63 -> sub_4A9245; field mapping/meaning UNKNOWN
   QuestConfigSync: 75, // CStage::sub_4B94A6 -> C->S 83 + empty C->S 338 when feature 32 is enabled
@@ -315,12 +322,12 @@ export const ServerOpcode = {
   StageRecordList78: 78, // CStage::sub_4BDBF5 -> sub_4B990D -> sub_5935DC: [u32 count, count*(u8, u32, str)]; record meanings UNKNOWN
   CreateRoomResult: 79, // CNormalLobbyStrategy::sub_4CCE53
   JoinRoomResult: 80, // CLobbyStage::sub_4C455D
-  QuickJoinOrUserProfile: 81, // CLobbyStage::sub_4C4635 (QuickJoin) / CStage::sub_4BCDFF (UserProfile)
+  QuickJoinOrUserProfile: 81, // CLobbyStage::sub_4C4635 (QuickJoin); prior CStage::sub_4BCDFF (UserProfile) citation is an interior address of sub_4BCB70 (a NexonClub sender) and is unverified as a route-81 handler
   LobbyRoomListEntry: 82, // CLobbyStage::sub_4C1E57 -> sub_4C1B1B
   RoomDetailInfo: 83, // CNormalLobbyStrategy::sub_4CD139
   LobbyRoomListEntryCompact: 84, // CLobbyStage::sub_4C1E90 -> sub_4C1C0A
-  LobbyRoomSlotUpdate: 85, // CLobbyStage::sub_4C1F02 -> sub_4C32E4
-  LobbyRoomSlotRemove: 86, // CLobbyStage::sub_4C1EC9
+  LobbyRoomSlotUpdate: 85, // CLobbyStage::sub_4C3ED0 (vtable +348) -> sub_4C32E4; prior sub_4C1F02 citation is an interior address of the comparison thunk sub_4C1EEB
+  LobbyRoomSlotRemove: 86, // CLobbyStage::sub_4C2722 (reads u16; helpers sub_4C1AC6 / sub_4C20E9). Prior sub_4C1EC9 citation withdrawn: that entry is a 3-word zeroing constructor, not a receive handler.
   LobbyStageRoute67: 67, // CLobbyStage::sub_4C86A2 -> sub_4C192A; payload semantics/schema not fully mapped
   LobbyStageRoute88: 88, // CLobbyStage::sub_4C86A2 -> sub_4C4B28; payload semantics/schema not fully mapped
   ExpSync: 89, // CStage::sub_4B992F
@@ -335,13 +342,13 @@ export const ServerOpcode = {
   SlotOpenCloseSync: 107, // CPrepareStage::sub_4D2888
   PracticeHandicapSync: 108, // CPrepareStagePractice::sub_4D05C1
   MapSelectSync: 109, // CPrepareStage::sub_4D27E4
-  BanVoteSync: 111, // CPrepareStage::sub_4D4300
+  BanVoteSync: 111, // CPrepareStage::sub_4DCA51 (reads u8 + str(s); UI keys SendBanMsg / ProcessBanMsg / BanUser / CannotBan / BanReflect). Prior sub_4D4300 citation is an interior address of sub_4D4154 and is not on the route-111 path; withdrawn.
   StartGameError: 112, // CPrepareStage::sub_4D9F26
   StartGameTransition: 113, // CPrepareStage::sub_4D9F8A + optional esfn.ssd (sub_5CA65A)
-  TeamChatBroadcast: 114, // CPrepareStage::sub_4DD1F5
+  TeamChatBroadcast: 114, // CPrepareStage::sub_4D56AA (reads str fields, updates room name state). Prior sub_4DD1F5 citation is an interior address of sub_4DD1C5 and is not on the route-114 path; withdrawn.
   StageSpecificRoute115: 115, // Prepare, Game, and Exchange use separate Client parsers; no common schema/meaning assumed
   PrepareStageRoute115: 115, // CPrepareStage::sub_4D2190 reads 4*u8 + u16 + u8; not generalized to other stages
-  StageSpecificRoute110: 110, // CPrepareStage -> sub_4D54B1 and CChattingStage -> sub_4B3310; stage-specific payloads/meanings UNKNOWN
+  StageSpecificRoute110: 110, // CPrepareStage -> sub_4D54B1 and CChattingStage -> sub_4B3310: reads [u32 targetSlotNetId, str targetName], shows the BanAgree / CAskBanPlayerDialog vote prompt, and answers with C->S 92 (BanVoteResponse)
   StageSpecificRoute116: 116, // Direct cases in CPrepareStage, CChattingStage, CExchangeStage, and CShopStageNew; no common schema/meaning assumed
   StageSpecificRoute117: 117, // Direct cases in CPrepareStage and CChattingStage; stage-specific payloads/meanings UNKNOWN
   PrepareStageRoute118: 118, // CPrepareStage::sub_4DCF07 -> sub_4D62E7; payload semantics/schema not fully mapped
@@ -388,9 +395,9 @@ export const ServerOpcode = {
   BomberTrapped: 165, // CGameStage::sub_4EAC12: [u8 bomberIdx, u16 x, u16 y]
   RoundTransition: 166, // CGameStage::sub_4F59E4
   BombThrownArc: 170, // CGameStage::sub_4EAA9C: [u8 bomberIdx, u8 bombId, u32 srcX, u32 srcY, u8 dstX, u8 dstY]
-  SyncObjectCreate: 175, // CSyncGameObjectMan::sub_5F11FE
-  SyncObjectUpdate: 176, // CSyncGameObjectMan::sub_5F11FE
-  SyncObjectRemove: 177, // CSyncGameObjectMan::sub_5F11FE
+  SyncObjectCreate: 175, // CSyncGameObjectMan::sub_57B430 (rewound-payload route; prior sub_5F11FE citation does not exist in CA.exe.c)
+  SyncObjectUpdate: 176, // CSyncGameObjectMan::sub_57B430 -> sub_57A702: [u16 objId, u8 val]
+  SyncObjectRemove: 177, // CSyncGameObjectMan::sub_57B430 -> sub_57A653: [u16 objId, u32 val]
   GameStageRoute171: 171, // CGameStage::sub_4F672F -> sub_4EC561; payload semantics/schema not fully mapped
   GameStageRoute173: 173, // CGameStage::sub_4F672F -> sub_4EE764; payload semantics/schema not fully mapped
   GameStageRoute174: 174, // CGameStage::sub_4F672F -> sub_4EA592; payload semantics/schema not fully mapped
@@ -445,7 +452,7 @@ export const ServerOpcode = {
   MyPagePacket222: 222, // Client path `sub_54055D` -> `sub_53EC90`; reads one string, displayed meaning UNKNOWN
   StageSpecificRoute224: 224, // ShopStage reads a config/CRC record; CStage fallback case 224 -> sub_4B9918 reads no packet fields
   ShopConfigCrc224: 224, // ShopStage: [u8(1), u32 fxCrc, u32 strCrc, u32 pkgCrc, str url, u32 banners]; distinct from generic CStage fallback case 224 -> sub_4B9918
-  StageSpecificRoute229: 229, // CChatStage::sub_4B0A63 -> sub_4A7F72 and CShopStageNew::sub_53AC96; stage-specific meaning/schema not equated
+  StageSpecificRoute229: 229, // CChatStage::sub_4B0A63 -> sub_4A7F72 and CShopStageNew::sub_53A6F1 (prior sub_53AC96 citation is an interior address of sub_53A6F1); stage-specific meaning/schema not equated
   ShopSaleModifiers: 229, // Descriptive alias for the ShopStage route only; do not apply its meaning to other stages
   ChatStageRoute230: 230, // CChatStage::sub_4B0A63 -> sub_4A8144; field mapping/meaning UNKNOWN
   ChatStageRoute233: 233, // CChatStage::sub_4B0A63 -> sub_4A8CBB; field mapping/meaning UNKNOWN
@@ -458,7 +465,7 @@ export const ServerOpcode = {
   StageSpecificRoute240: 240, // CStage fallback parses RankingTop3; CShopStageNew has a separate purchase-detail case 240
   RankingTop3: 240, // sub_4A522B: [u8 count(<=3), count*sub_4A4FBD]
   LobbyStageRoute241: 241, // CLobbyStage::sub_4C86A2 -> sub_4C5FB4; payload semantics/schema not fully mapped
-  ShopPurchaseDetail: 240, // CShopStageNew::sub_53B7D3
+  ShopPurchaseDetail: 240, // CShopStageNew::sub_53B79D (prior sub_53B7D3 citation is an interior address of sub_53B79D)
   SmsSendResult: 242, // SMS path `CSmsDlg::sub_4838E8` reads u8; C->S 290 response path remains UNKNOWN (sub_544049 is S->C 220)
   SmsList: 243, // CSmsDlg::sub_484465: [u8 status=15, u8 count, msgs...]
   SmsDeleteResult: 244, // CSmsDlg::sub_47F653: [u8 res=1]

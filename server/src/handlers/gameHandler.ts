@@ -463,27 +463,12 @@ export function handleGamePacket(
       break;
     }
 
-    case ClientOpcode.LeaveMatch: {
-      for (const sIdx of session.roomSlotIndices) {
-        const s = room.slots[sIdx];
-        if (s) {
-          s.alive = false;
-          s.ready = false;
-          s.loadedGame = false;
-        }
-      }
-      session.stageId = StageId.Prepare;
-      const w153 = new PacketWriter(ServerOpcode.ReturnToPrepareStage);
-      w153.writeU8(0);
-      w153.writeU8(room.mapTheme);
-      session.sendPacket(w153);
-
-      const occupied = room.slots.filter((s) => s.occupied);
-      const aliveTeams = new Set(occupied.filter((s) => s.alive).map((s) => s.teamColor));
-      if (room.isPlaying && occupied.length > 1 && aliveTeams.size <= 1) {
-        const winningTeam = aliveTeams.size === 1 ? [...aliveTeams][0]! : null;
-        finishMatch(state, room, winningTeam);
-      }
+    // C->S 117 is a map-object/script event stream ([u16 objNetId, u16 eventId, variant...];
+    // writers CScriptObject::sub_45B999, CGONpcIceMon::sub_51BBDA, CMapActionObjState::sub_51F5CD,
+    // CMapActionSay::sub_51FFA0). The former LeaveMatch handler (mark dead + S->C 153 + finishMatch)
+    // was based on the withdrawn name and treated map-script/NPC events as match exits; early leave
+    // is C->S 78 LeaveRoom. Observed without room-state mutation pending an established broadcast route.
+    case ClientOpcode.MapObjectEvent: {
       break;
     }
 
