@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { loadConfig } from "../src/config/index.ts";
 import { dispatchTcpPacket, dispatchUdpDatagram } from "../src/handlers/dispatcher.ts";
+import { finishMatch } from "../src/handlers/gameHandler.ts";
+import { announceRoomListAfterLeave } from "../src/handlers/lobbyRoomList.ts";
 import { CrazyArcadeServer } from "../src/network/server.ts";
 import {
   buildUdpGameLoadRegistration,
@@ -663,6 +665,289 @@ describe("Lobby room writers are parsed as exact, distinct Client layouts", () =
     expect(quick77.session.currentRoomNumber).toBe(publicRoom.roomNumber);
     expect(quick77.client.popByOpcode(ServerOpcode.JoinRoomResult)).toBeDefined();
     expect(state.db.getUserById(quick77.session.users[0]!.id)).toEqual(userBeforeMarketReturn);
+  });
+});
+
+describe("Lobby room list announcements keep every Lobby viewer's list in sync", () => {
+  const makeLobbySession = (
+    state: WorldState,
+    config: ReturnType<typeof loadConfig>,
+    username: string
+  ) => {
+    const client = new SimulatedClient();
+    const session = state.createSession(
+      client.onWireBytes,
+      "203.0.113.150",
+      51150 + state.sessions.size,
+      "0.0.0.0",
+      0,
+      "game"
+    );
+    session.users = [state.db.createUser(username, "password")];
+    session.netSlotIds = session.users.map(() => state.allocateNetSlotId());
+    session.equippedCharIds = session.users.map(() => 0);
+    session.channelSelected = true;
+    session.channelIndex = 0;
+    session.stageId = StageId.Lobby;
+    session.sendConnectHello(config);
+    return { client, session };
+  };
+
+  /** Parses the S->C 82 row body in `buildLobbyRoomEntryPacket` field order. */
+  const parseRoomEntry = (packet: PacketReader) => ({
+    roomNumber: packet.readU16(),
+    contextWord: packet.readU32(),
+    name: packet.readString(),
+    occupied: packet.readU8(),
+    openCount: packet.readU8(),
+    isPlaying: packet.readU8(),
+    mapId: packet.readU16(),
+    gameMode: packet.readU8(),
+    gameSubMode: packet.readU8(),
+    hasPassword: packet.readU8(),
+    mapTheme: packet.readU32(),
+    mapThemeLo: packet.readU8(),
+  });
+
+  test("room creation, join, and leave refresh or remove the row for every Lobby viewer", () => {
+    const config = loadConfig({ dbPath: ":memory:" });
+    using state = new WorldState(config);
+    const viewerA = makeLobbySession(state, config, "list_viewer_a");
+    const viewerB = makeLobbySession(state, config, "list_viewer_b");
+    const creator = makeLobbySession(state, config, "list_creator");
+
+    creator.client.sendToServer(
+      state,
+      creator.session.sessionId,
+      new PacketWriter(ClientOpcode.CreateRoom)
+        .writeString("Announced room")
+        .writeString("")
+        .writeU8(0)
+        .writeU8(1)
+        .writeU8(0)
+        .writeU8(0)
+        .writeU32(0)
+    );
+    const room = state.rooms.get(creator.session.currentRoomNumber!)!;
+    expect(creator.session.stageId).toBe(StageId.Prepare);
+    // The creator already left the Lobby audience and must not receive its own row.
+    expect(creator.client.popByOpcode(ServerOpcode.LobbyRoomListEntry)).toBeUndefined();
+    for (const viewer of [viewerA, viewerB]) {
+      const entry = parseRoomEntry(viewer.client.popByOpcode(ServerOpcode.LobbyRoomListEntry)!);
+      expect(entry.roomNumber).toBe(room.roomNumber);
+      expect(entry.contextWord).toBe(room.chiefSlotNetId);
+      expect(entry.name).toBe("Announced room");
+      expect(entry.occupied).toBe(1);
+      expect(entry.openCount).toBe(room.slots.filter((slot) => slot.open).length);
+      expect(entry.isPlaying).toBe(0);
+      expect(entry.mapId).toBe(room.mapId);
+      expect(entry.gameMode).toBe(room.gameMode);
+      expect(entry.gameSubMode).toBe(room.gameSubMode);
+      expect(entry.hasPassword).toBe(0);
+      expect(entry.mapTheme).toBe(room.mapTheme);
+      expect(entry.mapThemeLo).toBe(room.mapTheme & 0xff);
+      // Exactly one row packet per viewer per event.
+      expect(viewer.client.popByOpcode(ServerOpcode.LobbyRoomListEntry)).toBeUndefined();
+    }
+
+    // A join refreshes the same row with the new occupied count.
+    const joiner = makeLobbySession(state, config, "list_joiner");
+    joiner.client.sendToServer(
+      state,
+      joiner.session.sessionId,
+      new PacketWriter(ClientOpcode.JoinRoom)
+        .writeU16(room.roomNumber)
+        .writeU32(0x1122_3344)
+        .writeString("")
+        .writeU8(1)
+        .writeU8(3)
+    );
+    expect(joiner.session.currentRoomNumber).toBe(room.roomNumber);
+    for (const viewer of [viewerA, viewerB]) {
+      const entry = parseRoomEntry(viewer.client.popByOpcode(ServerOpcode.LobbyRoomListEntry)!);
+      expect(entry.roomNumber).toBe(room.roomNumber);
+      expect(entry.occupied).toBe(2);
+    }
+    // The joiner is already in the room (Prepare) and receives no Lobby row packet.
+    expect(joiner.client.popByOpcode(ServerOpcode.LobbyRoomListEntry)).toBeUndefined();
+
+    // Leaving refreshes the row again; the leaver re-enters the Lobby audience and also
+    // receives the refreshed row so its local list stays correct.
+    joiner.client.sendToServer(
+      state,
+      joiner.session.sessionId,
+      new PacketWriter(ClientOpcode.LeaveRoom)
+    );
+    expect(joiner.session.currentRoomNumber).toBeNull();
+    expect(joiner.session.stageId).toBe(StageId.Lobby);
+    for (const viewer of [viewerA, viewerB, joiner]) {
+      const entry = parseRoomEntry(viewer.client.popByOpcode(ServerOpcode.LobbyRoomListEntry)!);
+      expect(entry.roomNumber).toBe(room.roomNumber);
+      expect(entry.occupied).toBe(1);
+    }
+
+    // The last member leaving destroys the room: viewers get S->C 86 with the last context.
+    creator.client.sendToServer(
+      state,
+      creator.session.sessionId,
+      new PacketWriter(ClientOpcode.LeaveRoom)
+    );
+    expect(state.rooms.has(room.roomNumber)).toBe(false);
+    for (const viewer of [viewerA, viewerB, joiner, creator]) {
+      const removal = viewer.client.popByOpcode(ServerOpcode.LobbyRoomSlotRemove)!;
+      expect(removal.readU16()).toBe(room.roomNumber);
+      expect(removal.readU32()).toBe(room.chiefSlotNetId);
+    }
+  });
+
+  test("quick join refreshes the row and a chief disconnect rewrites the row context", () => {
+    const config = loadConfig({ dbPath: ":memory:" });
+    using state = new WorldState(config);
+    const viewer = makeLobbySession(state, config, "quick_viewer");
+    const creator = makeLobbySession(state, config, "quick_creator");
+    creator.client.sendToServer(
+      state,
+      creator.session.sessionId,
+      new PacketWriter(ClientOpcode.CreateRoom)
+        .writeString("Quick target")
+        .writeString("")
+        .writeU8(0)
+        .writeU8(1)
+        .writeU8(0)
+        .writeU8(0)
+        .writeU32(0)
+    );
+    const room = state.rooms.get(creator.session.currentRoomNumber!)!;
+    viewer.client.popByOpcode(ServerOpcode.LobbyRoomListEntry);
+
+    const quickJoiner = makeLobbySession(state, config, "quick_joiner");
+    quickJoiner.client.sendToServer(
+      state,
+      quickJoiner.session.sessionId,
+      new PacketWriter(ClientOpcode.QuickJoin).writeU8(1).writeU8(2).writeU8(0xab)
+    );
+    expect(quickJoiner.session.currentRoomNumber).toBe(room.roomNumber);
+    const joinedEntry = parseRoomEntry(viewer.client.popByOpcode(ServerOpcode.LobbyRoomListEntry)!);
+    expect(joinedEntry.roomNumber).toBe(room.roomNumber);
+    expect(joinedEntry.occupied).toBe(2);
+
+    // The TCP close path: removeSession reports the leave outcome and the caller announces it.
+    // The chief disconnect promotes the remaining member, changing the row context word, so
+    // the announcement must be a fresh S->C 82 (not S->C 86) with the rewritten context.
+    const previousContext = room.chiefSlotNetId;
+    const leaveOutcome = state.removeSession(creator.session.sessionId);
+    expect(leaveOutcome).not.toBeNull();
+    if (leaveOutcome) {
+      announceRoomListAfterLeave(state, leaveOutcome.room, leaveOutcome.roomDeleted);
+    }
+    expect(state.rooms.has(room.roomNumber)).toBe(true);
+    expect(room.chiefSlotNetId).not.toBe(previousContext);
+    expect(room.chiefSlotNetId).toBe(quickJoiner.session.netSlotIds[0]);
+    const promotedEntry = parseRoomEntry(viewer.client.popByOpcode(ServerOpcode.LobbyRoomListEntry)!);
+    expect(promotedEntry.roomNumber).toBe(room.roomNumber);
+    expect(promotedEntry.contextWord).toBe(room.chiefSlotNetId);
+    expect(promotedEntry.occupied).toBe(1);
+    expect(viewer.client.popByOpcode(ServerOpcode.LobbyRoomSlotRemove)).toBeUndefined();
+  });
+
+  test("game start and match end flip the playing flag for Lobby viewers", () => {
+    const config = loadConfig({ dbPath: ":memory:" });
+    using state = new WorldState(config);
+    const viewer = makeLobbySession(state, config, "playing_viewer");
+    const chief = makeLobbySession(state, config, "playing_chief");
+    const member = makeLobbySession(state, config, "playing_member");
+    const room = state.createRoom(chief.session, "Playing flag", "", false, 0, 0, [0]);
+    state.assignSessionToRoom(member.session, room, [1]);
+    const memberSlot = room.slots.find((slot) => slot.occupied && slot.session === member.session)!;
+    memberSlot.ready = true;
+    viewer.client.popByOpcode(ServerOpcode.LobbyRoomListEntry); // discard creation row
+
+    chief.client.sendToServer(
+      state,
+      chief.session.sessionId,
+      new PacketWriter(ClientOpcode.StartMatch)
+        .writeU32(0x10203040) // dyn-group counter
+        .writeU32(5) // fxdynmapinfo map ID applied to the room on start
+        .writeU8(0)
+        .writeU32(0)
+        .writeU8(0)
+        .writeU32(0) // trailing ESFN checksum
+    );
+    expect(room.isPlaying).toBe(true);
+    expect(room.mapId).toBe(5);
+    const playingEntry = parseRoomEntry(viewer.client.popByOpcode(ServerOpcode.LobbyRoomListEntry)!);
+    expect(playingEntry.roomNumber).toBe(room.roomNumber);
+    expect(playingEntry.isPlaying).toBe(1);
+    expect(playingEntry.mapId).toBe(5);
+    // Room members are in the Game stage and receive no Lobby row packet.
+    expect(chief.client.popByOpcode(ServerOpcode.LobbyRoomListEntry)).toBeUndefined();
+    expect(member.client.popByOpcode(ServerOpcode.LobbyRoomListEntry)).toBeUndefined();
+
+    finishMatch(state, room, null);
+    expect(room.isPlaying).toBe(false);
+    const endedEntry = parseRoomEntry(viewer.client.popByOpcode(ServerOpcode.LobbyRoomListEntry)!);
+    expect(endedEntry.roomNumber).toBe(room.roomNumber);
+    expect(endedEntry.isPlaying).toBe(0);
+  });
+
+  test("map and room-settings changes refresh the row for Lobby viewers", () => {
+    const config = loadConfig({ dbPath: ":memory:" });
+    using state = new WorldState(config);
+    const viewer = makeLobbySession(state, config, "settings_viewer");
+    const chief = makeLobbySession(state, config, "settings_chief");
+    const room = state.createRoom(chief.session, "Before", "", false, 0, 0, [0]);
+    viewer.client.popByOpcode(ServerOpcode.LobbyRoomListEntry); // discard direct-create row (none sent)
+
+    // C->S 87 map change: the row's map ID refreshes for Lobby viewers.
+    chief.client.sendToServer(
+      state,
+      chief.session.sessionId,
+      new PacketWriter(ClientOpcode.SelectMap).writeU16(5)
+    );
+    const mapEntry = parseRoomEntry(viewer.client.popByOpcode(ServerOpcode.LobbyRoomListEntry)!);
+    expect(mapEntry.roomNumber).toBe(room.roomNumber);
+    expect(mapEntry.mapId).toBe(5);
+
+    // C->S 84 settings change: the row's name / password flag / mode refresh as well.
+    chief.client.sendToServer(
+      state,
+      chief.session.sessionId,
+      new PacketWriter(ClientOpcode.UpdateRoomSettings)
+        .writeString("After")
+        .writeString("pw")
+        .writeU8(4)
+        .writeU8(2)
+    );
+    const settingsEntry = parseRoomEntry(viewer.client.popByOpcode(ServerOpcode.LobbyRoomListEntry)!);
+    expect(settingsEntry.roomNumber).toBe(room.roomNumber);
+    expect(settingsEntry.name).toBe("After");
+    expect(settingsEntry.hasPassword).toBe(1);
+    expect(settingsEntry.gameMode).toBe(2);
+  });
+
+  test("kicking a member refreshes the row's occupied count for Lobby viewers", () => {
+    const config = loadConfig({ dbPath: ":memory:" });
+    using state = new WorldState(config);
+    const viewer = makeLobbySession(state, config, "kick_viewer");
+    const chief = makeLobbySession(state, config, "kick_chief");
+    const member = makeLobbySession(state, config, "kick_member");
+    const room = state.createRoom(chief.session, "Kick room", "", false, 0, 0, [0]);
+    state.assignSessionToRoom(member.session, room, [1]);
+    const memberSlot = room.slots.find((slot) => slot.occupied && slot.session === member.session)!;
+    viewer.client.popByOpcode(ServerOpcode.LobbyRoomListEntry); // discard creation/join rows
+    viewer.client.popByOpcode(ServerOpcode.LobbyRoomListEntry);
+
+    chief.client.sendToServer(
+      state,
+      chief.session.sessionId,
+      new PacketWriter(ClientOpcode.KickPlayer)
+        .writeU32(memberSlot.netSlotId)
+        .writeU8(0)
+    );
+    expect(member.session.currentRoomNumber).toBeNull();
+    const kickedEntry = parseRoomEntry(viewer.client.popByOpcode(ServerOpcode.LobbyRoomListEntry)!);
+    expect(kickedEntry.roomNumber).toBe(room.roomNumber);
+    expect(kickedEntry.occupied).toBe(1);
   });
 });
 

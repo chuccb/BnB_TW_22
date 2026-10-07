@@ -13,6 +13,11 @@ import {
   buildDynamicMapConfigPacket207,
 } from "./commonHandler.ts";
 import {
+  announceRoomListAfterLeave,
+  announceRoomListEntry,
+  buildLobbyRoomEntryPacket,
+} from "./lobbyRoomList.ts";
+import {
   buildSetPlayerPacket,
   computeSlotStateFlags,
   writeCUserBlock,
@@ -260,126 +265,6 @@ export function buildJoinRoomResultPacket(state: WorldState, room: GameRoom): Pa
   w80.writeU8(0); // observerCount = 0
   w80.writeU32(0); // trailingFlag = 0
   return w80;
-}
-
-/**
- * Builds S->C 82 (`CLobbyStage::sub_4C1E57` -> `sub_4C1B1B` at `0x004C1B1B`)
- * Lobby Room List Entry Full Add/Set (`CGameSessionSlot` `0x004C30BD`). The `fieldNN`
- * labels name Client storage/accessor offsets only:
- *   u16 roomIndex (`v3`), u32 room-context word, str roomName
- *   u8 field18, u8 field21, u8 field27, u16 field30
- *   u8 field33, u8 field36, u8 field24, u32 field42, u8 field39
- * Local mappings only: field18 = occupied `room.slots` count; field21 = open `room.slots` count;
- * field33/field36 = `room.gameMode`/`room.gameSubMode`; field42 = `room.mapTheme`; field39 = its low byte.
- * The local context word is `room.chiefSlotNetId`. Client business meanings for offsets +33/+36
- * are unconfirmed despite UI-use clues; these builder mappings are not Client semantic evidence.
- */
-export function buildLobbyRoomEntryPacket(room: GameRoom): PacketWriter {
-  const field18Value = room.slots.filter((s) => s.occupied).length;
-  const field21Value = room.slots.filter((s) => s.open).length;
-  const w82 = new PacketWriter(ServerOpcode.LobbyRoomListEntry);
-  w82.writeU16(room.roomNumber);
-  w82.writeU32(room.chiefSlotNetId);
-  w82.writeString(room.name);
-  w82.writeU8(field18Value);
-  w82.writeU8(field21Value);
-  w82.writeU8(room.isPlaying ? 1 : 0);
-  w82.writeU16(room.mapId);
-  w82.writeU8(room.gameMode);
-  w82.writeU8(room.gameSubMode);
-  w82.writeU8(room.hasPassword ? 1 : 0);
-  w82.writeU32(room.mapTheme);
-  w82.writeU8(room.mapTheme & 0xff);
-  return w82;
-}
-
-/**
- * Builds S->C 84 (`CLobbyStage::sub_4C1E90` -> `sub_4C1C0A` at `0x004C1C0A`)
- * Compact Lobby Room List Entry (waiting room with random map `255`):
- *   u16 roomIndex, u32 room-context word, str roomName
- *   u8 field18, u8 field21, u8 field33, u8 field36, u8 field24, u32 field42, u8 field39
- * The local builder maps field18/field21 to occupied/open slot counts, field33/field36 to
- * `room.gameMode`/`room.gameSubMode`, and field42/field39 to `room.mapTheme`/its low byte.
- * These are reconstruction mappings; the Client meanings of offsets +33/+36 are unconfirmed.
- */
-export function buildLobbyRoomEntryCompactPacket(room: GameRoom): PacketWriter {
-  const field18Value = room.slots.filter((s) => s.occupied).length;
-  const field21Value = room.slots.filter((s) => s.open).length;
-  const w84 = new PacketWriter(ServerOpcode.LobbyRoomListEntryCompact);
-  w84.writeU16(room.roomNumber);
-  w84.writeU32(room.chiefSlotNetId);
-  w84.writeString(room.name);
-  w84.writeU8(field18Value);
-  w84.writeU8(field21Value);
-  w84.writeU8(room.gameMode);
-  w84.writeU8(room.gameSubMode);
-  w84.writeU8(room.hasPassword ? 1 : 0);
-  w84.writeU32(room.mapTheme);
-  w84.writeU8(room.mapTheme & 0xff);
-  return w84;
-}
-
-/**
- * Builds S->C 85 (`CLobbyStage::sub_4C1F02` -> `sub_4C32E4` at `0x004C32E4`)
- * Incremental Lobby Room Slot Update with bitmask `mask`:
- *   u16 roomIndex, u32 room-context word (local builder: `room.chiefSlotNetId`), u8 mask
- *   0x01 -> u8 field27; 0x02 -> u16 field30, u32 field42
- *   0x04 -> u8 field33; 0x08 -> u8 field36; 0x20 -> u8 field18
- *   0x10 -> str roomName; 0x40 -> u8 field39
- *   0x80 -> str roomName, u8 field18, u8 field24, u8 field21
- * Local mappings: field18/field21 are occupied/open slot counts; field33/field36 come from
- * `room.gameMode`/`room.gameSubMode`; field42/field39 come from `room.mapTheme`/its low byte.
- * Offsets +33/+36 have Client UI-use clues but no established business meanings.
- */
-export function buildLobbyRoomSlotUpdatePacket(room: GameRoom, mask: number = 0x20): PacketWriter {
-  const field18Value = room.slots.filter((s) => s.occupied).length;
-  const field21Value = room.slots.filter((s) => s.open).length;
-  const w85 = new PacketWriter(ServerOpcode.LobbyRoomSlotUpdate);
-  w85.writeU16(room.roomNumber);
-  w85.writeU32(room.chiefSlotNetId);
-  w85.writeU8(mask & 0xff);
-  if (mask & 0x01) {
-    w85.writeU8(room.isPlaying ? 1 : 0);
-  }
-  if (mask & 0x02) {
-    w85.writeU16(room.mapId);
-    w85.writeU32(room.mapTheme);
-  }
-  if (mask & 0x04) {
-    w85.writeU8(room.gameMode);
-  }
-  if (mask & 0x08) {
-    w85.writeU8(room.gameSubMode);
-  }
-  if (mask & 0x20) {
-    w85.writeU8(field18Value);
-  }
-  if (mask & 0x10) {
-    w85.writeString(room.name);
-  }
-  if (mask & 0x40) {
-    w85.writeU8(room.mapTheme & 0xff);
-  }
-  if (mask & 0x80) {
-    w85.writeString(room.name);
-    w85.writeU8(field18Value);
-    w85.writeU8(room.hasPassword ? 1 : 0);
-    w85.writeU8(field21Value);
-  }
-  return w85;
-}
-
-/**
- * Builds S->C 86 (`CLobbyStage::sub_4C1EC9` at `0x004C1EC9`)
- * Remove Room Slot from Lobby List:
- *   u16 roomIndex
- *   u32 room-context word (Client semantic not independently established)
- */
-export function buildLobbyRoomSlotRemovePacket(roomNumber: number, roomContextWord: number): PacketWriter {
-  const w86 = new PacketWriter(ServerOpcode.LobbyRoomSlotRemove);
-  w86.writeU16(roomNumber & 0xffff);
-  w86.writeU32(roomContextWord >>> 0);
-  return w86;
 }
 
 /**
@@ -634,6 +519,9 @@ export function handleLobbyPacket(
         localMapTheme,
         parsed.charIds
       );
+      // The creator's stage is already CPrepareStage here, so the announcement reaches
+      // every Lobby viewer (and not the creator) with the new room row.
+      announceRoomListEntry(state, room);
       logger.info("PacketAudit", "Created a local room from an exact Client writer form", {
         direction: "C->S",
         wireOpcode: opcode,
@@ -727,7 +615,8 @@ export function handleLobbyPacket(
       if (assignedSlots.length !== parsed.charIds.length) {
         // Defensive consistency guard; the pre-check should make this unreachable in the
         // single-threaded local world-state mutation path.
-        state.leaveRoom(session);
+        const { room: leftRoom, roomDeleted } = state.leaveRoom(session);
+        announceRoomListAfterLeave(state, leftRoom, roomDeleted);
         logger.error("Lobby", "Room assignment count differed from the exact C->S 76 localCnt", {
           sessionId: session.sessionId,
           roomNumber: room.roomNumber,
@@ -742,6 +631,8 @@ export function handleLobbyPacket(
         const slot = room.slots[slotIdx]!;
         state.broadcastToRoom(room, () => buildSetPlayerPacket(state, slot, 1, room.chiefSlotNetId));
       }
+      // Refresh the room row for Lobby viewers (new occupied count).
+      announceRoomListEntry(state, room);
       logger.info("PacketAudit", "Joined a local room from an exact Client writer form", {
         direction: "C->S",
         wireOpcode: opcode,
@@ -800,7 +691,8 @@ export function handleLobbyPacket(
 
       const assignedSlots = state.assignSessionToRoom(session, targetRoom, parsed.charIds);
       if (assignedSlots.length !== parsed.charIds.length) {
-        state.leaveRoom(session);
+        const { room: leftRoom, roomDeleted } = state.leaveRoom(session);
+        announceRoomListAfterLeave(state, leftRoom, roomDeleted);
         logger.error("Lobby", "Quick-join assignment count differed from exact Client localCnt", {
           sessionId: session.sessionId,
           roomNumber: targetRoom.roomNumber,
@@ -820,6 +712,8 @@ export function handleLobbyPacket(
         const slot = targetRoom.slots[slotIdx]!;
         state.broadcastToRoom(targetRoom, () => buildSetPlayerPacket(state, slot, 1, targetRoom.chiefSlotNetId));
       }
+      // Refresh the room row for Lobby viewers (new occupied count).
+      announceRoomListEntry(state, targetRoom);
       logger.info("PacketAudit", "Quick-joined a local room from an exact Client writer form", {
         direction: "C->S",
         wireOpcode: opcode,

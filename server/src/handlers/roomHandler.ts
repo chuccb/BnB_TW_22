@@ -5,6 +5,7 @@ import { SmartStreamWriter } from "../protocol/stream.ts";
 import { resolveDynamicMapId } from "../resources/archive.ts";
 import type { ClientSession, GameRoom, RoomSlot, WorldState } from "../state/worldState.ts";
 import { formatStageId, logger } from "../utils/logger.ts";
+import { announceRoomListAfterLeave, announceRoomListEntry } from "./lobbyRoomList.ts";
 import { buildShopEnterTriggerPacket213, buildShopInitPacket16, buildUserStockPacket } from "./shopHandler.ts";
 
 function clonePacketReader(reader: PacketReader): PacketReader {
@@ -613,6 +614,10 @@ function startMatchOnRoom(
     }
   }
 
+  // Refresh the room row for Lobby viewers (playing flag / possibly new map). The room's
+  // players are already in the Game stage, so only Lobby viewers receive the S->C 82.
+  announceRoomListEntry(state, room);
+
   // Broadcast S->C 113 (`sub_4D9F8A`)
   state.broadcastToRoom(room, () => buildStartGamePacket(state, room, includeEsfnStream));
 }
@@ -674,6 +679,8 @@ export function handlePrepareRoomPacket(
         room.gameMode = parsed.gameMode;
       }
       state.broadcastToRoom(room, () => buildRoomSettingsPacket(room));
+      // Refresh the room row for Lobby viewers (name / password flag / mode may have changed).
+      announceRoomListEntry(state, room);
       break;
     }
 
@@ -787,6 +794,8 @@ export function handlePrepareRoomPacket(
       }
       room.mapId = selectedMapId;
       state.broadcastToRoom(room, () => buildMapSelectPacket(room.mapId, mapKey));
+      // Refresh the room row for Lobby viewers (new map ID).
+      announceRoomListEntry(state, room);
       logger.info("Room", "Room map changed", {
         sessionId: session.sessionId,
         connectionKind: session.connectionKind,
@@ -970,7 +979,7 @@ export function handlePrepareRoomPacket(
             .filter((slot) => slot.occupied && slot.session === kickedSession)
             .map((slot) => [slot.slotIdx, slot.netSlotId] as const)
         );
-        const { removedSlots } = state.leaveRoom(kickedSession);
+        const { room: leftRoom, removedSlots, roomDeleted } = state.leaveRoom(kickedSession);
 
         // The Client base handler checks [slotIdx, removedSlotNetId, hasSuperChiefItem];
         // CPrepareStage rereads the opcode and slotIdx to clear its local slot. One matching
@@ -985,6 +994,8 @@ export function handlePrepareRoomPacket(
             buildPlayerLeftSlotPacket(removedSlotIdx, removedSlotNetId, hasSuperChiefItem)
           );
         }
+        // Refresh the room row for Lobby viewers (new occupied count).
+        announceRoomListAfterLeave(state, leftRoom, roomDeleted);
       }
       break;
     }
@@ -1414,6 +1425,8 @@ export function handlePrepareRoomPacket(
           );
         }
       }
+      // Refresh (or remove) the room row for Lobby viewers.
+      announceRoomListAfterLeave(state, leftRoom, roomDeleted);
       break;
     }
   }

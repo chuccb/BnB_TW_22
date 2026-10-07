@@ -399,15 +399,25 @@ export class WorldState implements Disposable {
     return session;
   }
 
-  public removeSession(sessionId: number): void {
+  /**
+   * Removes a session and returns the room-list outcome so the caller can announce the
+   * change to Lobby viewers (S->C 82 refresh or S->C 86 removal).
+   */
+  public removeSession(sessionId: number): {
+    room: GameRoom | null;
+    roomDeleted: boolean;
+  } | null {
     const session = this.sessions.get(sessionId);
     if (!session) {
-      return;
+      return null;
     }
+    let leaveOutcome: { room: GameRoom | null; roomDeleted: boolean } | null = null;
     if (session.currentRoomNumber !== null) {
-      this.leaveRoom(session);
+      const { room, roomDeleted } = this.leaveRoom(session);
+      leaveOutcome = { room, roomDeleted };
     }
     this.sessions.delete(sessionId);
+    return leaveOutcome;
   }
 
   public findSessionByUsername(username: string): ClientSession | undefined {
@@ -657,6 +667,19 @@ export class WorldState implements Disposable {
   public broadcastToLobby(channelIndex: number, buildPacket: () => PacketWriter): void {
     for (const session of this.sessions.values()) {
       if (session.stageId === 11 && session.channelIndex === channelIndex) {
+        session.sendPacket(buildPacket());
+      }
+    }
+  }
+
+  /**
+   * Sends one packet to every Lobby-stage session regardless of channel. The room pool is
+   * global in this reconstruction (Lobby init lists `state.rooms` to everyone), so room-list
+   * deltas use the same audience.
+   */
+  public broadcastToAllLobby(buildPacket: () => PacketWriter): void {
+    for (const session of this.sessions.values()) {
+      if (session.stageId === 11) {
         session.sendPacket(buildPacket());
       }
     }

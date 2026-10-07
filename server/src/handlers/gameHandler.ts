@@ -3,6 +3,7 @@ import { ClientOpcode, ServerOpcode, StageId } from "../protocol/opcodes.ts";
 import { PacketReader, PacketWriter, ipv4ToUint32 } from "../protocol/primitives.ts";
 import type { ClientSession, GameRoom, RoomSlot, WorldState } from "../state/worldState.ts";
 import { logger } from "../utils/logger.ts";
+import { announceRoomListEntry } from "./lobbyRoomList.ts";
 
 /**
  * Builds S->C 135 (`CGameStage::sub_4F672F` case `135` -> `sub_4F2065` at `0x004F2065`)
@@ -141,6 +142,9 @@ export function finishMatch(
     return;
   }
   room.isPlaying = false;
+  // Refresh the room row for Lobby viewers (playing flag back to 0). The room's players
+  // are still in the Game stage, so only Lobby viewers receive the S->C 82.
+  announceRoomListEntry(state, room);
 
   const isDraw = winningTeam === null;
   const w148 = new PacketWriter(ServerOpcode.MatchResult);

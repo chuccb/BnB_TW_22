@@ -1,6 +1,7 @@
 import type { TCPSocketListener, udp } from "bun";
 import { type ServerConfig, loadConfig } from "../config/index.ts";
 import { dispatchTcpPacket, dispatchUdpDatagram } from "../handlers/dispatcher.ts";
+import { announceRoomListAfterLeave } from "../handlers/lobbyRoomList.ts";
 import {
   type ClientConnectionKind,
   type ClientSession,
@@ -305,7 +306,12 @@ export class CrazyArcadeServer implements Disposable, AsyncDisposable {
                 : {}),
             },
           });
-          world.removeSession(session.sessionId);
+          // Remove the session and announce the resulting room-row change (S->C 82/86)
+          // to every Lobby viewer still connected.
+          const leaveOutcome = world.removeSession(session.sessionId);
+          if (leaveOutcome) {
+            announceRoomListAfterLeave(world, leaveOutcome.room, leaveOutcome.roomDeleted);
+          }
         },
 
         error(socket, error) {
@@ -320,7 +326,10 @@ export class CrazyArcadeServer implements Disposable, AsyncDisposable {
             error: error.message,
           });
           if (session) {
-            world.removeSession(session.sessionId);
+            const leaveOutcome = world.removeSession(session.sessionId);
+            if (leaveOutcome) {
+              announceRoomListAfterLeave(world, leaveOutcome.room, leaveOutcome.roomDeleted);
+            }
           }
         },
       },
