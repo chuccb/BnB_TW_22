@@ -239,7 +239,7 @@ export function finishMatch(
 
   const w153 = new PacketWriter(ServerOpcode.ReturnToPrepareStage);
   w153.writeU8(0); // targetMode = 0 -> Stage 12 (CPrepareStage)
-  w153.writeU8(room.mapTheme);
+  w153.writeU8(room.mapRandom ? 1 : 0); // `sub_4F2D1A` stores this byte at j[93] (map-select state).
   state.broadcastToRoom(room, () => w153);
 }
 
@@ -772,7 +772,7 @@ export function handleGamePacket(
       session.stageId = StageId.Prepare;
       const w153 = new PacketWriter(ServerOpcode.ReturnToPrepareStage);
       w153.writeU8(0);
-      w153.writeU8(room.mapTheme);
+      w153.writeU8(room.mapRandom ? 1 : 0);
       session.sendPacket(w153);
       break;
     }

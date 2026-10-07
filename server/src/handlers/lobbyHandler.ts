@@ -12,6 +12,7 @@ import {
   buildCoupleInfoSyncPacket250,
   buildDynamicMapConfigPacket207,
 } from "./commonHandler.ts";
+import { resolveDynamicMapId } from "../resources/archive.ts";
 import {
   announceRoomListAfterLeave,
   announceRoomListEntry,
@@ -20,8 +21,6 @@ import {
 import {
   buildSetPlayerPacket,
   computeSlotStateFlags,
-  writeCUserBlock,
-  writeSlotAccessoryBlock,
 } from "./roomHandler.ts";
 import {
   buildEquippedAvatarPacket196,
@@ -176,95 +175,77 @@ function logRejectedLobbyPacket(
 /**
  * Builds S->C 79 (`CLobbyStage::sub_4C86A2` case `'O'` -> `sub_4C3F09` -> `CNormalLobbyStrategy::sub_4CCE53` at `0x004CCE53`)
  * Create Room Result:
- *   u8 errCode (0 = success, 1 = SameRoomExist)
+ *   u8 errCode (0 = success, 1 = SameRoomExist, 2 = NoEmptySlot)
  *   if errCode == 0:
  *     u16 roomNumber (`sub_697510`)
  *     u32 room-context word (`sub_697580`; this local builder writes `room.chiefSlotNetId`)
- *     u8 gameMode (`sub_6974B0`)
- *     u8 mapOption (`sub_6974B0`)
- *     u8 extraMode (`sub_6974B0`)
+ *     u8 mapSelectState (`sub_6974B0` -> j[93]; 0/1)
+ *     u8 gameMode (`sub_6974B0` -> j[2002])
+ *     u8 roomVariant (`sub_6974B0` -> j[2014])
  */
 export function buildCreateRoomResultPacket(room: GameRoom): PacketWriter {
   const w79 = new PacketWriter(ServerOpcode.CreateRoomResult);
-  w79.writeU8(0); // errCode = 0 (success)
+  w79.writeU8(0); // errCode = 0 (success); 1 = SameRoomExist, 2 = NoEmptySlot (`sub_4C3F09`)
   w79.writeU16(room.roomNumber);
   w79.writeU32(room.chiefSlotNetId);
-  w79.writeU8(room.gameMode);
-  w79.writeU8(room.mapTheme);
-  w79.writeU8(room.gameSubMode);
+  // `CNormalLobbyStrategy::sub_4CCE53` stores the three u8s at j[93]/j[2002]/j[2014]:
+  // map-select state, game mode, and the room-variant badge respectively.
+  w79.writeU8(room.mapRandom ? 1 : 0); // -> j[93]
+  w79.writeU8(room.gameMode); // -> j[2002]
+  w79.writeU8(room.roomVariant); // -> j[2014]
   return w79;
 }
 
 /**
- * Builds S->C 80 (`CLobbyStage::sub_4C86A2` case `'P'` -> `sub_4C77C2` -> `sub_4C455D` at `0x004C455D`)
- * Join Room Result:
- *   u8 errCode (0 = success, 1 = WrongPassword, 2 = CantJoinRoom, 3 = InvalidGrade)
+ * Builds S->C 80 (`CLobbyStage::sub_4C86A2` case `'P'` -> `sub_4C77C2` at `0x004C77C2`)
+ * Join Room Result. The recovered client parse is:
+ *   u8 errCode (0 = success, 1 = WrongPassword, 2 = CantJoinRoom, 3 = InvalidGrade,
+ *               4 = InvalidLucci, 5 = InvalidGachapon, 6 = DontHaveTMItemJoin)
  *   if errCode == 0:
- *     u8 extraMode (`sub_6974B0`)
- *     str roomTitle (`sub_698290`)
- *     u16 roomNumber (`sub_697510`)
- *     u16 mapIndex (`sub_697510`)
- *     u8 gameMode (`sub_6974B0`)
- *     u8 mapTheme (`sub_6974B0`)
- *     u32 room-context word (`sub_697580`; this local builder writes `room.chiefSlotNetId`)
- *     For slotIdx = 0 .. 7:
- *       if !slot.occupied:
- *         u8 isEmpty = 1
- *         block(3) [stateFlags, charId, teamColor]
- *       else:
- *         u8 isEmpty = 0
- *         u32 netSlotId
- *         CUser::sub_4A42E8
- *         u32 userFlags
- *         block(3) [stateFlags, charId, teamColor]
- *         u8 coupleSlotIdx (0xFF)
- *         if feature 15 enabled (true in TW):
- *           str guildName
- *           u32 guildMark
- *         CSlotAccessoryPacket
- *     u8 observerCount (0)
- *     u32 trailingFlag (0)
+ *     u8 roomVariant (`CNormalLobbyStrategy::sub_4CCBF9` -> j[2014])
+ *     u16 roomNumber (`sub_4C455D` -> j[86] and the row's display number at j[89])
+ *     u8 gameMode (`sub_4C455D` -> j[2002])
+ * `sub_4C455D` fills the remaining room state (context word, name, map-select state, map
+ * id) from the client's own S->C 82 row for that roomNumber; the player slot table is NOT
+ * part of this packet — the server delivers it as deferred S->C 102 SetPlayer writes after
+ * the client has entered CPrepareStage (same deferment as the create path).
  */
-export function buildJoinRoomResultPacket(state: WorldState, room: GameRoom): PacketWriter {
+export function buildJoinRoomResultPacket(room: GameRoom): PacketWriter {
   const w80 = new PacketWriter(ServerOpcode.JoinRoomResult);
   w80.writeU8(0); // errCode = 0 (success)
-  w80.writeU8(room.gameSubMode); // extraMode
-  w80.writeString(room.name);
+  w80.writeU8(room.roomVariant); // -> j[2014]
   w80.writeU16(room.roomNumber);
-  w80.writeU16(room.mapId);
-  w80.writeU8(room.gameMode);
-  w80.writeU8(room.mapTheme);
-  w80.writeU32(room.chiefSlotNetId);
-
-  for (let i = 0; i < 8; i++) {
-    const slot = room.slots[i]!;
-    const slotBlock = new Uint8Array([
-      computeSlotStateFlags(slot, room.chiefSlotNetId),
-      slot.charId & 0x3f,
-      slot.teamColor & 0x1f,
-    ]);
-
-    if (!slot.occupied || !slot.user) {
-      w80.writeU8(1); // isEmpty = 1
-      w80.writeBlock(slotBlock);
-    } else {
-      w80.writeU8(0); // isEmpty = 0 (occupied)
-      w80.writeU32(slot.netSlotId);
-      writeCUserBlock(w80, slot.user);
-      w80.writeU32(0); // userFlags
-      w80.writeBlock(slotBlock);
-      w80.writeU8(0xff); // coupleSlotIdx = 0xFF
-      if (state.config.enabledFeatures.has(15)) {
-        w80.writeString(slot.user.guildName || "");
-        w80.writeU32(slot.user.guildMark || 0);
-      }
-      writeSlotAccessoryBlock(w80, state, slot.user);
-    }
-  }
-
-  w80.writeU8(0); // observerCount = 0
-  w80.writeU32(0); // trailingFlag = 0
+  w80.writeU8(room.gameMode); // -> j[2002]
   return w80;
+}
+
+/**
+ * Delivers the room's player slot table after a session enters the room (S->C 80/81
+ * success or the deferred create path). S->C 102 is a CPrepareStage packet; the entry
+ * result only *requests* that stage, which CMainWnd constructs on a later main-loop turn,
+ * so the entering session receives ALL occupied slots (existing members + its own) as
+ * deferred S->C 102 writes flushed on its next C->S packet. Members already sitting in
+ * CPrepareStage receive the new slots immediately (selector 1 keeps their join notice).
+ */
+function deliverRoomSlotsOnEnter(
+  state: WorldState,
+  room: GameRoom,
+  enteringSession: ClientSession,
+  newSlotIndices: number[]
+): void {
+  const allSetPlayers = room.slots
+    .filter((slot) => slot.occupied)
+    .map((slot) => buildSetPlayerPacket(state, slot, 0, room.chiefSlotNetId));
+  enteringSession.deferStagePackets(StageId.Prepare, allSetPlayers);
+  for (const slotIdx of newSlotIndices) {
+    const slot = room.slots[slotIdx];
+    if (!slot) continue;
+    state.broadcastToRoom(
+      room,
+      () => buildSetPlayerPacket(state, slot, 1, room.chiefSlotNetId),
+      enteringSession.sessionId
+    );
+  }
 }
 
 /**
@@ -505,18 +486,44 @@ export function handleLobbyPacket(
         break;
       }
 
-      // These are local adapter mappings, not Client-proven meanings for the opaque flag/tail.
-      // The main C->S 75 writer maps its 1-byte tail to a local mode and low byte of map option;
-      // its 4-byte-tail variant and C->S 79 retain the local defaults instead.
-      const localGameMode = hasPasswordField && parsed.tailLayout === "u8+u32" ? parsed.tailU8! : 0;
-      const localMapTheme = hasPasswordField && parsed.tailLayout === "u8+u32" ? parsed.tailU32 & 0xff : 0;
+      // Client writer semantics (recovered):
+      // - C->S 75 `str,str,u8,count,ids,u8,u32` (`sub_4CD379`): tail u8 = gameMode
+      //   (14 = practice), tail u32 = dyn map ID, prefix u8 = the dialog's `== 4`
+      //   random-map selector (`sub_4CC28E` writes `u8 0, u32 0` with the same prefix).
+      // - C->S 75 `str,str,u8,count,ids,u32` (`sub_4CB60D`, ladder create): prefix u8 =
+      //   roomVariant (1..3 = the three ladder kinds), tail u32 = dyn map ID.
+      // - C->S 79 `str,u8,count,ids,u8,u32` (`sub_4C070B`): tail u8 feeds the dyn-select
+      //   random mode and prefix u8 is the same `== 4` dialog selector; no mode byte exists.
+      let localGameMode = 0;
+      let localRoomVariant = 0;
+      let localMapRandom = false;
+      if (parsed.tailLayout === "u8+u32") {
+        if (hasPasswordField) {
+          localGameMode = parsed.tailU8!;
+          localMapRandom = parsed.prefixU8 === 1;
+        } else {
+          localMapRandom = parsed.prefixU8 === 1 || parsed.tailU8 === 1;
+        }
+      } else {
+        localRoomVariant = parsed.prefixU8;
+      }
+      const mapResolution = resolveDynamicMapId(state.resources, parsed.tailU32);
+      let localMapId = 0;
+      if (mapResolution.kind === "map") {
+        localMapId = mapResolution.mapId;
+      } else if (mapResolution.kind === "random") {
+        const candidates = state.resources.mapList;
+        localMapId = candidates[Math.floor(Math.random() * candidates.length)]!.mapId;
+      }
       const room = state.createRoom(
         session,
         parsed.roomName,
         parsed.password,
         parsed.password.length > 0,
         localGameMode,
-        localMapTheme,
+        localRoomVariant,
+        localMapRandom,
+        localMapId,
         parsed.charIds
       );
       // The creator's stage is already CPrepareStage here, so the announcement reaches
@@ -532,11 +539,13 @@ export function handleLobbyPacket(
         tailU8: parsed.tailU8 ?? null,
         tailU32: parsed.tailU32,
         localGameMode,
-        localMapTheme,
+        localRoomVariant,
+        localMapRandom,
+        localMapId,
         responseSent: true,
         roomStateChanged: true,
         databaseMutation: false,
-        serverMappingPolicy: "room password uses non-empty string; opaque fields use variant-specific local mapping/defaults",
+        serverMappingPolicy: "room password uses non-empty string; tail u32 resolves as the dyn map ID, tail u8 as game mode, prefix u8 as random-map flag (u8+u32 form) or room variant (u32 form)",
       });
 
       // S->C 79 requests Stage 12 from the Lobby handler, but CMainWnd constructs that stage on
@@ -626,11 +635,8 @@ export function handleLobbyPacket(
         break;
       }
 
-      session.sendPacket(buildJoinRoomResultPacket(state, room));
-      for (const slotIdx of assignedSlots) {
-        const slot = room.slots[slotIdx]!;
-        state.broadcastToRoom(room, () => buildSetPlayerPacket(state, slot, 1, room.chiefSlotNetId));
-      }
+      session.sendPacket(buildJoinRoomResultPacket(room));
+      deliverRoomSlotsOnEnter(state, room, session, assignedSlots);
       // Refresh the room row for Lobby viewers (new occupied count).
       announceRoomListEntry(state, room);
       logger.info("PacketAudit", "Joined a local room from an exact Client writer form", {
@@ -706,12 +712,9 @@ export function handleLobbyPacket(
       w81.writeU8(0);
       w81.writeU16(targetRoom.roomNumber);
       w81.writeU32(targetRoom.chiefSlotNetId); // Local builder mapping for an opaque Client context word.
-      w81.writeU8(targetRoom.mapTheme);
+      w81.writeU8(targetRoom.gameMode); // `sub_4C4635` stores this byte at j[2002].
       session.sendPacket(w81);
-      for (const slotIdx of assignedSlots) {
-        const slot = targetRoom.slots[slotIdx]!;
-        state.broadcastToRoom(targetRoom, () => buildSetPlayerPacket(state, slot, 1, targetRoom.chiefSlotNetId));
-      }
+      deliverRoomSlotsOnEnter(state, targetRoom, session, assignedSlots);
       // Refresh the room row for Lobby viewers (new occupied count).
       announceRoomListEntry(state, targetRoom);
       logger.info("PacketAudit", "Quick-joined a local room from an exact Client writer form", {
@@ -805,7 +808,10 @@ export function handleLobbyPacket(
 
       // The Client's u32 is retained for audit only; no sender-slot or admission meaning is inferred.
       session.stageId = StageId.Prepare;
-      session.sendPacket(buildJoinRoomResultPacket(state, room));
+      session.sendPacket(buildJoinRoomResultPacket(room));
+      // Returning from Shop/UserMarket reconstructs CPrepareStage on the Client, so the full
+      // slot table is re-delivered as deferred S->C 102 writes (no member re-broadcast).
+      deliverRoomSlotsOnEnter(state, room, session, []);
       logger.info("PacketAudit", "Observed C->S 82 and returned the session to its existing local room", {
         direction: "C->S",
         wireOpcode: opcode,

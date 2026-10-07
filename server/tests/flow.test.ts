@@ -224,7 +224,7 @@ describe("UDP game-load registration admission", () => {
     gameSession.users = [user];
     gameSession.netSlotIds = [state.allocateNetSlotId()];
 
-    const room = state.createRoom(gameSession, "UDP registration", "", false, 0, 0, [0]);
+    const room = state.createRoom(gameSession, "UDP registration", "", false, 0, 0, false, 0, [0]);
     room.isPlaying = true;
     room.startTick = 0x1234;
     gameSession.stageId = StageId.Game;
@@ -439,8 +439,10 @@ describe("Lobby room writers are parsed as exact, distinct Client layouts", () =
     const publicRoom = state.rooms.get(creator.session.currentRoomNumber!)!;
     expect(publicRoom.name).toBe("Exact public room");
     expect(publicRoom.hasPassword).toBe(false);
-    expect(publicRoom.gameMode).toBe(2); // local mapping only
-    expect(publicRoom.mapTheme).toBe(7); // local low-byte mapping only
+    expect(publicRoom.gameMode).toBe(2); // tail u8 = game mode (`sub_4CD379`)
+    expect(publicRoom.mapRandom).toBe(false); // prefix u8 0
+    expect(publicRoom.mapId).toBe(0); // tail u32 0x1234_5607 is not a dyn map ID
+    expect(publicRoom.roomVariant).toBe(0); // u8+u32 form carries no variant
     expect(creator.session.roomSlotIndices.map((idx) => publicRoom.slots[idx]!.charId)).toEqual([0, 1]);
     expect(creator.client.popByOpcode(ServerOpcode.CreateRoomResult)).toBeDefined();
     expect(creator.client.popByOpcode(ServerOpcode.SetPlayerOnPrepare)).toBeUndefined();
@@ -557,8 +559,10 @@ describe("Lobby room writers are parsed as exact, distinct Client layouts", () =
         .writeU32(0x8765_4321)
     );
     const opaqueU32TailRoom = state.rooms.get(opaqueU32TailCreator.session.currentRoomNumber!)!;
-    expect(opaqueU32TailRoom.gameMode).toBe(0);
-    expect(opaqueU32TailRoom.mapTheme).toBe(0);
+    expect(opaqueU32TailRoom.gameMode).toBe(0); // u32-tail form carries no mode byte
+    expect(opaqueU32TailRoom.roomVariant).toBe(0); // prefix u8 0
+    expect(opaqueU32TailRoom.mapRandom).toBe(false);
+    expect(opaqueU32TailRoom.mapId).toBe(0); // tail u32 not a dyn map ID
 
     const shortCreator = makeLobbySession("short_create");
     shortCreator.client.sendToServer(
@@ -575,8 +579,9 @@ describe("Lobby room writers are parsed as exact, distinct Client layouts", () =
     const shortRoom = state.rooms.get(shortCreator.session.currentRoomNumber!)!;
     expect(shortRoom.name).toBe("Opaque short room");
     expect(shortRoom.password).toBe("");
-    expect(shortRoom.gameMode).toBe(0);
-    expect(shortRoom.mapTheme).toBe(0);
+    expect(shortRoom.gameMode).toBe(0); // C->S 79 carries no mode byte
+    expect(shortRoom.mapRandom).toBe(false); // neither 0x23 nor 0x77 is the `== 4` random selector
+    expect(shortRoom.mapId).toBe(0); // tail u32 not a dyn map ID
 
     const quick77 = makeLobbySession("quick_join_77");
     quick77.client.sendToServer(
@@ -698,15 +703,15 @@ describe("Lobby room list announcements keep every Lobby viewer's list in sync",
     roomNumber: packet.readU16(),
     contextWord: packet.readU32(),
     name: packet.readString(),
-    occupied: packet.readU8(),
-    openCount: packet.readU8(),
-    isPlaying: packet.readU8(),
-    mapId: packet.readU16(),
-    gameMode: packet.readU8(),
-    gameSubMode: packet.readU8(),
     hasPassword: packet.readU8(),
-    mapTheme: packet.readU32(),
-    mapThemeLo: packet.readU8(),
+    mapSelect: packet.readU8(),
+    isPlaying: packet.readU8(),
+    mapField: packet.readU16(),
+    occupied: packet.readU8(),
+    maxPlayers: packet.readU8(),
+    gameMode: packet.readU8(),
+    mapId: packet.readU32(),
+    roomVariant: packet.readU8(),
   });
 
   test("room creation, join, and leave refresh or remove the row for every Lobby viewer", () => {
@@ -738,14 +743,14 @@ describe("Lobby room list announcements keep every Lobby viewer's list in sync",
       expect(entry.contextWord).toBe(room.chiefSlotNetId);
       expect(entry.name).toBe("Announced room");
       expect(entry.occupied).toBe(1);
-      expect(entry.openCount).toBe(room.slots.filter((slot) => slot.open).length);
+      expect(entry.maxPlayers).toBe(room.maxPlayers);
       expect(entry.isPlaying).toBe(0);
+      expect(entry.hasPassword).toBe(0);
+      expect(entry.mapSelect).toBe(0);
+      expect(entry.mapField).toBe(room.mapId);
       expect(entry.mapId).toBe(room.mapId);
       expect(entry.gameMode).toBe(room.gameMode);
-      expect(entry.gameSubMode).toBe(room.gameSubMode);
-      expect(entry.hasPassword).toBe(0);
-      expect(entry.mapTheme).toBe(room.mapTheme);
-      expect(entry.mapThemeLo).toBe(room.mapTheme & 0xff);
+      expect(entry.roomVariant).toBe(room.roomVariant);
       // Exactly one row packet per viewer per event.
       expect(viewer.client.popByOpcode(ServerOpcode.LobbyRoomListEntry)).toBeUndefined();
     }
@@ -856,7 +861,7 @@ describe("Lobby room list announcements keep every Lobby viewer's list in sync",
     const viewer = makeLobbySession(state, config, "playing_viewer");
     const chief = makeLobbySession(state, config, "playing_chief");
     const member = makeLobbySession(state, config, "playing_member");
-    const room = state.createRoom(chief.session, "Playing flag", "", false, 0, 0, [0]);
+    const room = state.createRoom(chief.session, "Playing flag", "", false, 0, 0, false, 0, [0]);
     state.assignSessionToRoom(member.session, room, [1]);
     const memberSlot = room.slots.find((slot) => slot.occupied && slot.session === member.session)!;
     memberSlot.ready = true;
@@ -878,6 +883,7 @@ describe("Lobby room list announcements keep every Lobby viewer's list in sync",
     const playingEntry = parseRoomEntry(viewer.client.popByOpcode(ServerOpcode.LobbyRoomListEntry)!);
     expect(playingEntry.roomNumber).toBe(room.roomNumber);
     expect(playingEntry.isPlaying).toBe(1);
+    expect(playingEntry.mapField).toBe(5);
     expect(playingEntry.mapId).toBe(5);
     // Room members are in the Game stage and receive no Lobby row packet.
     expect(chief.client.popByOpcode(ServerOpcode.LobbyRoomListEntry)).toBeUndefined();
@@ -895,7 +901,7 @@ describe("Lobby room list announcements keep every Lobby viewer's list in sync",
     using state = new WorldState(config);
     const viewer = makeLobbySession(state, config, "settings_viewer");
     const chief = makeLobbySession(state, config, "settings_chief");
-    const room = state.createRoom(chief.session, "Before", "", false, 0, 0, [0]);
+    const room = state.createRoom(chief.session, "Before", "", false, 0, 0, false, 0, [0]);
     viewer.client.popByOpcode(ServerOpcode.LobbyRoomListEntry); // discard direct-create row (none sent)
 
     // C->S 87 map change: the row's map ID refreshes for Lobby viewers.
@@ -906,6 +912,7 @@ describe("Lobby room list announcements keep every Lobby viewer's list in sync",
     );
     const mapEntry = parseRoomEntry(viewer.client.popByOpcode(ServerOpcode.LobbyRoomListEntry)!);
     expect(mapEntry.roomNumber).toBe(room.roomNumber);
+    expect(mapEntry.mapField).toBe(5);
     expect(mapEntry.mapId).toBe(5);
 
     // C->S 84 settings change: the row's name / password flag / mode refresh as well.
@@ -931,7 +938,7 @@ describe("Lobby room list announcements keep every Lobby viewer's list in sync",
     const viewer = makeLobbySession(state, config, "kick_viewer");
     const chief = makeLobbySession(state, config, "kick_chief");
     const member = makeLobbySession(state, config, "kick_member");
-    const room = state.createRoom(chief.session, "Kick room", "", false, 0, 0, [0]);
+    const room = state.createRoom(chief.session, "Kick room", "", false, 0, 0, false, 0, [0]);
     state.assignSessionToRoom(member.session, room, [1]);
     const memberSlot = room.slots.find((slot) => slot.occupied && slot.session === member.session)!;
     viewer.client.popByOpcode(ServerOpcode.LobbyRoomListEntry); // discard creation/join rows
@@ -949,6 +956,167 @@ describe("Lobby room list announcements keep every Lobby viewer's list in sync",
     expect(kickedEntry.roomNumber).toBe(room.roomNumber);
     expect(kickedEntry.occupied).toBe(1);
   });
+
+  test("a fresh room row satisfies the client's default WaitRoom filter predicate", () => {
+    // `sub_4C275B` mode-1 (the default) shows a row only when `sub_4C2083` passes —
+    // active && occupied < maxPlayers && !isPlaying — plus hasPassword == 0 (and at least
+    // two free slots for a 2P viewer). The old field mapping failed every clause.
+    const config = loadConfig({ dbPath: ":memory:" });
+    using state = new WorldState(config);
+    const viewer = makeLobbySession(state, config, "filter_viewer");
+    const chief = makeLobbySession(state, config, "filter_chief");
+    chief.client.sendToServer(
+      state,
+      chief.session.sessionId,
+      new PacketWriter(ClientOpcode.CreateRoom)
+        .writeString("Joinable")
+        .writeString("")
+        .writeU8(0)
+        .writeU8(1)
+        .writeU8(0)
+        .writeU8(0)
+        .writeU32(0)
+    );
+    const entry = parseRoomEntry(viewer.client.popByOpcode(ServerOpcode.LobbyRoomListEntry)!);
+    expect(entry.occupied < entry.maxPlayers).toBe(true); // `sub_4C2083` occupancy clause
+    expect(entry.isPlaying).toBe(0); // `sub_4C2083` playing clause
+    expect(entry.hasPassword).toBe(0); // mode-1 password clause
+    expect(entry.maxPlayers - entry.occupied >= 2).toBe(true); // 2P-viewer free-slot clause
+    // Password rooms fail the default filter only on the password clause.
+    const passwordChief = makeLobbySession(state, config, "filter_pw_chief");
+    passwordChief.client.sendToServer(
+      state,
+      passwordChief.session.sessionId,
+      new PacketWriter(ClientOpcode.CreateRoom)
+        .writeString("Locked")
+        .writeString("pw")
+        .writeU8(0)
+        .writeU8(1)
+        .writeU8(0)
+        .writeU8(0)
+        .writeU32(0)
+    );
+    const lockedEntry = parseRoomEntry(viewer.client.popByOpcode(ServerOpcode.LobbyRoomListEntry)!);
+    expect(lockedEntry.hasPassword).toBe(1);
+    expect(lockedEntry.occupied < lockedEntry.maxPlayers).toBe(true);
+    expect(lockedEntry.isPlaying).toBe(0);
+  });
+});
+
+describe("2P session room semantics (one ready toggle covers every local player)", () => {
+  const makeLobbySession = (
+    state: WorldState,
+    config: ReturnType<typeof loadConfig>,
+    username: string,
+    localPlayers = 1
+  ) => {
+    const client = new SimulatedClient();
+    const session = state.createSession(
+      client.onWireBytes,
+      "203.0.113.150",
+      51150 + state.sessions.size,
+      "0.0.0.0",
+      0,
+      "game"
+    );
+    session.users = Array.from({ length: localPlayers }, (_, index) =>
+      state.db.createUser(`${username}_${index}`, "password")
+    );
+    session.netSlotIds = session.users.map(() => state.allocateNetSlotId());
+    session.equippedCharIds = session.users.map(() => 0);
+    session.channelSelected = true;
+    session.channelIndex = 0;
+    session.stageId = StageId.Lobby;
+    session.sendConnectHello(config);
+    return { client, session };
+  };
+
+  const startMatchRequest = () =>
+    new PacketWriter(ClientOpcode.StartMatch)
+      .writeU32(0x10203040) // dyn-group counter
+      .writeU32(5) // fxdynmapinfo map ID
+      .writeU8(0)
+      .writeU32(0)
+      .writeU8(0)
+      .writeU32(0); // trailing ESFN checksum
+
+  test("one C->S 86 toggle marks every local slot of a 2P session ready", () => {
+    const config = loadConfig({ dbPath: ":memory:" });
+    using state = new WorldState(config);
+    const chief = makeLobbySession(state, config, "two_p_chief");
+    const member = makeLobbySession(state, config, "two_p_member", 2);
+    const room = state.createRoom(chief.session, "2P ready", "", false, 0, 0, false, 0, [0]);
+    state.assignSessionToRoom(member.session, room, [1, 2]);
+    const memberSlots = room.slots.filter((slot) => slot.occupied && slot.session === member.session);
+    expect(memberSlots).toHaveLength(2);
+
+    // Before any ready toggle the remote member's slots block the start.
+    chief.client.sendToServer(state, chief.session.sessionId, startMatchRequest());
+    expect(room.isPlaying).toBe(false);
+    expect(chief.client.popByOpcode(ServerOpcode.StartGameError)?.readU8()).toBe(2);
+
+    // `sub_4D5B2F` sends ONE ready packet per session; both local slots flip together.
+    member.client.sendToServer(
+      state,
+      member.session.sessionId,
+      new PacketWriter(ClientOpcode.ToggleReady).writeU8(1).writeU32(0)
+    );
+    expect(memberSlots.map((slot) => slot.ready)).toEqual([true, true]);
+    expect(member.client.popByOpcode(ServerOpcode.SlotStateSync)).toBeDefined();
+    expect(member.client.popByOpcode(ServerOpcode.SlotStateSync)).toBeDefined();
+
+    chief.client.sendToServer(state, chief.session.sessionId, startMatchRequest());
+    expect(room.isPlaying).toBe(true);
+    expect(chief.client.popByOpcode(ServerOpcode.StartGameError)?.readU8()).toBe(0);
+  });
+
+  test("the chief's own local players never need ready (2P direct start)", () => {
+    const config = loadConfig({ dbPath: ":memory:" });
+    using state = new WorldState(config);
+    const chief = makeLobbySession(state, config, "solo_two_p", 2);
+    // A 2P session creates the room with two local char IDs.
+    const room = state.createRoom(chief.session, "Direct start", "", false, 0, 0, false, 0, [0, 1]);
+    expect(room.slots.filter((slot) => slot.occupied && slot.session === chief.session)).toHaveLength(2);
+    expect(room.slots.some((slot) => slot.ready)).toBe(false);
+
+    // `sub_4D453A` exempts local players from ready; the server mirrors that policy, so the
+    // chief starts directly without any C->S 86 (the chief Ready button sends nothing).
+    chief.client.sendToServer(state, chief.session.sessionId, startMatchRequest());
+    expect(room.isPlaying).toBe(true);
+    expect(chief.client.popByOpcode(ServerOpcode.StartGameError)?.readU8()).toBe(0);
+  });
+
+  test("join delivers existing members' slots in the deferred S->C 102 table", () => {
+    const config = loadConfig({ dbPath: ":memory:" });
+    using state = new WorldState(config);
+    const chief = makeLobbySession(state, config, "table_chief");
+    const joiner = makeLobbySession(state, config, "table_joiner");
+    const room = state.createRoom(chief.session, "Slot table", "", false, 0, 0, false, 0, [0]);
+
+    joiner.client.sendToServer(
+      state,
+      joiner.session.sessionId,
+      new PacketWriter(ClientOpcode.JoinRoom)
+        .writeU16(room.roomNumber)
+        .writeU32(0x1122_3344)
+        .writeString("")
+        .writeU8(1)
+        .writeU8(3)
+    );
+    expect(joiner.client.popByOpcode(ServerOpcode.JoinRoomResult)?.readU8()).toBe(0);
+    // Nothing is delivered until the joiner's next C->S crosses the stage-construction gap.
+    expect(joiner.client.popByOpcode(ServerOpcode.SetPlayerOnPrepare)).toBeUndefined();
+    joiner.client.sendToServer(
+      state,
+      joiner.session.sessionId,
+      new PacketWriter(ClientOpcode.ClientPeriodicStatus).writeU32(0).writeU32(0)
+    );
+    // The deferred batch covers the existing member AND the joiner's own slot.
+    expect(joiner.client.popByOpcode(ServerOpcode.SetPlayerOnPrepare)).toBeDefined();
+    expect(joiner.client.popByOpcode(ServerOpcode.SetPlayerOnPrepare)).toBeDefined();
+    // The chief (already in CPrepareStage) receives the joiner's slot immediately.
+    expect(chief.client.popByOpcode(ServerOpcode.SetPlayerOnPrepare)).toBeDefined();
+  });
 });
 
 describe("Prepare room packets enforce exact writers and local sender context", () => {
@@ -964,7 +1132,7 @@ describe("Prepare room packets enforce exact writers and local sender context", 
     session.equippedCharIds = [0, 0];
     session.channelSelected = true;
     session.sendConnectHello(config);
-    const room = state.createRoom(session, "Prepare exact", "", false, 0, 0, [0, 0]);
+    const room = state.createRoom(session, "Prepare exact", "", false, 0, 0, false, 0, [0, 0]);
 
     const memberClient = new SimulatedClient();
     const member = state.createSession(memberClient.onWireBytes, "203.0.113.161", 51161, "0.0.0.0", 0, "game");
@@ -1158,7 +1326,7 @@ describe("Room match-start authorization", () => {
     chiefSession.channelSelected = true;
     memberSession.channelSelected = true;
 
-    const room = state.createRoom(chiefSession, "Start policy", "", false, 0, 0, [0]);
+    const room = state.createRoom(chiefSession, "Start policy", "", false, 0, 0, false, 0, [0]);
     state.assignSessionToRoom(memberSession, room, [0]);
     const chiefSlot = room.slots.find((slot) => slot.occupied && slot.session === chiefSession)!;
     const memberSlot = room.slots.find((slot) => slot.occupied && slot.session === memberSession)!;
@@ -1283,7 +1451,7 @@ describe("C->S 87 map-ID resolution and diagnostics", () => {
     chiefSession.netSlotIds = [state.allocateNetSlotId()];
     chiefSession.sendConnectHello(config);
     chiefSession.channelSelected = true;
-    const room = state.createRoom(chiefSession, "Map ID policy", "", false, 0, 0, [0]);
+    const room = state.createRoom(chiefSession, "Map ID policy", "", false, 0, 0, false, 0, [0]);
     return { config, state, chiefClient, chiefSession, room };
   };
 
@@ -1986,7 +2154,7 @@ describe("C->S 95 cross-context audit", () => {
     session.channelIndex = 1;
     session.stageId = StageId.Prepare;
     session.sendConnectHello(config);
-    const room = state.createRoom(session, "Packet 95 context", "", false, 0, 0, [0]);
+    const room = state.createRoom(session, "Packet 95 context", "", false, 0, 0, false, 0, [0]);
     const send = (writer: PacketWriter): void => client.sendToServer(state, session.sessionId, writer);
     const preparePacket95 = (): PacketWriter =>
       new PacketWriter(ClientOpcode.ClientPacket95).writeU8(0).writeU8(2).writeU8(1).writeU16(0x1234);
@@ -2036,7 +2204,7 @@ describe("C->S 95 cross-context audit", () => {
     loginSession.netSlotIds = [state.allocateNetSlotId()];
     loginSession.channelSelected = true;
     loginSession.sendConnectHello(config);
-    state.createRoom(loginSession, "Non-game test room", "", false, 0, 0, [0]);
+    state.createRoom(loginSession, "Non-game test room", "", false, 0, 0, false, 0, [0]);
     loginSession.stageId = StageId.Prepare;
     loginClient.sendToServer(state, loginSession.sessionId, preparePacket95());
     expect(loginClient.receivedPackets).toHaveLength(0);
@@ -2094,7 +2262,7 @@ describe("C->S 99 generic stage packet", () => {
     session.channelSelected = true;
     session.stageId = StageId.Prepare;
     session.sendConnectHello(config);
-    const room = state.createRoom(session, "Stage packet 99", "", false, 0, 0, [0]);
+    const room = state.createRoom(session, "Stage packet 99", "", false, 0, 0, false, 0, [0]);
     const stockBefore = state.db.getUserStock(user.id);
 
     client.sendToServer(
@@ -2191,7 +2359,7 @@ describe("C->S 100 exact Exchange audit", () => {
     session.equippedCharIds = [0, 0];
     session.channelSelected = true;
     session.sendConnectHello(config);
-    const room = state.createRoom(session, "Exchange audit", "", false, 0, 0, [0, 0]);
+    const room = state.createRoom(session, "Exchange audit", "", false, 0, 0, false, 0, [0, 0]);
     session.stageId = StageId.Exchange;
     const stockBefore = users.map((user) => state.db.getUserStock(user.id));
 
@@ -2826,7 +2994,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     session.equippedCharIds = [0];
     session.stageId = StageId.Prepare;
     session.channelIndex = 1;
-    const room = state.createRoom(session, "Handicap test", "", false, 0, 0, [0]);
+    const room = state.createRoom(session, "Handicap test", "", false, 0, 0, false, 0, [0]);
 
     client.sendToServer(state, session.sessionId, new PacketWriter(ClientOpcode.PracticeHandicap));
 
@@ -2887,7 +3055,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     normalSession.netSlotIds = [state.allocateNetSlotId()];
     normalSession.equippedCharIds = [0];
 
-    const room = state.createRoom(chiefSession, "Kick test", "", false, 0, 0, [0]);
+    const room = state.createRoom(chiefSession, "Kick test", "", false, 0, 0, false, 0, [0]);
     state.assignSessionToRoom(kickedSession, room, [0, 0]);
     state.assignSessionToRoom(normalSession, room, [0]);
     const kickedSlotIndices = [...kickedSession.roomSlotIndices];
@@ -3004,7 +3172,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     remainingSession.netSlotIds = [state.allocateNetSlotId()];
     remainingSession.equippedCharIds = [0];
 
-    const room = state.createRoom(leavingSession, "Multi-local leave", "", false, 0, 0, [0, 0]);
+    const room = state.createRoom(leavingSession, "Multi-local leave", "", false, 0, 0, false, 0, [0, 0]);
     state.assignSessionToRoom(remainingSession, room, [0]);
     const leavingSlots = [...leavingSession.roomSlotIndices];
     const leavingNetSlotIds = [...leavingSession.netSlotIds];
@@ -3071,7 +3239,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     roomOwner.netSlotIds = [state.allocateNetSlotId()];
     roomOwner.channelIndex = 1;
     roomOwner.channelSelected = true;
-    const room = state.createRoom(roomOwner, "Lobby detail", "", false, 0, 0, [0]);
+    const room = state.createRoom(roomOwner, "Lobby detail", "", false, 0, 0, false, 0, [0]);
 
     client.sendToServer(
       state,
@@ -3518,7 +3686,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(p79).toBeDefined();
     expect(p79.readU8()).toBe(0); // errCode = 0
     const roomNum = p79.readU16();
-    expect(roomNum).toBe(1);
+    expect(roomNum).toBe(50); // row 50 displays as room "1" (`sub_4C99DC` numbering table)
     const roomGameKey = p79.readU32();
     expect(roomGameKey).toBe(state.rooms.get(roomNum)!.chiefSlotNetId);
     expect(client1.popByOpcode(102)).toBeUndefined();
@@ -3648,7 +3816,16 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     const p80 = client2.popByOpcode(80)!;
     expect(p80).toBeDefined();
     expect(p80.readU8()).toBe(0); // Join success
-    expect(client2.popByOpcode(102)).toBeDefined(); // Full room snapshot to joiner
+    // The slot table is not part of S->C 80: it arrives as deferred S->C 102 writes once the
+    // joiner's next C->S proves CMainWnd finished constructing CPrepareStage.
+    expect(client2.popByOpcode(102)).toBeUndefined();
+    client2.sendToServer(
+      state,
+      session2.sessionId,
+      new PacketWriter(ClientOpcode.ClientPeriodicStatus).writeU32(0).writeU32(0)
+    );
+    expect(client2.popByOpcode(102)).toBeDefined(); // existing member's slot
+    expect(client2.popByOpcode(102)).toBeDefined(); // joiner's own slot
     expect(session2.stageId).toBe(StageId.Prepare);
     expect(client1.popByOpcode(102)).toBeDefined(); // S->C 102 (`CSetPlayerOnPreparePacket`) to Chief
 

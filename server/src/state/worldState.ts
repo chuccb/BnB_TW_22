@@ -68,10 +68,23 @@ export interface GameRoom {
   password: string;
   hasPassword: boolean;
   maxPlayers: number;
+  /**
+   * Client game-mode value (`j[2002]`; row byte96/dword24). Echoed from the create
+   * writer's mode byte (e.g. 14 = practice). Values 10..14 select list icons; 14
+   * renders the room row in green (`sub_4CD047`).
+   */
   gameMode: number;
-  gameSubMode: number;
+  /**
+   * Room-variant badge (`j[2014]`; row byte156/dword39; S->C 79 third u8). 0 = normal;
+   * the ladder-create writer `sub_4CB60D` sends 1..3 for its three ladder kinds.
+   */
+  roomVariant: number;
   mapId: number;
-  mapTheme: number;
+  /**
+   * Map-select state (`j[93]`; row byte84/dword21; S->C 79 first u8, S->C 153 second u8).
+   * True = random-map room (the row's u16 map field carries the 255 random marker).
+   */
+  mapRandom: boolean;
   /** Local chief-slot identity; using it for lobby room-context wire words is a reconstruction choice. */
   chiefSlotNetId: number;
   isPlaying: boolean;
@@ -332,11 +345,8 @@ export class ClientSession {
 
   public deferStagePackets(stageId: number, packets: PacketWriter[]): void {
     if (packets.length === 0) return;
-    if (this.deferredStagePackets !== null) {
-      throw new Error(
-        `Session ${this.sessionId} already has deferred packets for stage ${this.deferredStagePackets.stageId}`
-      );
-    }
+    // Re-entry (e.g. Shop -> room return with a stale pre-Shop queue) replaces the stale
+    // queue; the newest stage-entry table is the authoritative one.
     this.deferredStagePackets = { stageId, packets: [...packets] };
   }
 
@@ -497,10 +507,16 @@ export class WorldState implements Disposable {
     password: string,
     hasPassword: boolean,
     gameMode: number,
-    mapTheme: number,
+    roomVariant: number,
+    mapRandom: boolean,
+    mapId: number,
     charIds: number[]
   ): GameRoom {
-    let roomNumber = 1;
+    // The Client sizes the room-row array at Lobby init and pre-fills each row's displayed
+    // number (`sub_4C99DC`): rows 0..49 display 17..66 and rows 50..304 display 1..255
+    // (`sub_4CCF43` renders `row.byte56 + 1`). Allocate from row 50 so created rooms show
+    // natural 1-based numbers; rows 0..49 stay reserved for the Client's other room kinds.
+    let roomNumber = 50;
     while (this.rooms.has(roomNumber)) {
       roomNumber++;
     }
@@ -537,9 +553,9 @@ export class WorldState implements Disposable {
       hasPassword: hasPassword || password.length > 0,
       maxPlayers: 8,
       gameMode,
-      gameSubMode: 0,
-      mapId: 0, // Map/vet01 (or first map in CGameMapInfoList)
-      mapTheme,
+      roomVariant,
+      mapId,
+      mapRandom,
       chiefSlotNetId: chiefNetSlotId,
       isPlaying: false,
       randomSeed: 0x13572468,
@@ -653,11 +669,17 @@ export class WorldState implements Disposable {
 
   public broadcastToRoom(
     room: GameRoom,
-    buildPacket: (session: ClientSession) => PacketWriter
+    buildPacket: (session: ClientSession) => PacketWriter,
+    excludeSessionId?: number
   ): void {
     const visitedSessions = new Set<number>();
     for (const slot of room.slots) {
-      if (slot.occupied && slot.session && !visitedSessions.has(slot.session.sessionId)) {
+      if (
+        slot.occupied &&
+        slot.session &&
+        slot.session.sessionId !== excludeSessionId &&
+        !visitedSessions.has(slot.session.sessionId)
+      ) {
         visitedSessions.add(slot.session.sessionId);
         slot.session.sendPacket(buildPacket(slot.session));
       }

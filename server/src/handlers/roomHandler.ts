@@ -437,7 +437,7 @@ export function buildStartGameErrorPacket(errCode: number): PacketWriter {
  *   str mapFolderName (must match `sub_4E7DCE(dword_96EB1C, mapIndex)`)
  *   u32 modeSubParam
  *   u8 flag2002 (gameMode)
- *   u8 flag2041 (gameSubMode)
+ *   u8 flag2041 (roomVariant)
  *   u8 activePlayerCount
  *   For each active player:
  *     u8 slotIdx
@@ -462,7 +462,7 @@ export function buildStartGamePacket(
   w.writeString(mapFolderName);
   w.writeU32(0); // modeSubParam
   w.writeU8(room.gameMode); // flag2002
-  w.writeU8(room.gameSubMode); // flag2041
+  w.writeU8(room.roomVariant); // flag2041 (j[2014]-style room-variant badge)
 
   const activeSlots = room.slots.filter((s) => s.occupied);
   w.writeU8(activeSlots.length);
@@ -561,10 +561,12 @@ function startMatchOnRoom(
     return;
   }
 
-  // Check if all occupied non-chief player slots are ready. Error 2 maps to the
-  // Client's `AllMustReady` message; a non-chief denial has no confirmed error code.
+  // Client-side start policy (`sub_4D453A`): local players (slots owned by the requesting
+  // session) are EXEMPT from ready — the Ready button covers a whole session with one C->S 86
+  // and chiefs never toggle ready at all. Every other occupied slot must be ready. Error 2
+  // maps to the Client's `AllMustReady` message.
   const unreadyNonChief = room.slots.some(
-    (slot) => slot.occupied && slot.netSlotId !== room.chiefSlotNetId && !slot.ready
+    (slot) => slot.occupied && slot.session !== session && !slot.ready
   );
   if (unreadyNonChief) {
     session.sendPacket(buildStartGameErrorPacket(2)); // Client error 2 = AllMustReady
@@ -711,8 +713,21 @@ export function handlePrepareRoomPacket(
         break;
       }
       void parsed.esfnChecksum; // Client CRC field is not authenticated or interpreted locally.
-      localSlot.slot.ready = parsed.readyState !== 0;
-      state.broadcastToRoom(room, () => buildSlotStatePacket(localSlot.slot, 0, room.chiefSlotNetId));
+      // `sub_4D5B2F` sends ONE ready packet for the whole session (it loops over the local
+      // players only to decide the toggle value), so the ready state applies to every slot
+      // owned by this session — otherwise a 2P session's second local slot can never become
+      // ready and the start check reports AllMustReady forever.
+      const updatedSlots: RoomSlot[] = [];
+      for (const slotIdx of session.roomSlotIndices) {
+        const slot = room.slots[slotIdx];
+        if (slot && slot.occupied && slot.session === session) {
+          slot.ready = parsed.readyState !== 0;
+          updatedSlots.push(slot);
+        }
+      }
+      for (const slot of updatedSlots) {
+        state.broadcastToRoom(room, () => buildSlotStatePacket(slot, 0, room.chiefSlotNetId));
+      }
       break;
     }
 
