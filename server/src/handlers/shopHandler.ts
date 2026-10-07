@@ -233,8 +233,9 @@ export interface UserItemRecordsPacketOptions {
  *
  * The Client code establishes widths and destination offsets, not application-level field meanings.
  * The current Taiwan feature set disables feature 28. A caller enabling it must provide each
- * record's additional byte; the builder does not invent a placeholder. No current server handler
- * sends this packet or establishes its trigger or official-server response policy.
+ * record's additional byte; the builder does not invent a placeholder. The Lobby-init handler
+ * sends this packet (S->C 197, before S->C 194) with the fxstock-derived catalog from
+ * `resources/userItemCatalog.ts`; see that module for the icon-path derivation rules.
  */
 export function buildUserItemRecordsPacket(
   records: readonly UserItemRecord[] = [],

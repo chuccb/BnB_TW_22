@@ -306,7 +306,7 @@ export const ServerOpcode = {
   ChatStageRoute58: 58, // CChatStage::sub_4B0A63 -> sub_4A8537; field mapping/meaning UNKNOWN
   StageFallbackNoOp55: 55, // CStage::sub_4BDBF5 returns immediately for 55 without reading the body or running the observer fan-out
   MapNameOverrides: 60, // sub_5D9F0B -> sub_5C578E: [i32 count, count*(u32 mapId, str name)]
-  UserItemsSyncLegacy: 63, // Project label only; Client routes via sub_4BDBF5 -> sub_4B9654 and sub_5B2B2D both reach sub_598BEC(dword_929C70) -> sub_597611; same reader as S->C 197, trigger/meaning UNKNOWN
+  UserItemsSyncLegacy: 63, // Same reader as S->C 197 (sub_4B9654 / login-side sub_5B2B2D -> sub_598BEC); official trigger UNKNOWN, local server sends 197 at Lobby init instead
 
   // Lobby, Ranking, Room & Exchange Responses
   SuperSpeakerBanner: 65, // sub_4B976C -> sub_4A03EB
@@ -422,7 +422,7 @@ export const ServerOpcode = {
   FxStockIniStream: 193, // sub_4B95B0 -> sub_593FF6: fxstock.ini SmartStream
   InventoryData: 194, // CStage case 194 -> sub_4B963E -> CUserInventoryMan::sub_595272; [u8 playerCount, per player: u32 itemCount, itemCount*sub_594ECF]
   EquippedAvatarData: 196, // CUserInventoryMan::sub_597040: [u8 playerCount, 8 * (u32 stockId, str text)]
-  UserItemsData: 197, // Client CStage fallback -> sub_4B9654 -> sub_598BEC(dword_929C70) -> sub_597611; [u16 count, repeated offset-based UserItem fields, optional feature-28 u8]; trigger/meaning UNKNOWN
+  UserItemsData: 197, // CStage case 197 -> sub_4B9654 -> sub_598BEC(dword_929C70 = CUserItemMan) -> sub_597611; [u16 count, UserItem records]; fills the item master that shop-list icons (ShopItem::sub_5890CC by fxstock +104) and S->C 194 inventory parsing (sub_595272 drops unknown ids) require; sent at Lobby init before 194
   StageSpecificRoute198: 198, // CShopStageNew case 198 -> sub_53885C reads [u32, u8]; local builders using this ID have distinct, reconstruction-only bodies
   ShopLocalStockList198: 198, // Reconstruction-only stock-list builder; this body is not established by the direct Client case-198 parser
   ShopCashBalance198: 198,

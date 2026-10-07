@@ -22,7 +22,12 @@ import {
   buildEquippedAvatarPacket196,
   buildInventoryExpansionPacket268,
   buildInventoryPacket,
+  buildUserItemRecordsPacket,
 } from "./shopHandler.ts";
+import {
+  buildUserItemCatalog,
+  parseFxStockCatalog,
+} from "../resources/userItemCatalog.ts";
 
 function clonePacketReader(reader: PacketReader): PacketReader {
   const clone = new PacketReader(reader.plain, reader.degree);
@@ -470,6 +475,16 @@ export function handleLobbyPacket(
       // The Client parser for 186 narrows its second u32 to a char; the field mapping is UNKNOWN.
       const user = session.users[0];
       if (user) {
+        // S->C 197 (UserItemsData) fills `CUserItemMan` (CA.exe `sub_598BEC`). Both the
+        // shop-list icon lookup (`ShopItem::sub_5890CC` by fxstock +104) and the S->C 194
+        // inventory parser (`sub_595272`, drops ids unknown to `CUserItemMan`) require
+        // this table, so it must arrive before the inventory frame.
+        const fxstockBody = state.resources.ssdFiles.get("fxstock.ini")?.decompressed;
+        if (fxstockBody) {
+          const userItems = buildUserItemCatalog(parseFxStockCatalog(fxstockBody));
+          session.sendPacket(buildUserItemRecordsPacket(userItems));
+        }
+
         const w89 = new PacketWriter(ServerOpcode.ExpSync);
         w89.writeU8(0);
         w89.writeU32(user.exp);
@@ -508,6 +523,7 @@ export function handleLobbyPacket(
 
       const lobbyServerOpcodes: number[] = user
         ? [
+            ServerOpcode.UserItemsData,
             ServerOpcode.ExpSync,
             ServerOpcode.UserDynamicInfoFieldSync186,
             ServerOpcode.InventoryData,

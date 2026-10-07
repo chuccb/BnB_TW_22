@@ -3184,6 +3184,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(lobbyInitLog?.data?.clientUiModalStateObservable).toBe(false);
     expect(lobbyInitLog?.data?.playerCount).toBe(1);
     expect(lobbyInitLog?.data?.serverOpcodes).toEqual([
+      "197 (UserItemsData)",
       "89 (ExpSync)",
       "186 (UserDynamicInfoFieldSync186)",
       "194 (InventoryData)",
@@ -5134,6 +5135,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
         (entry) => entry.data?.direction === "S->C"
       );
       expect(lobbyInitPackets.map((entry) => entry.data?.opcode)).toEqual([
+        ServerOpcode.UserItemsData,
         ServerOpcode.ExpSync,
         ServerOpcode.UserDynamicInfoFieldSync186,
         ServerOpcode.InventoryData,
@@ -5143,13 +5145,14 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
         ServerOpcode.DynamicMapAndStageConfig,
       ]);
       expect(lobbyInitPackets.map((entry) => entry.data?.payloadBytes)).toEqual([
-        5, 8, 29, 49, 5, 4, 13,
+        36986, 5, 8, 29, 49, 5, 4, 13,
       ]);
       const lobbyInitLog = getRecentLogs().findLast((entry) => entry.category === "LobbyInit");
       expect(lobbyInitLog?.data?.feature32Enabled).toBe(false);
       expect(lobbyInitLog?.data?.stageConfig207WriteCall).toBe(true);
       expect(lobbyInitLog?.data?.clientModalDismissalVerified).toBe(false);
       expect(lobbyInitLog?.data?.serverOpcodes).toEqual([
+        "197 (UserItemsData)",
         "89 (ExpSync)",
         "186 (UserDynamicInfoFieldSync186)",
         "194 (InventoryData)",
@@ -5188,11 +5191,12 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(gameCloseLog?.data?.closeInitiator).toBe("unknown");
     expect(gameCloseLog?.data?.serverCloseReason).toBeUndefined();
     expect(gameCloseLog?.data?.clientToServerDecodedPackets).toBe(5);
-    expect(gameCloseLog?.data?.serverToClientWriteCalls).toBe(10);
+    expect(gameCloseLog?.data?.serverToClientWriteCalls).toBe(11);
     expect(gameCloseLog?.data?.pendingReceiveBytes).toBe(0);
     expect(gameCloseLog?.data?.lobbyEntryPacketSeen).toBe(true);
     expect(gameCloseLog?.data?.linkedLoginSessionId).toBe(linkedLoginSessionId);
     expect(gameCloseLog?.data?.packetFlow).toContain("C->S [decoded] 83 (EnterLobby)");
+    expect(gameCloseLog?.data?.packetFlow).toContain("S->C [write-call] 197 (UserItemsData)");
     expect(gameCloseLog?.data?.packetFlow).toContain("S->C [write-call] 89 (ExpSync)");
     expect(gameCloseLog?.data?.packetFlow).toContain(
       "S->C [write-call] 207 (DynamicMapAndStageConfig)"

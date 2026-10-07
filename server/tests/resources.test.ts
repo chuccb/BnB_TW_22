@@ -32,6 +32,12 @@ import {
   SmartStreamWriter,
 } from "../src/protocol/stream.ts";
 import { TW_ENABLED_FEATURES, isFeatureEnabledTW } from "../src/config/index.ts";
+import {
+  buildUserItemCatalog,
+  parseFxStockCatalog,
+} from "../src/resources/userItemCatalog.ts";
+import { buildUserItemRecordsPacket } from "../src/handlers/shopHandler.ts";
+import { ServerOpcode } from "../src/protocol/opcodes.ts";
 
 function makeClientFormatSsi1(streamContainer: Uint8Array): Uint8Array {
   // Build a format-valid SSI1 wrapper: magic, Adler-32 of the full container, then container bytes.
@@ -434,5 +440,82 @@ describe("fxdynmapinfo map-ID normalization for the served S->C 205/207 stream",
     if (knownForeign.kind === "unknown" && knownForeign.catalogEntryName !== null) {
       expect(knownForeign.catalogEntryName.length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("fxstock.ini -> CUserItemMan catalog (S->C 197 UserItemsData)", () => {
+  test("parses the served v22 fxstock body and derives one record per +104 key", () => {
+    const resources = loadClientResources();
+    const body = resources.ssdFiles.get("fxstock.ini")!.decompressed;
+    const rows = parseFxStockCatalog(body);
+    expect(rows.length).toBe(1461);
+
+    const catalog = buildUserItemCatalog(rows);
+    expect(catalog.length).toBe(1096);
+    expect(new Set(catalog.map((r) => r.field0x08U32)).size).toBe(1096);
+  });
+
+  test("icon field derivation follows UserItem::sub_5971F6 type branches", () => {
+    const resources = loadClientResources();
+    const rows = parseFxStockCatalog(resources.ssdFiles.get("fxstock.ini")!.decompressed);
+    const catalog = buildUserItemCatalog(rows);
+    const byKey = new Map(catalog.map((r) => [r.field0x08U32, r]));
+
+    // cat 2 ticket: path-is-name type -> icon = the fxstock +128 path verbatim
+    const roomTicket = byKey.get(10005)!;
+    expect(roomTicket.field0x14U8).toBe(2);
+    expect(roomTicket.field0x20String).toBe("Item/RoomTicket");
+
+    // Pure cat-5 keys (19..23) keep type 5; icon = "Item/LevelIcon00X" verbatim.
+    const levelIcon = byKey.get(19)!;
+    expect(levelIcon.field0x14U8).toBe(5);
+    expect(levelIcon.field0x20String).toBe("Item/LevelIcon003");
+
+    // Keys shared by a cat-11 set row and a cat-5 row resolve to the first row's type;
+    // type 11 has no icon builder, so the shop draws each row's own +128 set icon.
+    const sharedSetKey = byKey.get(16)!;
+    expect(sharedSetKey.field0x14U8).toBe(11);
+
+    // cat 9 premium ticket: empty-path type -> the shop falls back to the row's own +128
+    const premium = byKey.get(10000)!;
+    expect(premium.field0x14U8).toBe(9);
+    expect(premium.field0x50U32).toBe(0);
+
+    // cat 3 emoticon: +0x38 = set index from off_91C1C0, +0x50 forces the set-image fallback
+    const specialEmoticon = byKey.get(20158)!;
+    expect(specialEmoticon.field0x14U8).toBe(3);
+    expect(specialEmoticon.field0x38U32).toBe(7); // Shop/EmotSpecial
+    expect(specialEmoticon.field0x50U32).toBe(9999);
+
+    // cat 18 ID decoration resolves "Icon/ItemIDdeco_C001" through the type-18 builder
+    const idDeco = byKey.get(10011)!;
+    expect(idDeco.field0x14U8).toBe(18);
+    expect(idDeco.field0x38U32).toBe(1);
+
+    // cat 11 set rows share few keys and keep type 11 (no builder -> per-row +128 icon)
+    const setRows = catalog.filter((r) => r.field0x14U8 === 11);
+    expect(setRows.length).toBe(4);
+  });
+
+  test("trims stray control bytes from path-is-name icon names", () => {
+    const rows = parseFxStockCatalog(
+      loadClientResources().ssdFiles.get("fxstock.ini")!.decompressed
+    );
+    const catalog = buildUserItemCatalog(rows);
+    for (const record of catalog) {
+      if (record.field0x14U8 === 2 || record.field0x14U8 === 5 || record.field0x14U8 === 15) {
+        expect(record.field0x20String).not.toMatch(/[\x00-\x20]$/);
+      }
+    }
+  });
+
+  test("builds the S->C 197 body the client's sub_598BEC reads", () => {
+    const resources = loadClientResources();
+    const rows = parseFxStockCatalog(resources.ssdFiles.get("fxstock.ini")!.decompressed);
+    const catalog = buildUserItemCatalog(rows);
+    const packet = buildUserItemRecordsPacket(catalog);
+    expect(packet.opcode).toBe(ServerOpcode.UserItemsData);
+    // 2-byte opcode + u16 count + 1096 records of fixed-width fields and two strings.
+    expect(packet.toPayload().length).toBe(36988);
   });
 });
