@@ -27,6 +27,8 @@ The default `info` level keeps routine cache-sync and request-decoding details q
 
 Packet labels are direction-specific. S->C labels use a source-backed stage route when one is established; otherwise repeated values keep the first-declared fallback. C->S labels keep their first-declared route name. Debug framing events and relevant `PacketAudit` / `ShopTrace` entries expose other documented names in `opcodeAliases`; aliases preserve stage/context ambiguity and do not assert identical payloads or official request/reply relationships.
 
+Log field conventions: `payloadBytes` is always the packet body size (opcode excluded), matching the handler-level `payloadBytes: reader.remaining` logs and the recovered writer widths in `docs/packets.md`; framing per-frame logs additionally carry `plainBytes` (the full decrypted plain, opcode included) and `frameBytes` (the wire frame). Map-ID fields appear as `mapId` with `mapName`/`mapIdRange`/`fxdynmapinfoEntryName` context where known (see `docs/unknowns.md` RE-21).
+
 For every decoded packet and framing/byte-preview diagnostics, run:
 
 ```sh

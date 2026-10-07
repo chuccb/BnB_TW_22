@@ -15,11 +15,13 @@ import { describe, expect, test } from "bun:test";
 
 const CLIENT_RESOURCE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 import {
+  buildDynamicMapInfoCatalog,
   buildMultiSvrSmartStream,
   decryptIddEntry,
   loadClientResources,
   parseDecryptedIdx,
   loadSsdEntry,
+  resolveDynamicMapId,
   transcodeDynamicMapInfoToV22,
   verifySmartStreamSchema,
 } from "../src/resources/archive.ts";
@@ -185,12 +187,17 @@ describe("Client Resource Archives — Fx.idx, .i16 Tables, Maps & All 12 .ssd/.
     expect(resources.ssdFiles.get("esfn.ssd")?.diskAdler32Zero).toBe(0x491e0722);
     expect(resources.ssdFiles.get("fxdynimginfo.ssd")?.diskAdler32Zero).toBe(0x084341a5);
     const dynamicMap = resources.ssdFiles.get("fxdynmapinfo.ssd")!;
-    expect(dynamicMap.diskAdler32Zero).toBe(0x39ac6777); // original disk-body checksum
+    // File-identity pins for the CHECKED-IN fxdynmapinfo.ssd (11,560B, body 0x8a065068).
+    // RE-09 and the original pins record an 11,593B / 0x39ac6777 file with the same 67,238B
+    // v22 payload shape; the committed file's fixed-width map-ID field (v34) carries a
+    // foreign content catalog's IDs (see `buildDynamicMapInfoCatalog`), which changed the
+    // compressed container. The disk pins below therefore describe the committed file.
+    expect(dynamicMap.diskAdler32Zero).toBe(0x8a065068); // original disk-body checksum
     // `sub_6989C0` reserializes the accepted v22 body; deflate bytes and therefore this
     // container-body checksum/length can vary with the compression implementation.
     expect(dynamicMap.adler32Zero).toBe(computeSmartStreamBodyChecksum(dynamicMap.streamContainer));
     expect(dynamicMap.streamContainer[0]).toBe(0x18);
-    expect(dynamicMap.rawBytes).toHaveLength(11_593);
+    expect(dynamicMap.rawBytes).toHaveLength(11_560);
     expect(dynamicMap.decompressed).toHaveLength(67_238);
     expect(dynamicMap.entryCount).toBe(871);
     expect(resources.ssdFiles.get("packagemap.ini")?.diskAdler32Zero).toBe(0xdcec1a37);
@@ -294,7 +301,7 @@ describe("Client Resource Archives — Fx.idx, .i16 Tables, Maps & All 12 .ssd/.
     try {
       writeFileSync(legacyPath, legacyRawFile);
       const upgraded = loadSsdEntry(tempRoot, "fxdynmapinfo.ssd");
-      expect(upgraded.diskAdler32Zero).toBe(0x39ac6777);
+      expect(upgraded.diskAdler32Zero).toBe(0x8a065068); // checked-in file's disk-body checksum
       expect(upgraded.adler32Zero).toBe(computeSmartStreamBodyChecksum(upgraded.streamContainer));
       expect(upgraded.decompressed).toEqual(canonical.decompressed);
       expect(upgraded.entryCount).toBe(871);
@@ -342,5 +349,90 @@ describe("Client Resource Archives — Fx.idx, .i16 Tables, Maps & All 12 .ssd/.
     expect(stream.readU8()).toBe(0); // endpoint selector
     expect(stream.readU8()).toBe(0); // default selector
     expect(stream.remaining()).toBe(0);
+  });
+});
+
+describe("fxdynmapinfo map-ID normalization for the served S->C 205/207 stream", () => {
+  test("remaps v34 map IDs into the local CGameMapInfoList index space by map name", () => {
+    const resources = loadClientResources();
+    const catalog = resources.dynamicMapInfo;
+
+    expect(catalog.entries.length).toBe(871);
+    // The checked-in file's map-ID field is a foreign content catalog's index space
+    // (e.g. wire ID 644 = "Monster15", which is local map 216); the served stream must
+    // remap it so C->S 87 / S->C 109 / S->C 113 all agree on `CGameMapInfoList[mapId]`.
+    expect(catalog.normalization.idSpaceMismatched).toBe(true);
+    expect(catalog.normalization.remappedByName).toBeGreaterThan(300);
+
+    const monster15 = catalog.byWireMapId.get(644)!;
+    expect(monster15.name).toBe("Monster15");
+    expect(monster15.rawMapId).toBe(0x00030284); // disk v34 (hi16 = 3, lo16 = 644)
+    const localMonster15 = resources.mapsByName.get("monster15")!;
+    expect(monster15.kind).toBe("map");
+    expect(monster15.servedMapId).toBe(localMonster15.mapId);
+    expect(monster15.resolvedMapId).toBe(localMonster15.mapId);
+
+    // Random selectors normalize to the exact u32 that matches the u16 wire sentinel,
+    // since `sub_4DE509` compares the full v32 value against the received u16.
+    const campRandom = catalog.entries.find((entry) => entry.name === "CampRandom")!;
+    expect(campRandom.kind).toBe("random");
+    expect(campRandom.rawMapId).toBe(0x0001ffff);
+    expect(campRandom.servedMapId).toBe(0x0000ffff);
+
+    // Entries whose maps are absent from the local Fx.idx cannot be played; they leave
+    // map selection (v29 = 0) instead of silently mis-resolving to some other map.
+    const unresolved = catalog.entries.filter((entry) => entry.kind === "unresolved");
+    expect(unresolved.length).toBeGreaterThan(0);
+    expect(unresolved.every((entry) => entry.selectable === 0)).toBe(true);
+    expect(unresolved.every((entry) => entry.servedMapId === entry.rawMapId)).toBe(true);
+
+    // The served stream advertises a new body checksum, so clients with the on-disk
+    // cache re-fetch through C->S 282 -> S->C 205 and pick up the remapped IDs.
+    expect(catalog.served.adler32Zero).not.toBe(resources.ssdFiles.fxdynmapinfo.adler32Zero);
+    expect(catalog.served.adler32Zero).toBe(
+      computeSmartStreamBodyChecksum(catalog.served.streamContainer)
+    );
+    expect(catalog.served.entryCount).toBe(871);
+
+    // Re-normalizing the served stream is a fixed point: every name-resolved entry
+    // already carries its local map-list index.
+    const renormalized = buildDynamicMapInfoCatalog(catalog.served, resources.mapsByName);
+    expect(renormalized.normalization.idSpaceMismatched).toBe(false);
+    expect(renormalized.normalization.remappedByName).toBe(catalog.normalization.remappedByName);
+    expect(
+      renormalized.entries.every((entry, i) => entry.servedMapId === catalog.entries[i]!.servedMapId)
+    ).toBe(true);
+  });
+
+  test("resolves wire map IDs with catalog names for foreign-ID diagnostics", () => {
+    const resources = loadClientResources();
+    const localMonster15 = resources.mapsByName.get("monster15")!;
+
+    expect(resolveDynamicMapId(resources, localMonster15.mapId)).toEqual({
+      kind: "map",
+      mapId: localMonster15.mapId,
+      mapName: "Monster15",
+    });
+    expect(resolveDynamicMapId(resources, 0xffff)).toEqual({ kind: "random" });
+
+    // Foreign catalog IDs are rejected but carry their fxdynmapinfo identity so the log
+    // can say which map the client actually asked for.
+    const foreign = resolveDynamicMapId(resources, 644);
+    expect(foreign.kind).toBe("unknown");
+    expect(foreign).toMatchObject({
+      catalogEntryName: "Monster15",
+      catalogRawMapId: 0x00030284,
+    });
+
+    // A raw full-width v34 (C->S 93 field1 form) diagnoses the same entry.
+    const fullWidth = resolveDynamicMapId(resources, 0x00030284);
+    expect(fullWidth).toMatchObject({ kind: "unknown", catalogEntryName: "Monster15" });
+
+    // Out-of-range IDs that exist in the raw catalog still explain themselves.
+    const firstInvalid = resources.mapList.length;
+    const knownForeign = resolveDynamicMapId(resources, firstInvalid);
+    if (knownForeign.kind === "unknown" && knownForeign.catalogEntryName !== null) {
+      expect(knownForeign.catalogEntryName.length).toBeGreaterThan(0);
+    }
   });
 });

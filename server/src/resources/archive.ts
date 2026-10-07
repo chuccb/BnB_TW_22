@@ -3,6 +3,8 @@ import { dirname, resolve } from "path";
 import { fileURLToPath } from "url";
 import { computeCRC32 } from "../protocol/crc.ts";
 import { ipv4ToInAddrLittleEndian } from "../protocol/primitives.ts";
+import { decodeClientText } from "../protocol/textEncoding.ts";
+import { logger } from "../utils/logger.ts";
 import {
   DEFAULT_C_CHANNELS,
   writeCChannelCache,
@@ -129,6 +131,71 @@ export type SsdFileCollection = Map<string, SsdCacheEntry> & {
   qmarksfn: SsdCacheEntry;
 };
 
+/**
+ * One `fxdynmapinfo.ssd` record (v22 layout, `sub_4DFE20` field order).
+ *
+ * `rawMapId` is the on-disk `v34` field (entry struct +216). CA.exe treats it as a plain
+ * u32 map ID: `sub_4DDB1E` loads it, the C->S 87 writers send its low 16 bits, and
+ * `sub_4DE509` compares the full u32 against the u16 map ID. A working installation
+ * therefore stores the `CGameMapInfoList` positional index (0..N-1) here; the checked-in
+ * file stores a different, larger content catalog's IDs instead (see
+ * `DynamicMapInfoNormalization.idSpaceMismatched`).
+ */
+export interface DynamicMapInfoEntry {
+  index: number;
+  v20: number;
+  v21: number;
+  name: string; // v15 map folder name (Big5), e.g. "Monster15"
+  displayName: string; // v12
+  category: number; // v24 (entry +152)
+  typeVariant: number; // v25 (entry +153)
+  theme: string; // v13
+  subTheme: string; // v14
+  levelRequirement: number; // v28 (entry +204)
+  selectable: number; // v29 (entry +205)
+  color: number; // n0xFF packed RGB
+  v31: number;
+  v32: number;
+  v33: number;
+  rawMapId: number; // v34 as stored on disk (entry +216)
+  v35: number;
+  v36: number;
+  /** Map ID the server serves after name-based remapping (local map-list index, 0xFFFF random sentinel, or the raw ID when unresolvable). */
+  servedMapId: number;
+  /** Local map-list index resolved by `name`, or null when the name is not a local Map/* entry. */
+  resolvedMapId: number | null;
+  kind: "map" | "random" | "unresolved";
+}
+
+export interface DynamicMapInfoNormalization {
+  entryCount: number;
+  remappedByName: number;
+  randomSentinels: number;
+  hiddenUnresolved: number;
+  /**
+   * True when at least one name-resolved entry's on-disk map ID differed from its local
+   * map-list index, i.e. the checked-in fxdynmapinfo.ssd uses a foreign map-ID space.
+   */
+  idSpaceMismatched: boolean;
+  /** Example "name (rawId -> localId)" strings for diagnostics. */
+  remapSamples: string[];
+}
+
+export interface DynamicMapInfoCatalog {
+  entries: DynamicMapInfoEntry[];
+  /** First entry whose on-disk v34 equals the key. */
+  byRawMapId: Map<number, DynamicMapInfoEntry>;
+  /** First entry whose on-disk v34 low 16 bits equal the key (the C->S 87 wire form). */
+  byWireMapId: Map<number, DynamicMapInfoEntry>;
+  normalization: DynamicMapInfoNormalization;
+  /**
+   * Normalized fxdynmapinfo stream served over S->C 205 / advertised by S->C 207.
+   * The client caches this stream, so its map dialog sends the remapped IDs and both
+   * sides resolve `CGameMapInfoList[mapId]` to the same map (`sub_4D9F8A` name check).
+   */
+  served: SsdCacheEntry;
+}
+
 export interface ClientResources {
   fxEntries: IdxEntry[];
   charTeEntries: IdxEntry[];
@@ -148,6 +215,7 @@ export interface ClientResources {
   tileInfos: TileInfoEntry[];
   initXml: string;
   ssdFiles: SsdFileCollection;
+  dynamicMapInfo: DynamicMapInfoCatalog;
 }
 
 export type LoadedResources = ClientResources;
@@ -759,6 +827,273 @@ export function transcodeDynamicMapInfoToV22(rawBody: Uint8Array): {
   const upgradedPayload = w.toRawPayload();
   verifyDynamicMapInfoLayout(upgradedPayload, "v22");
   return { writer: w, entryCount: count };
+}
+
+/** Raw v22 fxdynmapinfo record; strings kept as raw bytes so rewrites are byte-identical. */
+interface RawDynamicMapInfoRecord {
+  v20: number;
+  v21: number;
+  nameRaw: Uint8Array;
+  displayRaw: Uint8Array;
+  v24: number;
+  v25: number;
+  themeRaw: Uint8Array;
+  subThemeRaw: Uint8Array;
+  v28: number;
+  v29: number;
+  color: number;
+  v31: number;
+  v32: number;
+  v33: number;
+  v34: number;
+  v35: number;
+  v36: number;
+}
+
+function readRawDynamicMapInfoRecords(body: Uint8Array): RawDynamicMapInfoRecord[] {
+  const { entryCount } = verifyDynamicMapInfoLayout(body, "v22");
+  const r = new SmartStreamReader(body);
+  r.readU16();
+  const records: RawDynamicMapInfoRecord[] = [];
+  for (let i = 0; i < entryCount; i++) {
+    const readStr = (): Uint8Array => {
+      const len = r.readU32();
+      return r.readBytes(len);
+    };
+    records.push({
+      v20: r.readU32(),
+      v21: r.readU8(),
+      nameRaw: readStr(),
+      displayRaw: readStr(),
+      v24: r.readU8(),
+      v25: r.readU8(),
+      themeRaw: readStr(),
+      subThemeRaw: readStr(),
+      v28: r.readU8(),
+      v29: r.readU8(),
+      color: r.readU32(),
+      v31: r.readU8(),
+      v32: r.readU8(),
+      v33: r.readU8(),
+      v34: r.readU32(),
+      v35: r.readU8(),
+      v36: r.readU32(),
+    });
+  }
+  return records;
+}
+
+function writeRawDynamicMapInfoRecords(
+  records: RawDynamicMapInfoRecord[],
+  mapIds: number[],
+  selectable: number[]
+): Uint8Array {
+  const w = new SmartStreamWriter();
+  w.writeU16(records.length);
+  for (let i = 0; i < records.length; i++) {
+    const rec = records[i]!;
+    w.writeU32(rec.v20);
+    w.writeU8(rec.v21);
+    for (const str of [rec.nameRaw, rec.displayRaw]) {
+      w.writeU32(str.length);
+      w.writeBytes(str);
+    }
+    w.writeU8(rec.v24);
+    w.writeU8(rec.v25);
+    for (const str of [rec.themeRaw, rec.subThemeRaw]) {
+      w.writeU32(str.length);
+      w.writeBytes(str);
+    }
+    w.writeU8(rec.v28);
+    w.writeU8(selectable[i]!);
+    w.writeU32(rec.color);
+    w.writeU8(rec.v31);
+    w.writeU8(rec.v32);
+    w.writeU8(rec.v33);
+    w.writeU32(mapIds[i]!);
+    w.writeU8(rec.v35);
+    w.writeU32(rec.v36);
+  }
+  return w.toRawPayload();
+}
+
+/**
+ * Parses the v22 fxdynmapinfo body and remaps each entry's map ID (v34) into the local
+ * `CGameMapInfoList` index space, then rebuilds the served stream.
+ *
+ * Context (CA.exe, verified against the recovered field offsets):
+ * - `v34` is the map ID the map dialog sends as C->S 87 `u16 mapId` (`sub_485732` ->
+ *   `sub_4DDB1E` -> `sub_4D1E59`), and `sub_4F5263` uses the same u16 both to index
+ *   `CGameMapInfoList` positionally (`sub_4EF35C`) and to match `v34` (`sub_4DE509`).
+ * - Consequently a consistent file stores the local map-list index in v34 (high 16 bits
+ *   zero). The checked-in file stores a larger catalog's IDs (plus a packed high half),
+ *   which is why C->S 87 arrives with IDs like 644 for local map 216 ("Monster15").
+ *
+ * Local policy applied to the served stream:
+ * - name resolves to a local map -> v34 = local map-list index (high half cleared);
+ * - v34 low half 0xFFFF -> v34 = 0x0000FFFF (the random-map sentinel this client compares
+ *   with `sub_4DE509` against the u16 it receives);
+ * - otherwise the ID is kept for diagnostics and `v29` (selectable) is forced to 0 so the
+ *   entry cannot be picked in the map dialog and silently mis-resolve.
+ */
+export function buildDynamicMapInfoCatalog(
+  entry: SsdCacheEntry,
+  mapsByName: Map<string, MapInfo>
+): DynamicMapInfoCatalog {
+  const records = readRawDynamicMapInfoRecords(entry.decompressed);
+  const entries: DynamicMapInfoEntry[] = [];
+  const byRawMapId = new Map<number, DynamicMapInfoEntry>();
+  const byWireMapId = new Map<number, DynamicMapInfoEntry>();
+  const servedMapIds: number[] = [];
+  const servedSelectable: number[] = [];
+  const remapSamples: string[] = [];
+  let remappedByName = 0;
+  let randomSentinels = 0;
+  let hiddenUnresolved = 0;
+  let idSpaceMismatched = false;
+
+  for (let i = 0; i < records.length; i++) {
+    const rec = records[i]!;
+    const name = decodeClientText(rec.nameRaw);
+    const rawMapId = rec.v34 >>> 0;
+    const wireMapId = rawMapId & 0xffff;
+    const localMap = mapsByName.get(name.toLowerCase()) ?? null;
+    let kind: DynamicMapInfoEntry["kind"];
+    let servedMapId: number;
+    if (wireMapId === 0xffff) {
+      // Random-map selector entries carry the 0xFFFF sentinel and keep it: the C->S 87
+      // writers send v34's low 16 bits, so `sub_4DE509` must see the full u32 0x0000FFFF.
+      kind = "random";
+      servedMapId = 0x0000ffff;
+      randomSentinels++;
+    } else if (localMap !== null) {
+      kind = "map";
+      servedMapId = localMap.mapId;
+      remappedByName++;
+      if (rawMapId !== servedMapId) {
+        idSpaceMismatched = true;
+        if (remapSamples.length < 8) {
+          remapSamples.push(`${name} (0x${rawMapId.toString(16)} -> ${servedMapId})`);
+        }
+      }
+    } else {
+      kind = "unresolved";
+      servedMapId = rawMapId;
+    }
+
+    const entrySelectable = kind === "unresolved" ? 0 : rec.v29;
+    if (kind === "unresolved" && rec.v29 !== 0) {
+      hiddenUnresolved++;
+    }
+
+    const dynEntry: DynamicMapInfoEntry = {
+      index: i,
+      v20: rec.v20,
+      v21: rec.v21,
+      name,
+      displayName: decodeClientText(rec.displayRaw),
+      category: rec.v24,
+      typeVariant: rec.v25,
+      theme: decodeClientText(rec.themeRaw),
+      subTheme: decodeClientText(rec.subThemeRaw),
+      levelRequirement: rec.v28,
+      selectable: entrySelectable,
+      color: rec.color,
+      v31: rec.v31,
+      v32: rec.v32,
+      v33: rec.v33,
+      rawMapId,
+      v35: rec.v35,
+      v36: rec.v36,
+      servedMapId,
+      resolvedMapId: localMap?.mapId ?? null,
+      kind,
+    };
+    entries.push(dynEntry);
+    servedMapIds.push(servedMapId);
+    servedSelectable.push(entrySelectable);
+    if (!byRawMapId.has(rawMapId)) byRawMapId.set(rawMapId, dynEntry);
+    if (!byWireMapId.has(wireMapId)) byWireMapId.set(wireMapId, dynEntry);
+  }
+
+  const servedBody = writeRawDynamicMapInfoRecords(records, servedMapIds, servedSelectable);
+  verifyDynamicMapInfoLayout(servedBody, "v22");
+  const servedStream = new SmartStreamWriter().writeRaw(servedBody).toSmartStreamBuffer(true);
+  const adler32Zero = computeSmartStreamBodyChecksum(servedStream);
+  const uncompressedCrc32 = computeCRC32(
+    servedBody.length,
+    servedBody,
+    servedBody.length
+  );
+  const served: SsdCacheEntry = {
+    filename: entry.filename,
+    rawBytes: entry.rawBytes,
+    streamContainer: servedStream,
+    uncompressedBytes: servedBody,
+    decompressed: servedBody,
+    adler32Zero,
+    diskAdler32Zero: entry.diskAdler32Zero,
+    rawCrc32: entry.rawCrc32,
+    uncompressedCrc32,
+    crc32: (adler32Zero || uncompressedCrc32) >>> 0,
+    entryCount: entries.length,
+  };
+
+  return {
+    entries,
+    byRawMapId,
+    byWireMapId,
+    normalization: {
+      entryCount: entries.length,
+      remappedByName,
+      randomSentinels,
+      hiddenUnresolved,
+      idSpaceMismatched,
+      remapSamples,
+    },
+    served,
+  };
+}
+
+export type DynamicMapIdResolution =
+  | { kind: "map"; mapId: number; mapName: string }
+  | { kind: "random" }
+  | {
+      kind: "unknown";
+      /** Name of the fxdynmapinfo entry carrying this ID on disk, when known. */
+      catalogEntryName: string | null;
+      /** The entry's full on-disk v34 value, when known. */
+      catalogRawMapId: number | null;
+    };
+
+/**
+ * Resolves a wire map ID (C->S 87 `u16`, or C->S 93 field1 `u32`) against the loaded map
+ * list. The C->S 87 ID must index `CGameMapInfoList` positionally: `sub_4F5263` feeds the
+ * same u16 to `sub_4EF35C` (positional name lookup, no bounds check) and to `sub_4DE509`
+ * (v34 match). Foreign IDs are reported with their fxdynmapinfo catalog names so a stale
+ * or mismatched fxdynmapinfo.ssd is visible in the log.
+ */
+export function resolveDynamicMapId(
+  resources: ClientResources,
+  requestedId: number
+): DynamicMapIdResolution {
+  const wireId = requestedId & 0xffff;
+  if (wireId === 0xffff) {
+    return { kind: "random" };
+  }
+  const map = resources.mapsById.get(wireId);
+  if (map) {
+    return { kind: "map", mapId: wireId, mapName: map.shortName };
+  }
+  const entry =
+    resources.dynamicMapInfo.byRawMapId.get(requestedId >>> 0) ??
+    resources.dynamicMapInfo.byWireMapId.get(wireId) ??
+    null;
+  return {
+    kind: "unknown",
+    catalogEntryName: entry?.name ?? null,
+    catalogRawMapId: entry ? entry.rawMapId : null,
+  };
 }
 
 /**
@@ -1534,6 +1869,32 @@ export function loadClientResources(
     qmarksfn,
   }) as SsdFileCollection;
 
+  // Remap fxdynmapinfo map IDs into the local CGameMapInfoList index space for serving.
+  // The disk entry in `ssdFiles` stays untouched; S->C 205/207 serve `dynamicMapInfo.served`.
+  const dynamicMapInfo = buildDynamicMapInfoCatalog(fxdynmapinfo, mapsByName);
+  const normalization = dynamicMapInfo.normalization;
+  if (normalization.idSpaceMismatched) {
+    logger.warn(
+      "Resources",
+      "fxdynmapinfo.ssd map-ID space does not match the loaded Fx.idx Map/ list; served IDs remapped by map name",
+      {
+        entryCount: normalization.entryCount,
+        remappedByName: normalization.remappedByName,
+        randomSentinels: normalization.randomSentinels,
+        hiddenUnresolved: normalization.hiddenUnresolved,
+        mapListLength: maps.length,
+        remapExamples: normalization.remapSamples.join("; "),
+        diskChecksum: `0x${fxdynmapinfo.adler32Zero.toString(16)}`,
+        servedChecksum: `0x${dynamicMapInfo.served.adler32Zero.toString(16)}`,
+      }
+    );
+  } else {
+    logger.info("Resources", "fxdynmapinfo.ssd map IDs match the loaded map list", {
+      entryCount: normalization.entryCount,
+      mapListLength: maps.length,
+    });
+  }
+
   const resources: ClientResources = {
     fxEntries,
     charTeEntries,
@@ -1553,6 +1914,7 @@ export function loadClientResources(
     tileInfos,
     initXml,
     ssdFiles,
+    dynamicMapInfo,
   };
   cachedResourcesByRoot.set(resourceRoot, resources);
   return resources;

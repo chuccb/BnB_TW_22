@@ -824,14 +824,14 @@ describe("Prepare room packets enforce exact writers and local sender context", 
 describe("Room match-start authorization", () => {
   const makeStartMatchRequest = (
     payloadBytes: 18 | 19 | 23,
-    firstStartFieldCandidate = 0
+    startFieldMapId = 0
   ): PacketWriter => {
     const writer = new PacketWriter(ClientOpcode.StartMatch)
-      .writeU32(firstStartFieldCandidate) // Local map-index candidate; Client semantics are unresolved.
-      .writeU32(0x10203040) // Opaque Client u32 field.
+      .writeU32(0x10203040) // Client dyn-group counter (`sub_4DE164` of the selection's group).
+      .writeU32(startFieldMapId) // fxdynmapinfo `v34` map ID (`sub_4DDB1E`), C->S 93 field1.
       .writeU8(0)
-      .writeU32(0) // Opaque Client u32 field.
-      .writeU8(0); // Client flag byte; meaning unresolved.
+      .writeU32(0) // Client dyn-list selection index.
+      .writeU8(0); // Client map selectable flag.
     if (payloadBytes === 19) {
       writer.writeU8(1); // optional one-byte Client map-check status
     } else if (payloadBytes === 23) {
@@ -977,6 +977,96 @@ describe("Room match-start authorization", () => {
     expect(room.startTick).toBe(startTick);
     expect(chiefClient.receivedPackets).toHaveLength(0);
     expect(memberClient.receivedPackets).toHaveLength(0);
+  });
+});
+
+describe("C->S 87 map-ID resolution and diagnostics", () => {
+  const setupChiefRoom = () => {
+    const config = loadConfig({ dbPath: ":memory:" });
+    const state = new WorldState(config);
+    const chiefClient = new SimulatedClient();
+    const chiefUser = state.db.createUser("mapid_chief", "password");
+    const chiefSession = state.createSession(
+      chiefClient.onWireBytes,
+      "203.0.113.140",
+      52040,
+      "0.0.0.0",
+      0,
+      "game"
+    );
+    chiefSession.users = [chiefUser];
+    chiefSession.netSlotIds = [state.allocateNetSlotId()];
+    chiefSession.sendConnectHello(config);
+    chiefSession.channelSelected = true;
+    const room = state.createRoom(chiefSession, "Map ID policy", "", false, 0, 0, [0]);
+    return { config, state, chiefClient, chiefSession, room };
+  };
+
+  test("accepts the 0xFFFF random-map marker and resolves it to a loaded map", () => {
+    const { state, chiefClient, chiefSession, room } = setupChiefRoom();
+    try {
+      chiefClient.sendToServer(
+        state,
+        chiefSession.sessionId,
+        new PacketWriter(ClientOpcode.SelectMap).writeU16(0xffff).writeU32(0)
+      );
+      expect(room.mapId).toBeGreaterThanOrEqual(0);
+      expect(room.mapId).toBeLessThan(state.resources.mapList.length);
+      // S->C 109 carries the resolved local map ID so other clients'
+      // `CGameMapInfoList[mapId]` lookups (`sub_4F5263`) resolve.
+      const sync = chiefClient.popByOpcode(ServerOpcode.MapSelectSync)!;
+      expect(sync.readU16()).toBe(room.mapId);
+      expect(sync.readU32()).toBe(0);
+    } finally {
+      state[Symbol.dispose]();
+    }
+  });
+
+  test("rejects foreign catalog map IDs with the fxdynmapinfo entry name in the log", () => {
+    const { state, chiefClient, chiefSession, room } = setupChiefRoom();
+    try {
+      clearRecentLogs();
+      // 644 is the checked-in fxdynmapinfo.ssd v34 low half for "Monster15" (local map 216);
+      // it is not a CGameMapInfoList index, so the request must not change the room.
+      chiefClient.sendToServer(
+        state,
+        chiefSession.sessionId,
+        new PacketWriter(ClientOpcode.SelectMap).writeU16(644).writeU32(0)
+      );
+      expect(room.mapId).toBe(0);
+      expect(chiefClient.receivedPackets).toHaveLength(0);
+      const warn = getRecentLogs().find((entry) =>
+        entry.message.includes("Ignored C->S 87 map ID outside the loaded Client map list")
+      );
+      expect(warn).toBeDefined();
+      expect(warn?.data?.mapId).toBe(644);
+      expect(warn?.data?.mapListLength).toBe(319);
+      expect(warn?.data?.fxdynmapinfoEntryName).toBe("Monster15");
+      expect(warn?.data?.fxdynmapinfoRawMapId).toBe(0x00030284);
+    } finally {
+      state[Symbol.dispose]();
+    }
+  });
+
+  test("logs the resolved map name when the room map changes", () => {
+    const { state, chiefClient, chiefSession, room } = setupChiefRoom();
+    try {
+      clearRecentLogs();
+      const target = state.resources.mapsByName.get("monster15")!;
+      chiefClient.sendToServer(
+        state,
+        chiefSession.sessionId,
+        new PacketWriter(ClientOpcode.SelectMap).writeU16(target.mapId).writeU32(7)
+      );
+      expect(room.mapId).toBe(target.mapId);
+      const info = getRecentLogs().find((entry) => entry.message === "Room map changed");
+      expect(info?.data?.mapId).toBe(target.mapId);
+      expect(info?.data?.mapName).toBe("Monster15");
+      expect(info?.data?.requestedMapId).toBe(target.mapId);
+      expect(info?.data?.mapOptionKey).toBe(7);
+    } finally {
+      state[Symbol.dispose]();
+    }
   });
 });
 
@@ -2957,7 +3047,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     expect(p207).toBeDefined();
     expect(p207.readU8()).toBe(0); // opaque stage/config field; local reconstruction default
     const declaredDynMapBodyChecksum = p207.readU32();
-    expect(declaredDynMapBodyChecksum).toBe(state.resources.ssdFiles.fxdynmapinfo.adler32Zero);
+    expect(declaredDynMapBodyChecksum).toBe(state.resources.dynamicMapInfo.served.adler32Zero);
     expect(p207.readU8()).toBe(0); // macroDetectorFlag
     expect(p207.readU16()).toBe(0); // val9757A0 (semantics unresolved)
     expect(p207.readU32()).toBe(0); // val9757A4 (semantics unresolved)
@@ -3128,7 +3218,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
     client2.sendToServer(state, session2.sessionId, new PacketWriter(ClientOpcode.PostStageSync338));
     const client2StageConfig = client2.popByOpcode(ServerOpcode.DynamicMapAndStageConfig)!;
     expect(client2StageConfig.readU8()).toBe(0);
-    expect(client2StageConfig.readU32()).toBe(state.resources.ssdFiles.fxdynmapinfo.adler32Zero);
+    expect(client2StageConfig.readU32()).toBe(state.resources.dynamicMapInfo.served.adler32Zero);
     expect(client2StageConfig.readU8()).toBe(0);
     expect(client2StageConfig.readU16()).toBe(0);
     expect(client2StageConfig.readU32()).toBe(0);
@@ -3260,11 +3350,11 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
       state,
       session1.sessionId,
       new PacketWriter(ClientOpcode.StartMatch)
-        .writeU32(5) // Local first-field map-index candidate; Client semantics are unresolved.
-        .writeU32(5) // Opaque Client u32 field.
+        .writeU32(5) // Client dyn-group counter (`sub_4DE164`).
+        .writeU32(5) // fxdynmapinfo `v34` map ID (`sub_4DDB1E`), C->S 93 field1.
         .writeU8(0) // Client writer's constant byte.
-        .writeU32(0) // Opaque Client u32 field.
-        .writeU8(0) // Client flag byte; meaning unresolved.
+        .writeU32(0) // Client dyn-list selection index.
+        .writeU8(0) // Client map selectable flag.
         .writeU32(0) // ESFN checksum
     );
     expect(client1.popByOpcode(112)?.readU8()).toBe(0);
@@ -4907,7 +4997,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
       expect((await lobbyInit).readU8()).toBe(0);
       const stageConfig207 = await loadingChannelInfoStageConfig;
       expect(stageConfig207.readU8()).toBe(0); // opaque first field; reconstruction placeholder
-      expect(stageConfig207.readU32()).toBe(server.state.resources.ssdFiles.fxdynmapinfo.adler32Zero);
+      expect(stageConfig207.readU32()).toBe(server.state.resources.dynamicMapInfo.served.adler32Zero);
       expect(stageConfig207.readU8()).toBe(0);
       expect(stageConfig207.readU16()).toBe(0);
       expect(stageConfig207.readU32()).toBe(0);
@@ -4950,7 +5040,7 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
         ServerOpcode.DynamicMapAndStageConfig,
       ]);
       expect(lobbyInitPackets.map((entry) => entry.data?.payloadBytes)).toEqual([
-        7, 10, 31, 51, 7, 6, 15,
+        5, 8, 29, 49, 5, 4, 13,
       ]);
       const lobbyInitLog = getRecentLogs().findLast((entry) => entry.category === "LobbyInit");
       expect(lobbyInitLog?.data?.feature32Enabled).toBe(false);

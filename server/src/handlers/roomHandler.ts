@@ -2,6 +2,7 @@ import type { UserRecord } from "../db/database.ts";
 import { ClientOpcode, ServerOpcode, StageId } from "../protocol/opcodes.ts";
 import { PacketReader, PacketWriter } from "../protocol/primitives.ts";
 import { SmartStreamWriter } from "../protocol/stream.ts";
+import { resolveDynamicMapId } from "../resources/archive.ts";
 import type { ClientSession, GameRoom, RoomSlot, WorldState } from "../state/worldState.ts";
 import { formatStageId, logger } from "../utils/logger.ts";
 import { buildShopInitPacket16, buildUserStockPacket } from "./shopHandler.ts";
@@ -518,7 +519,7 @@ function startMatchOnRoom(
   session: ClientSession,
   room: GameRoom,
   includeEsfnStream: boolean = false,
-  firstStartFieldCandidate?: number
+  startFieldMapId?: number
 ): void {
   if (!hasSelectedRoomStageContext(state, session, room, [StageId.Prepare])) {
     logger.warn("Room", "Ignored match-start request without a selected game-channel Prepare room membership", {
@@ -569,13 +570,27 @@ function startMatchOnRoom(
     return;
   }
 
-  // Local-only interpretation: treat field 0 as a map-index candidate only when it resolves
-  // into the loaded Client map list. The Client writer's field semantics are not established.
-  if (
-    firstStartFieldCandidate !== undefined &&
-    firstStartFieldCandidate < state.resources.mapList.length
-  ) {
-    room.mapId = firstStartFieldCandidate;
+  // Recovered C->S 93 prefix (`sub_4D5DB1` + `sub_4DF2EC`): field1 is the fxdynmapinfo
+  // `v34` map ID (`sub_4DDB1E` of the dyn-list selection); field0 is that selection's
+  // dyn-group counter (`sub_4DE164`), not a map index. Resolve field1 like C->S 87;
+  // when it is unresolvable (or the pre-recovery "field0" form), keep the map the room
+  // already holds from C->S 87.
+  if (startFieldMapId !== undefined) {
+    const resolution = resolveDynamicMapId(state.resources, startFieldMapId);
+    if (resolution.kind === "map") {
+      room.mapId = resolution.mapId;
+    } else if (resolution.kind === "random") {
+      const candidates = state.resources.mapList;
+      room.mapId = candidates[Math.floor(Math.random() * candidates.length)]!.mapId;
+    } else {
+      logger.debug("Room", "C->S 93 field1 map ID not applied", {
+        sessionId: session.sessionId,
+        roomNumber: room.roomNumber,
+        startFieldMapId,
+        fxdynmapinfoEntryName: resolution.catalogEntryName,
+        keptMapId: room.mapId,
+      });
+    }
   }
 
   // Send S->C 112 result 0 (ok)
@@ -727,23 +742,64 @@ export function handlePrepareRoomPacket(
       }
 
       const hasMapKey = reader.remaining === 6;
-      const mapId = reader.readU16();
+      const requestedMapId = reader.readU16();
       const mapKey = hasMapKey ? reader.readU32() : 0;
-      if (mapId >= state.resources.mapList.length) {
+      // C->S 87 `mapId` is the fxdynmapinfo `v34` low half (`sub_485732` -> `sub_4DDB1E`
+      // -> `sub_4D1E59`), and `sub_4F5263` consumes the S->C 109 echo both as a positional
+      // `CGameMapInfoList` index (`sub_4EF35C`) and as the `v34` match key (`sub_4DE509`).
+      // The served fxdynmapinfo stream therefore carries local map-list IDs; see
+      // `buildDynamicMapInfoCatalog`. 0xFFFF is the random-map sentinel.
+      const resolution = resolveDynamicMapId(state.resources, requestedMapId);
+      if (resolution.kind === "unknown") {
         logger.warn("Room", "Ignored C->S 87 map ID outside the loaded Client map list", {
           sessionId: session.sessionId,
           connectionKind: session.connectionKind,
           stageId: formatStageId(session.stageId),
           roomNumber: room.roomNumber,
-          mapId,
+          mapId: requestedMapId,
+          mapIdRange: `0..${state.resources.mapList.length - 1} (0xFFFF = random)`,
           mapListLength: state.resources.mapList.length,
+          fxdynmapinfoEntryName: resolution.catalogEntryName,
+          fxdynmapinfoRawMapId: resolution.catalogRawMapId,
+          hint: "mapId must be the local CGameMapInfoList index (the fxdynmapinfo v34 map ID)",
           responseSent: false,
           roomStateChanged: false,
         });
         break;
       }
-      room.mapId = mapId;
+
+      let selectedMapId: number;
+      let selectedMapName: string;
+      let selectionSource: string;
+      if (resolution.kind === "random") {
+        // Local policy: the wire form carries only the 0xFFFF sentinel (the Random entry's
+        // theme is not transmitted), so pick uniformly across the loaded map list and store
+        // the concrete map immediately so S->C 109/113 always carry a resolvable map ID.
+        const candidates = state.resources.mapList;
+        const picked = candidates[Math.floor(Math.random() * candidates.length)]!;
+        selectedMapId = picked.mapId;
+        selectedMapName = picked.shortName;
+        selectionSource = "random-marker";
+      } else {
+        selectedMapId = resolution.mapId;
+        selectedMapName = resolution.mapName;
+        selectionSource = "direct";
+      }
+      room.mapId = selectedMapId;
       state.broadcastToRoom(room, () => buildMapSelectPacket(room.mapId, mapKey));
+      logger.info("Room", "Room map changed", {
+        sessionId: session.sessionId,
+        connectionKind: session.connectionKind,
+        stageId: formatStageId(session.stageId),
+        roomNumber: room.roomNumber,
+        mapId: selectedMapId,
+        mapName: selectedMapName,
+        requestedMapId,
+        selectionSource,
+        mapOptionKey: mapKey,
+        responseSent: true,
+        roomStateChanged: true,
+      });
       break;
     }
 
@@ -980,6 +1036,8 @@ export function handlePrepareRoomPacket(
       // `sub_4D5DB1` + `sub_4DF2EC` builds a 14-byte prefix, an optional
       // 0/1/5-byte map-check suffix, then appends the 4-byte ESFN checksum.
       // Consequently the recovered Client writer's payload sizes are 18, 19, or 23 bytes.
+      // Prefix fields (`sub_4DF2EC`): [u32 dyn-group counter, u32 mapId (v34),
+      // u8 0, u32 dyn-list selection index, u8 map selectable flag].
       const payloadBytes = reader.remaining;
       if (payloadBytes !== 18 && payloadBytes !== 19 && payloadBytes !== 23) {
         logger.warn("Room", "Ignored malformed C->S 93 start-match packet", {
@@ -995,11 +1053,11 @@ export function handlePrepareRoomPacket(
         break;
       }
 
-      const firstStartFieldCandidate = reader.readU32();
-      reader.readU32(); // Opaque Client u32 field; not independently validated here.
+      reader.readU32(); // Client dyn-group counter (`sub_4DE164` of the selection's group).
+      const startFieldMapId = reader.readU32(); // fxdynmapinfo `v34` map ID (`sub_4DDB1E`).
       reader.readU8(); // Client writer's zero-valued field.
-      reader.readU32(); // Opaque Client u32 field; not independently validated here.
-      reader.readU8(); // Client flag byte; meaning unresolved and not interpreted locally.
+      reader.readU32(); // Client dyn-list selection index (`sub_43827E(i_4 + 15)`).
+      reader.readU8(); // Client map selectable flag (`sub_4DDD7B`); not interpreted locally.
 
       const mapCheckSuffixBytes = payloadBytes - 18;
       if (mapCheckSuffixBytes === 1) {
@@ -1015,7 +1073,7 @@ export function handlePrepareRoomPacket(
         esfnCrc !== 0 &&
         esfnCrc !== esfnEntry.adler32Zero &&
         esfnCrc !== esfnEntry.diskAdler32Zero;
-      startMatchOnRoom(state, session, room, includeEsfn, firstStartFieldCandidate);
+      startMatchOnRoom(state, session, room, includeEsfn, startFieldMapId);
       break;
     }
 

@@ -1,7 +1,6 @@
 import type { UserRecord } from "../db/database.ts";
 import { ClientOpcode, ServerOpcode, StageId } from "../protocol/opcodes.ts";
 import { PacketReader, PacketWriter } from "../protocol/primitives.ts";
-import { SmartStreamWriter } from "../protocol/stream.ts";
 import type { ClientSession, WorldState } from "../state/worldState.ts";
 import {
   formatClientOpcode,
@@ -299,7 +298,9 @@ export function buildUserInfoResultPacket(
 export function buildDynamicMapConfigPacket207(state: WorldState): PacketWriter {
   const w207 = new PacketWriter(ServerOpcode.DynamicMapAndStageConfig);
   w207.writeU8(0); // opaqueStageConfigFlag; current reconstruction placeholder
-  w207.writeU32(state.resources.ssdFiles.fxdynmapinfo.adler32Zero);
+  // Checksum of the NORMALIZED fxdynmapinfo stream the server serves (`dynamicMapInfo.served`);
+  // see `buildDynamicMapInfoCatalog` for the map-ID remap applied to the checked-in file.
+  w207.writeU32(state.resources.dynamicMapInfo.served.adler32Zero);
   w207.writeU8(0); // macroDetectorFlag
   w207.writeU16(0); // dword_9757A0
   w207.writeU32(0); // dword_9757A4
@@ -311,12 +312,13 @@ export function buildDynamicMapConfigPacket207(state: WorldState): PacketWriter 
  * Builds S->C 205 (`CStage::sub_4BDBF5` case `205` -> `sub_4E0131` at `0x004E0131`
  * -> `sub_4DFE20` at `0x004DFE20`):
  *   `[CISmartStream fxdynmapinfo.ssd]`
+ *
+ * The stream body is the same normalized container advertised by S->C 207 (map IDs
+ * remapped to the local map-list indices), so `sub_4DFE20`'s checksum compare succeeds.
  */
 export function buildDynamicMapStreamPacket205(state: WorldState): PacketWriter {
   const w205 = new PacketWriter(ServerOpcode.DynamicMapInfoSsdStream);
-  const ss = new SmartStreamWriter();
-  ss.writeRaw(state.resources.ssdFiles.fxdynmapinfo.decompressed);
-  w205.writeSmartStream(ss, true);
+  w205.writeSmartStream(state.resources.dynamicMapInfo.served.streamContainer, true);
   return w205;
 }
 

@@ -580,7 +580,8 @@ describe("Protocol Layer — CRC, Cipher, Primitives, SmartStream & Framing", ()
       expect(outboundPacketLog?.data?.sessionId).toBe(77);
       expect(outboundPacketLog?.data?.connectionKind).toBe("game");
       expect(outboundPacketLog?.data?.stageId).toBe(11);
-      expect(outboundPacketLog?.data?.payloadBytes).toBe(6);
+      expect(outboundPacketLog?.data?.payloadBytes).toBe(4); // opcode-excluded body (u32)
+      expect(outboundPacketLog?.data?.plainBytes).toBe(6); // opcode-inclusive plain
       expect(outboundPacketLog?.data?.payloadContent).toBe("<omitted>");
       expect(outboundPacketLog?.data?.plainHex).toBeUndefined();
 
