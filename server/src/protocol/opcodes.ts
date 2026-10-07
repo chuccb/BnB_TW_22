@@ -173,8 +173,8 @@ export const ClientOpcode = {
   UnresolvedClientPacket252: 252, // No current-build Client writer recovered; prior packagemap.ini / S->C 157 association withdrawn.
   UnresolvedClientPacket266: 266, // Project-side candidate only; no direct numeric writer/caller recovered in bounded census; no RoomAvatarSync alias evidence, origin/compiled status UNKNOWN.
   UnresolvedClientPacket267: 267, // No current-build Client writer recovered; prior notice-URL request / S->C 163 association withdrawn.
-  ShopEnter: 269, // CShopStageNew::sub_536555 / sub_589DB9: [u8 mode] -> S->C 198
-  ShopCashQuery: 269, // sub_589DB9: [u8(0)] -> S->C 198
+  ShopEnter: 269, // [u8 mode]. Writers: CShopStageNew::sub_536555 (the S->C 213 handler) emits mode 1 as the Shop-entry request; sub_53885C re-emits mode 1 as a bounded retry when its S->C 198 status byte is 0. Expected reply: S->C 198 [u32 cashBalance, u8 status] (`sub_53885C`/`sub_546BE3`); status 1 suppresses the retry
+  ShopCashQuery: 269, // sub_589DB9 (0x00589DB9): [u8(0)] from the Lobby Shop callback when its connection-state predicate passes -> S->C 198
   ShopBuyItem: 270, // sub_58B130: [u32 selected-object +8, u32 opaque caller value] -> S->C 199
   InventoryDeleteItem: 271, // sub_58013E: [u32 stock-container value, feature-26 str?, u32 caller value] -> S->C 202
   InventoryEquipSync: 273, // sub_5816F4: [u8 mode, u8 playerIdx, u16 count, count*(u8 field, u32 stockId)]; modes 1/4 have two callsite-specific trailing u8s
@@ -224,7 +224,7 @@ export const ClientOpcode = {
   BasketThrowAway: 315, // sub_5BF4F8: [u32 id, u8 playerIdx]
   RequestShopConnectionAlt: 316, // CShopConnectionMan::sub_529AFB
   ShopActionNotify: 317, // sub_529A40: [u8 action]
-  RequestUserMarketConnection: 318, // CShopConnectionMan::sub_529D8E: empty when this+8==2; semantic label is not independently proven
+  RequestUserMarketConnection: 318, // CShopConnectionMan::sub_529D8E (0x00529D8E): empty body, emitted together with C->S 38 whenever this+8 (mode) == 2 - the Lobby Shop-button caller sub_4BAACB. A UserMarket association is NOT established by the writer's callers; the local S->C 262 reply and the 265/320/269 UserMarket sequence built on this request are reconstruction policy only
   UserMarketFeeInfoReply320: 320, // CStage::sub_4BB408: [u32 feeRate, str notice, u32 minPrice]
   UserMarketStageEntry321: 321, // sub_5723F6: [u8 fieldA, u8 localIdx]; CSendPacket vtable 0x007BF714 slot +0x40 -> sub_695FE0; then C->S 98
   NexonClubDialogSubmit322: 322, // CChatStage::sub_4B0A63 after CNexonClubDlg result: [str fieldA, str dialogField]
@@ -244,7 +244,7 @@ export const ClientOpcode = {
 
 export const ServerOpcode = {
   // Pre-Login & Auth Responses
-  StageSlot45Route0: 0, // On typed-registry miss, CStage::sub_4BDBF5 forwards S->C 0 to current root-vtable slot 45 (+0xB4); payload/meaning UNKNOWN
+  StageSlot45Route0: 0, // CStage::sub_4BDBF5 case 0 -> root slot 45 (`sub_4B9CE2` 0x004B9CE2) -> CShopConnectionMan::sub_52A23C: [u16, u16, u32 sessionKey, str noticeUrl, u8 stageEcho]; when stageEcho == 11 and the redirected shop socket exists, upgrades the shop-socket cipher key/state (vtable +32/+28) and emits C->S 38 (+ C->S 318 for mode 2) via sub_529D8E
   MultiServerSsd: 1, // sub_5D7E8E: multisvr.ssd (+ multisvrn.ssd if feature 68)
   SystemStringSsd: 2, // sub_5D00B9: csysstr.ssd
   LoginVariantRoute4: 4, // Normal Login -> sub_567400; China Login -> sub_563721; layouts are not equated
@@ -444,7 +444,7 @@ export const ServerOpcode = {
   PackageMapIniStream: 210, // sub_4B966A -> sub_59426D: packagemap.ini SmartStream
   CStageStockContainerUpdate211: 211, // CStage::sub_4BDBF5 -> sub_4B987B -> CStockContainer; field mapping/trigger UNKNOWN
   ShopResellResult: 212, // CShopDlg::sub_546D3F: [u8 res=0, str itemName, u32 stockId, u32 0, u32 refundLucci]
-  NexonClubAuthResult: 213, // CStage::sub_4BDBF5 case 213 -> slot 60 (+0xF0) -> sub_4BC337: [u8 ok, u8 playerIdx, (if ok: str clubId)]
+  NexonClubAuthResult: 213, // CStage::sub_4BDBF5 case 213 -> root slot 60 (+0xF0) -> sub_4BC337: [u8 ok, u8 playerIdx, (if ok: str clubId)]. In CShopStageNew/CUserMarketStage the slot-60 override is sub_536555 (0x00536555): parse then unconditionally write C->S 269 [u8(1)] ShopEnter - the non-retry Shop-entry trigger
   ShopQMarkResult: 214, // CShopStageNew::sub_5396F0: [u32 type, u32 reward, u32 unk]
   ShopEventNotice: 215, // CShopConnectionMan::sub_52A129 ([u8(0)]) / CShopStageNew::sub_53C550
   MyPageData220: 220, // Client path `sub_5447F0` -> `sub_544049` -> `sub_49D0A6`; field meanings UNKNOWN
@@ -485,8 +485,8 @@ export const ServerOpcode = {
   BasketInfo: 259, // CBasketDlg::sub_5C0289 / sub_5C261E
   BasketCouponCounts: 260, // CBasketDlg::sub_5C0289
   StageSpecificRoute261: 261, // Shop connection/UserMarket permission paths; CLobbyStage also has a separate direct case 261
-  ShopConnectionPermission: 261, // CShopConnectionMan::sub_52A129 / CUserMarketStage::sub_57224C; distinct Lobby route not equated
-  UserMarketPermission: 262, // CShopConnectionMan::sub_52A129 reads the one-byte connection permission
+  ShopConnectionPermission: 261, // CShopConnectionMan::sub_52A129 (one-byte flag: !=0 consumes the CShopConnectionMan pending state and emits C->S 38; 0 shows CannotConnectToShopServer). Stage routes: CLobbyStage::sub_4C86A2 case 261 -> sub_4C133B, CPrepareStage::sub_4DCF07 -> sub_4D18EA, CUserMarketStage::sub_574380 -> sub_57224C, CChattingStage::sub_4B6418; all wrap CStage::sub_4B9E08 -> sub_52A129
+  UserMarketPermission: 262, // Prior citation to sub_52A129 was wrong: that reader belongs to S->C 261. S->C 262 is consumed by the CShopDlg broadcast handler sub_549E03 (0x00549E03) -> sub_54466F -> sub_5935DC (the u32 banner-count reader shared with S->C 16/208/224); the local C->S 318 -> S->C 262 body is reconstruction policy only
   LobbyStageRoute263: 263, // CLobbyStage::sub_4C86A2 reads a u8 then a stream-like value; fields/meaning UNKNOWN
   ChatStageRoute264: 264, // CChatStage reads [u8, u8], then sub_4AC937 reads [str, u8]; field meanings UNKNOWN
   ChatStageRoute267: 267, // CChatStage::sub_4B0A63 reads a status u8 and conditionally a count/list; field meanings UNKNOWN

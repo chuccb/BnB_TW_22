@@ -1391,6 +1391,101 @@ describe("C->S 38 Shop follow-up candidate", () => {
     expect(diagnostics).not.toContain(String(firstField95));
     expect(diagnostics).not.toContain(String(secondField95));
   });
+
+  test("enters Shop through the client-verified S->C 16 + S->C 213 chain when C->S 38 follows an authenticated C->S 316", () => {
+    const config = loadConfig({ dbPath: ":memory:" });
+    using state = new WorldState(config);
+    const created = state.db.createUser("shop_entry_lobby", "password");
+    const client = new SimulatedClient();
+    const session = state.createSession(client.onWireBytes, "127.0.0.1", 51222, "0.0.0.0", 0, "game");
+    session.sendConnectHello(config);
+    session.users = [state.db.getUserById(created.id)!];
+    session.channelSelected = true;
+    session.channelIndex = 0;
+    session.stageId = StageId.Lobby;
+
+    // Lobby Shop button: `sub_4BAACB` -> `sub_529AFB` latches CShopConnectionMan state 2 and
+    // writes C->S 316 (byte-228 path). The local handler mirrors the latch on the session.
+    client.sendToServer(
+      state,
+      session.sessionId,
+      new PacketWriter(ClientOpcode.RequestShopConnectionAlt).writeU8(0)
+    );
+    expect(session.shopConnectionPending).toBe(true);
+    expect(client.popByOpcode(ServerOpcode.ShopConnectionPermission)?.readU8()).toBe(1);
+    expect(client.popByOpcode(ServerOpcode.ShopServerEndpoint)?.readU8()).toBe(1);
+
+    // `sub_52A129` (S->C 261 reader) consumes the latch and writes the exact C->S 38 body
+    // (mode 2), then `sub_529D8E` appends the empty C->S 318 on the same path.
+    const followUp = new PacketWriter(ClientOpcode.ShopConnectionFollowUp38)
+      .writeU8(2) // mode 2 = Lobby Shop-button caller (`sub_4BAACB`)
+      .writeU8(1) // one local user
+      .writeString("shop_entry_lobby")
+      .writeU32(0x1122_3344) // field95; not validated by local policy
+      .writeU8(0) // trailing Client field
+      .writeU32(0);
+    client.sendToServer(state, session.sessionId, followUp);
+    client.sendToServer(state, session.sessionId, new PacketWriter(ClientOpcode.RequestUserMarketConnection));
+
+    // Local Shop-entry reply policy: S->C 16 (Stage 14 via `sub_4BB82A`) + S->C 213
+    // (`CShopStageNew::sub_536555` -> C->S 269 [u8(1)] trigger).
+    const p16 = client.popByOpcode(ServerOpcode.ShopInitAndStage14)!;
+    expect(p16).toBeDefined();
+    expect(p16.readU8()).toBe(0); // localPlayerIdx
+    expect(p16.readU8()).toBe(0); // flag2
+    const userAfter = state.db.getUserById(created.id)!;
+    expect(p16.readU32()).toBe(userAfter.cash);
+    expect(p16.readU32()).toBe(userAfter.lucci);
+    expect(p16.readU32()).toBe(state.resources.ssdFiles.fxstock.adler32Zero);
+    expect(p16.readU32()).toBe(state.resources.ssdFiles.stringtable.adler32Zero);
+    expect(p16.readU32()).toBe(state.resources.ssdFiles.packagemap.adler32Zero);
+    expect(p16.readString()).toContain("http");
+    expect(p16.readU32()).toBe(0); // bannerCount
+    expect(p16.remaining).toBe(0);
+    const trigger = client.popByOpcode(ServerOpcode.NexonClubAuthResult)!;
+    expect(trigger.readU8()).toBe(0); // ok = 0: no clubId field, no modal
+    expect(trigger.readU8()).toBe(0); // playerIdx
+    expect(trigger.remaining).toBe(0);
+    expect(session.stageId).toBe(StageId.Shop);
+    expect(session.shopConnectionPending).toBe(false);
+
+    // The mode-2 companion C->S 318 must not start the UserMarket fee chain mid-entry.
+    expect(client.popByOpcode(ServerOpcode.UserMarketPermission)?.readU8()).toBe(0);
+    expect(client.popByOpcode(ServerOpcode.UserMarketFeeInfo)).toBeUndefined();
+    expect(session.userMarketPermissionGranted).toBe(false);
+
+    // Client-verified follow-up: CShopStageNew::sub_536555 answers S->C 213 with C->S 269 [1].
+    client.sendToServer(state, session.sessionId, new PacketWriter(ClientOpcode.ShopEnter).writeU8(1));
+    const cash = client.popByOpcode(ServerOpcode.ShopCashBalance198)!;
+    expect(cash.readU32()).toBe(userAfter.cash);
+    expect(cash.readU8()).toBe(1); // status 1 suppresses the client's C->S 269 retry
+    expect(cash.remaining).toBe(0);
+    expect(client.popByOpcode(ServerOpcode.ShopConfigCrc224)).toBeDefined();
+
+    // A second, unprompted C->S 38 (no pending latch) stays observation-only.
+    const receivedBeforeSecond = client.receivedPackets.length;
+    client.sendToServer(state, session.sessionId, followUp);
+    expect(client.receivedPackets).toHaveLength(receivedBeforeSecond);
+    expect(session.stageId).toBe(StageId.Shop);
+
+    // Room-stage C->S 38 bodies are served by the C->S 98 room-context policy instead,
+    // so the C->S 38 reply policy stays observation-only there even with the latch set.
+    const unprompted = new PacketWriter(ClientOpcode.ShopConnectionFollowUp38)
+      .writeU8(2)
+      .writeU8(1)
+      .writeString("shop_entry_lobby")
+      .writeU32(0)
+      .writeU8(0)
+      .writeU32(0);
+    session.shopConnectionPending = true;
+    session.stageId = StageId.Prepare;
+    const receivedBeforeRoomStage = client.receivedPackets.length;
+    client.sendToServer(state, session.sessionId, unprompted);
+    expect(session.stageId).toBe(StageId.Prepare);
+    expect(client.receivedPackets).toHaveLength(receivedBeforeRoomStage);
+    expect(session.shopConnectionPending).toBe(true);
+    session.stageId = StageId.Shop;
+  });
 });
 
 describe("C->S 313/314 Basket query body boundaries", () => {
@@ -3800,6 +3895,14 @@ describe("End-to-End Playable Loop — Login -> Channel -> Lobby -> Room -> Matc
       expect(localShopStock.readU8()).toBe(item.equipped);
     }
     expect(localShopStock.remaining).toBe(0);
+
+    // Client-verified follow-up: the Shop stage's S->C 213 handler (CShopStageNew::sub_536555)
+    // is the non-retry writer of C->S 269 [u8(1)] ShopEnter. The local room-context Shop-entry
+    // policy sends the minimal ok=0 trigger after S->C 16.
+    const shopEnterTrigger = client1.popByOpcode(ServerOpcode.NexonClubAuthResult)!;
+    expect(shopEnterTrigger.readU8()).toBe(0); // ok = 0 (no clubId field)
+    expect(shopEnterTrigger.readU8()).toBe(0); // playerIdx = 0
+    expect(shopEnterTrigger.remaining).toBe(0);
 
     // Value 0 belongs to the separate UserMarket caller; it must not reuse the old local
     // room-leave interpretation while the same session is in Shop.

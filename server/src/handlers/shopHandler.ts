@@ -599,6 +599,30 @@ export function buildShopInitPacket16(
 }
 
 /**
+ * Builds the minimal S->C 213 (`CStage::sub_4BDBF5` case `213` -> root slot 60):
+ *   u8 ok (`0`)
+ *   u8 playerIdx (`0`)
+ *
+ * Client-verified effect: in CShopStageNew the case-213 slot is overridden by
+ * `CShopStageNew::sub_536555` (`0x00536555`), which parses `[u8 ok, u8 playerIdx,
+ * (if ok: str clubId)]` via `CStage::sub_4BC337` and then unconditionally writes
+ * `C->S 269 [u8(1)]` (ShopEnter) through `sub_5AA68F`. That C->S 269 [u8(1)] is the
+ * only non-retry writer that asks the server for the Shop-stage data bundle
+ * (S->C 198 cash + config/stock sync). `ok = 0` skips the optional clubId field and
+ * the `NXClubHasChanged` modal in `sub_4BC337`, so the packet has no UI side effects.
+ *
+ * Triggering C->S 269 with this packet is local reconstruction policy: the exact
+ * official server sequence that follows Shop entry is not recovered from a trace,
+ * but the Client's parse/send chain above is binary-verified.
+ */
+export function buildShopEnterTriggerPacket213(): PacketWriter {
+  const w213 = new PacketWriter(ServerOpcode.NexonClubAuthResult);
+  w213.writeU8(0); // ok = 0: no clubId field, no NXClubHasChanged modal
+  w213.writeU8(0); // playerIdx = 0 (unused while ok = 0)
+  return w213;
+}
+
+/**
  * Builds S->C 208 or S->C 224 (`sub_53660B` / `sub_5493B7` -> `sub_546C6B` at `0x00546C6B`):
  *   u8 status (1)
  *   u32 fxstockChecksum (`sub_594353`)
@@ -685,6 +709,10 @@ export function handleShopPacket(
   switch (opcode) {
     case ClientOpcode.RequestShopConnection:
     case ClientOpcode.RequestShopConnectionAlt: {
+      // `sub_529AFB` sets CShopConnectionMan byte-12 state 2 before writing C->S 316/37;
+      // `sub_52A129` then consumes state 2 to emit the C->S 38 Shop follow-up. Mirror that
+      // one-shot pending latch locally so the C->S 38 reply policy can require it.
+      session.shopConnectionPending = true;
       const w261 = new PacketWriter(ServerOpcode.ShopConnectionPermission);
       w261.writeU8(1); // 1 = allowed
       session.sendPacket(w261);
@@ -704,10 +732,12 @@ export function handleShopPacket(
     }
 
     case ClientOpcode.ShopConnectionFollowUp38: {
-      // CShopConnectionMan::sub_529D8E writes a dynamic body on its socket-manager path.
-      // The Client field95 value is credential-like, but the server-side authentication rule
-      // and association between the redirected socket and the original Game session are UNKNOWN.
-      // Parse only the exact Client structure; never treat receipt as authentication or Shop entry.
+      // CShopConnectionMan::sub_529D8E writes a dynamic body on its socket-manager path after
+      // `sub_52A129` consumes the CShopConnectionMan pending state established by C->S 316/37.
+      // Client-verified context: mode 2 is the Lobby Shop-button caller (`sub_4BAACB`), and
+      // mode 2 additionally emits the empty C->S 318 on the same path. The field95 values are
+      // credential-like (LoginResult session-token source) but the server-side validation rule
+      // for them is not recovered, so they are never treated as proof of identity here.
       const payloadBytes = reader.remaining;
       const parsedFollowUp = parseExactPayload(reader, (probe) => {
         if (probe.remaining < 2) return null;
@@ -738,6 +768,49 @@ export function handleShopPacket(
         break;
       }
 
+      // Shop-entry reply policy (local reconstruction; the official server's exact response
+      // sequence is not recovered). Client-verified pieces:
+      //   - S->C 16 is read by `sub_4BB82A`, which transitions the UI to Stage 14 (CShopStageNew)
+      //     via `sub_437FB8(..., 14)` and sets CShopConnectionMan state 1 (`sub_529A84`).
+      //   - S->C 213 in the Shop stage is read by `CShopStageNew::sub_536555`, which then
+      //     unconditionally emits C->S 269 [u8(1)] (ShopEnter) - see buildShopEnterTriggerPacket213.
+      //   - The existing C->S 269 handler below completes the entry with S->C 198 + config sync.
+      // Only a Lobby/Shop session that issued the preceding C->S 316/37 (pending latch) enters;
+      // room-stage callers are served by the C->S 98 [u8(1)] room-context policy instead, and
+      // unauthenticated or unprompted C->S 38 bodies stay observation-only.
+      const canEnterShop =
+        parsedFollowUp.mode === 2 &&
+        session.shopConnectionPending &&
+        hasAuthenticatedGameContext(state, session) &&
+        (session.stageId === StageId.Lobby || session.stageId === StageId.Shop);
+      if (canEnterShop) {
+        session.shopConnectionPending = false;
+        session.shopEnterReplyPending = true;
+        session.stageId = StageId.Shop;
+        session.sendPacket(buildShopInitPacket16(state, session));
+        session.sendPacket(buildShopEnterTriggerPacket213());
+        logger.info("Shop", "Local Shop-entry policy applied to C->S 38 (S->C 16 + S->C 213 trigger)", {
+          direction: "C->S",
+          wireOpcode: opcode,
+          opcodeName: formatClientOpcode(opcode),
+          sessionId: session.sessionId,
+          connectionKind: session.connectionKind,
+          stageId: formatStageId(session.stageId),
+          payloadBytes,
+          mode: parsedFollowUp.mode,
+          localUserCount: parsedFollowUp.localPlayerCount,
+          credentialLikeFieldsLogged: false,
+          authenticationValidated: false,
+          responseSent: true,
+          responses: ["ShopInitAndStage14", "NexonClubAuthResult (C->S 269 trigger)"],
+          stageChanged: true,
+          databaseMutation: false,
+          policyNote:
+            "S->C 16 Stage-14 transition and S->C 213 -> C->S 269 chain are Client-verified; the pairing with C->S 38 is local reconstruction policy",
+        });
+        break;
+      }
+
       logger.info("PacketAudit", "Observed exact C->S 38 Client writer; authentication and socket/session association remain UNKNOWN", {
         direction: "C->S",
         wireOpcode: opcode,
@@ -748,6 +821,7 @@ export function handleShopPacket(
         payloadBytes,
         mode: parsedFollowUp.mode,
         localUserCount: parsedFollowUp.localPlayerCount,
+        shopConnectionPending: session.shopConnectionPending,
         credentialLikeFieldsLogged: false,
         authenticationValidated: false,
         responseSent: false,
@@ -1439,8 +1513,11 @@ export function handleShopPacket(
     }
 
     case ClientOpcode.RequestUserMarketConnection: {
-      // The recovered C->S 318 request is empty. The Client consumes S->C 262 as a
-      // connection permission, but the local response does not prove entry into Stage 20.
+      // The recovered C->S 318 request is empty. Client-writer evidence (this investigation):
+      // the ONLY recovered writer is CShopConnectionMan::sub_529D8E, which emits C->S 318
+      // together with C->S 38 whenever its mode == 2 (the Lobby Shop-button caller).
+      // A UserMarket association is therefore not writer-supported; the local S->C 262 reply
+      // and the 265/320/269 UserMarket sequence below remain reconstruction policy only.
       const payloadBytes = reader.remaining;
       if (
         payloadBytes !== 0 ||
@@ -1450,7 +1527,18 @@ export function handleShopPacket(
         logRejectedUserMarketPacket(session, opcode, payloadBytes, "authenticated selected-channel Lobby/Shop session; empty body", "Ignored malformed or out-of-context C->S 318 UserMarket connection request");
         break;
       }
-      const featureAvailable = state.config.enabledFeatures.has(28);
+      // Shop-flow guard: `sub_529D8E` always writes C->S 318 immediately after its mode-2
+      // C->S 38, so the first C->S 318 after a local Shop-entry reply is that companion frame.
+      // S->C 265 makes the Client echo C->S 320 (`sub_4BB408`), and the C->S 320 policy below
+      // would then flip the session to UserMarket mid-entry. Consume the one-shot latch and
+      // suppress the fee-info branch for that companion frame only; standalone C->S 318
+      // frames keep the full local UserMarket policy. The one-byte S->C 262 body is
+      // bounds-safe in the Client (its banner reader over-reads to count 0).
+      const shopFlowGuard = session.shopEnterReplyPending;
+      if (shopFlowGuard) {
+        session.shopEnterReplyPending = false;
+      }
+      const featureAvailable = state.config.enabledFeatures.has(28) && !shopFlowGuard;
       session.userMarketPermissionGranted = featureAvailable;
       const w262 = new PacketWriter(ServerOpcode.UserMarketPermission);
       w262.writeU8(featureAvailable ? 1 : 0); // local policy mirrors configured Client-stage availability

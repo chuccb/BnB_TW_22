@@ -137,6 +137,21 @@ export class ClientSession {
   /** Local one-shot C->S 318 permission latch; not an official-server permission token. */
   public userMarketPermissionGranted = false;
   /**
+   * Local mirror of CShopConnectionMan byte-12 state 2 (`sub_529AFB` sets it while emitting
+   * C->S 316/37; `sub_52A129` consumes it to emit C->S 38). Set by the local C->S 316/37
+   * handler and cleared by the local C->S 38 Shop-entry response. This is a reconstruction
+   * state-machine gate, not an official-server authorization.
+   */
+  public shopConnectionPending = false;
+  /**
+   * One-shot latch set when the local C->S 38 Shop-entry reply policy fires. `sub_529D8E`
+   * always writes the empty C->S 318 immediately after its mode-2 C->S 38, so the very next
+   * C->S 318 is that companion frame; the local C->S 318 policy consumes the latch to keep
+   * the UserMarket fee-info chain (S->C 265 -> C->S 320) from hijacking an in-flight Shop entry.
+   * Standalone C->S 318 frames (no preceding shop-entry C->S 38) keep the full policy.
+   */
+  public shopEnterReplyPending = false;
+  /**
    * Most recently observed UserMarket local-player selector. The local reconstruction uses it
    * for C->S 326/327/330, whose Client writers carry no selector; this is not an official
    * server-side identity mapping. A two-user session without a valid observed selector is ambiguous.

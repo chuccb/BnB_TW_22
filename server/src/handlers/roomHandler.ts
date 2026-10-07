@@ -5,7 +5,7 @@ import { SmartStreamWriter } from "../protocol/stream.ts";
 import { resolveDynamicMapId } from "../resources/archive.ts";
 import type { ClientSession, GameRoom, RoomSlot, WorldState } from "../state/worldState.ts";
 import { formatStageId, logger } from "../utils/logger.ts";
-import { buildShopInitPacket16, buildUserStockPacket } from "./shopHandler.ts";
+import { buildShopEnterTriggerPacket213, buildShopInitPacket16, buildUserStockPacket } from "./shopHandler.ts";
 
 function clonePacketReader(reader: PacketReader): PacketReader {
   const clone = new PacketReader(reader.plain, reader.degree);
@@ -1238,6 +1238,10 @@ export function handlePrepareRoomPacket(
       session.stageId = StageId.Shop;
       session.sendPacket(buildShopInitPacket16(state, session));
       session.sendPacket(buildUserStockPacket(state, session));
+      // Client-verified: the Shop stage's S->C 213 handler (`CShopStageNew::sub_536555`) is the
+      // non-retry writer of C->S 269 [u8(1)] (ShopEnter); send the minimal ok=0 trigger so the
+      // client then requests the Shop data bundle. Same local reconstruction caveat as above.
+      session.sendPacket(buildShopEnterTriggerPacket213());
       break;
     }
 
